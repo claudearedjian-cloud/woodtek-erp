@@ -1,0 +1,58 @@
+WOODTEK ERP — SAFETY RUNBOOK (one page, keep in woodtek-erp)
+=============================================================
+
+WHAT YOU HAVE
+  woodtek-snapshot.bat   double-click BEFORE any change -> backups\snapshot-DATE.zip
+  woodtek-git-setup.bat  run ONCE -> local git repo + first commit
+  backup\backup-woodtek.bat   database backup (schedule it daily)
+  start-prod.cjs         the server watchdog (patched v2: no crash-loops)
+  woodtek-free-port-3000-v2.bat  run AS ADMIN to stop whatever holds port 3000
+
+THE UPDATE RITUAL (every modification, no exceptions)
+  1. Double-click woodtek-snapshot.bat          <- your undo button
+  2. git add -A  &&  git commit -m "before change"   (once git is set up)
+  3. Apply the new files (copy over the old ones)
+  4. node scripts\build-prod.cjs
+  5. Restart the server:
+       - admin-run woodtek-free-port-3000-v2.bat   (stops old copy)
+       - schtasks /Query /FO CSV | findstr /I woodtek   (find task name)
+       - schtasks /Run /TN "<task name>"           (start new copy)
+  6. Test: sign in as OPERATOR (maroun) and as MANAGER. Both look right?
+  7. git add -A  &&  git commit -m "what you changed"
+
+ROLLBACK (something looks wrong)
+  1. Unzip the last good backups\snapshot-*.zip over the folder
+     (or: git checkout . if using git)
+  2. node scripts\build-prod.cjs
+  3. Restart the server (step 5 above)
+
+DATABASE BACKUPS
+  - Task Scheduler: run backup\backup-woodtek.bat DAILY.
+  - Once a week copy the newest DB dump to a USB stick or cloud drive.
+  - Once a quarter do a test restore on purpose (backup\restore-woodtek.bat)
+    so you KNOW the restore works before you ever need it.
+
+THE .env RULE
+  .env holds DATABASE_URL and AUTH_SECRET = the keys to everything.
+  It is in your snapshots and backups. It is NOT in git. Never send it in
+  chats or emails. If the PC dies, .env + a snapshot + a DB dump = full recovery.
+
+GIT HABITS (after woodtek-git-setup.bat)
+  - Commit after every successful change. Short message, e.g.
+      git commit -m "hide admin menus from operator"
+  - Push to your private GitHub repo once a week (git push).
+  - One source folder only. The stray nested src\src copy is excluded in
+    .gitignore; when you are sure nothing needs it, delete it.
+
+WORKING WITH ARENA (AI) SAFELY
+  - Always send the CURRENT source: right-click src -> Send to -> Compressed
+    (zipped) folder, then  copy src.zip src-current.txt  and attach the .txt.
+  - Tell me the date of the snapshot you sent, so old code never gets patched.
+  - Keep the three patched files from this session in mind; they are now part
+    of your source (Sidebar.tsx, moduleAccess.ts, page.tsx).
+
+QUICK REFERENCE
+  App on this PC:      http://localhost:3000
+  App on the network:  http://192.168.220.179:3000
+  Rebuild:             node scripts\build-prod.cjs
+  Who holds port 3000: woodtek-free-port-3000-v2.bat (as administrator)

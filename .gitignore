@@ -1,0 +1,8 @@
+node_modules/
+.next/
+logs/
+backups/
+*.log
+*.bak
+.env
+src/src/

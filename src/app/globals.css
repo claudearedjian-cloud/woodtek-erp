@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Inter", "Roboto", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background-color: #f59e0b;
+    color: #020617;
+  }
+  :focus-visible {
+    outline: 2px solid rgba(245, 158, 11, 0.55);
+    outline-offset: 2px;
+  }
+  /* Native dropdowns stay readable in dark mode */
+  select option {
+    background-color: #0f172a;
+    color: #e2e8f0;
+  }
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"] {
+    color-scheme: dark;
+  }
+}
+
+@layer components {
+  /* Ambient depth for the app shell (subtle amber/blue glow over near-black) */
+  .app-bg {
+    background-color: #020617;
+    background-image:
+      radial-gradient(1100px 700px at 12% -8%, rgba(245, 158, 11, 0.07) 0%, transparent 55%),
+      radial-gradient(900px 650px at 105% 0%, rgba(59, 130, 246, 0.06) 0%, transparent 50%),
+      radial-gradient(1000px 800px at 50% 120%, rgba(245, 158, 11, 0.05) 0%, transparent 55%);
+    background-attachment: fixed;
+  }
+  /* Frosted panel (header, floating surfaces) */
+  .glass {
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(2, 6, 23, 0.92));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+  }
+  /* Raised card surface */
+  .card-surface {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.5), rgba(15, 23, 42, 0.55));
+    border: 1px solid rgba(148, 163, 184, 0.1);
+  }
+  /* Sign-in / modal backdrop with brand glow */
+  .modal-backdrop {
+    background:
+      radial-gradient(1100px 700px at 50% -12%, rgba(245, 158, 11, 0.08), transparent 60%),
+      rgba(2, 6, 23, 0.96);
+  }
+}
+
+/* ------------------------------------------------------------------ motion */
+.animate-fade-up {
+  animation: wt-fade-up 0.45s cubic-bezier(0.22, 0.8, 0.36, 1) both;
+}
+@keyframes wt-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ------------------------------------------------------------ scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
+  background-clip: padding-box;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
