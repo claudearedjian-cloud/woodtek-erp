@@ -4,5 +4,9 @@ logs/
 backups/
 *.log
 *.bak
+*.zip
 .env
 src/src/
+src-current.txt
+woodtek-source.txt
+start-prod.v1.cjs
