@@ -51,9 +51,9 @@ schtasks /Run /TN "\WoodTek ERP"
 5. Port busy ⇒ launcher defers with a message; that message is success, not failure.
 6. The zip contained a stale nested `src/src/` copy (ignored in git); the live tree is top-level `src/`.
 7. PowerShell: `rmdir /s /q` is cmd syntax; use `Remove-Item -Recurse -Force`.
+8. An old untracked `update-woodtek.bat` (from the zip era) can block pulls; delete it once — the repo ships the real one.
+9. Repo config files (`tsconfig.json`, `next.config.ts`, `next-env.d.ts`) can get dirty locally and block pulls; `update-woodtek.bat` now runs `git checkout --` on them before every pull — repo version always wins.
 
 ## How the agent verified changes (rebuild if needed)
 - `npm install && npm run typecheck` (`tsc --noEmit`) in a clone — the project's own check.
-- A `render-test.js` SSR harness (typescript `transpileModule` + `react-dom/server`) rendered the real `Sidebar` per role and asserted hidden/visible labels (31 checks). Needs `typescript`, `react`, `react-dom`, `lucide-react` from the repo's package.json.
-9. Repo config files (`tsconfig.json`, `next.config.ts`, `next-env.d.ts`) can get dirty locally and block pulls; `update-woodtek.bat` now runs `git checkout --` on them before every pull — repo version always wins.
-8. An old untracked `update-woodtek.bat` (from the zip era) can block pulls; delete it once — the repo ships the real one.
+- A `render-test.js` SSR harness (typescript `transpileModule` + `react-dom/server`) rendered the real `Sidebar` per role and asserted hidden/visible labels (39 checks). Needs `typescript`, `react`, `react-dom`, `lucide-react` from the repo's package.json.
