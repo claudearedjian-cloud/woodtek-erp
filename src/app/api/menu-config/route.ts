@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { authorize } from "@/lib/auth";
 import { sanitizeMenuConfig, type MenuConfig } from "@/lib/menuConfig";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 function fileLocation(): string {
   const dir =
@@ -28,6 +29,7 @@ function readConfig(): MenuConfig | null {
 }
 
 export async function GET() {
+  ensureRolesRegistered();
   return NextResponse.json({ config: readConfig() });
 }
 
@@ -35,6 +37,7 @@ export async function PUT(request: Request) {
   const { error } = await authorize("users:manage");
   if (error) return error;
   try {
+    ensureRolesRegistered();
     const body = await request.json();
     const config = sanitizeMenuConfig(body);
     const file = fileLocation();

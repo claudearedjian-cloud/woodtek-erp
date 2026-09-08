@@ -6,7 +6,8 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { can, deniedMessage, type Action } from "@/lib/permissions";
+import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 export const SESSION_COOKIE = "woodtek_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // one working shift + margin
@@ -51,6 +52,9 @@ export type SessionUser = {
   name: string;
   email: string;
   role: string;
+  /** Custom role name when the user's role is a custom alias; the `role`
+   *  field then carries the built-in role it inherits from. */
+  displayRole?: string;
   avatarColor: string;
 };
 
@@ -166,11 +170,17 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
   const found = rows[0];
   if (!found || !found.active) return null;
+  // Custom roles resolve to the built-in role they inherit: every permission,
+  // module and data-scope check downstream keeps working on the base name,
+  // while `displayRole` carries the custom label for the UI.
+  ensureRolesRegistered();
+  const base = baseRoleOf(found.role) || found.role;
   return {
     id: found.id,
     name: found.name,
     email: found.email,
-    role: found.role,
+    role: base,
+    displayRole: found.role !== base ? found.role : undefined,
     avatarColor: found.avatarColor,
   };
 }

@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { canAccessModule, type ModuleId } from "@/lib/moduleAccess";
-import { ROLES } from "@/lib/permissions";
+import { allRoles, baseRoleOf } from "@/lib/permissions";
 
 export type MenuGroup = "top" | "settings";
 
@@ -62,7 +62,8 @@ const moduleFor = (id: string): ModuleId =>
   id === "station" ? "operator" : (id as ModuleId);
 
 export function defaultVisibleFor(role: string, id: string): boolean {
-  return canAccessModule(role, moduleFor(id));
+  // Custom roles inherit their base role's module visibility.
+  return canAccessModule(baseRoleOf(role), moduleFor(id));
 }
 
 // Merge defaults + stored config into an ordered, per-role menu.
@@ -78,7 +79,7 @@ export function resolveMenu(
     ...cfgItems.map((i) => i.id).filter(known),
     ...MENU_REGISTRY.map((r) => r.id).filter((id) => !byId.has(id)),
   ];
-  const canSeeSettings = canAccessModule(role, "settings");
+  const canSeeSettings = canAccessModule(baseRoleOf(role), "settings");
   const top: ResolvedMenuItem[] = [];
   const settings: ResolvedMenuItem[] = [];
   for (const id of ordered) {
@@ -125,7 +126,7 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
     if (e.group === "settings" || e.group === "top") item.group = e.group;
     if (e.roles && typeof e.roles === "object") {
       const roles: Record<string, boolean> = {};
-      for (const r of ROLES) {
+      for (const r of allRoles()) {
         const v = (e.roles as Record<string, unknown>)[r];
         if (typeof v === "boolean") roles[r] = v;
       }

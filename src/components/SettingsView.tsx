@@ -20,6 +20,7 @@ import {
   Phone,
   MapPin
 } from "lucide-react";
+import { ROLES, registerCustomRoles } from "@/lib/permissions";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -51,6 +52,46 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     address: "",
     creditLimit: "15000.00",
   });
+
+  // ---- custom roles (Manager can add/remove named roles) ----
+  const [customRoles, setCustomRoles] = useState<{ name: string; base: string }[]>([]);
+  const [showRoleMgr, setShowRoleMgr] = useState(false);
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleBase, setNewRoleBase] = useState<string>("Machine Operator");
+  const [roleMsg, setRoleMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/roles", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { roles: [] }))
+      .then((d) => {
+        const rs = Array.isArray(d.roles) ? d.roles : [];
+        setCustomRoles(rs);
+        registerCustomRoles(rs);
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveRoles = async (next: { name: string; base: string }[]) => {
+    setRoleMsg("");
+    try {
+      const res = await fetch("/api/roles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRoleMsg(data.error || "Failed to save roles.");
+        return;
+      }
+      const rs = Array.isArray(data.roles) ? data.roles : [];
+      setCustomRoles(rs);
+      registerCustomRoles(rs);
+      setRoleMsg("Roles updated.");
+    } catch {
+      setRoleMsg("Network error — roles not saved.");
+    }
+  };
 
   const fetchEntities = async () => {
     setLoading(true);
@@ -377,11 +418,12 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                     <div>
                       <label className="block text-xs font-bold text-slate-300 mb-1.5">Role</label>
                       <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white">
-                        <option value="Manager">Manager</option>
-                        <option value="Machine Operator">Machine Operator</option>
-                        <option value="Sales Coordinator">Sales Coordinator</option>
-                        <option value="QA & Dispatch">QA & Dispatch</option>
-                        <option value="Technician">Technician</option>
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                        {customRoles.map((r) => (
+                          <option key={r.name} value={r.name}>{r.name}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -392,6 +434,67 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                         ))}
                       </div>
                     </div>
+                  </div>
+                  <div className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
+                    <button type="button" onClick={() => setShowRoleMgr((v) => !v)} className="text-xs font-bold text-teal-300 hover:text-teal-200 flex items-center gap-1.5">
+                      <UserCog className="w-3.5 h-3.5" /> {showRoleMgr ? "Hide role manager" : "Manage roles (add / remove)"}
+                    </button>
+                    {showRoleMgr && (
+                      <div className="mt-3 space-y-2">
+                        {ROLES.map((r) => (
+                          <div key={r} className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
+                            <span>{r}</span>
+                            <span className="text-[10px] text-slate-500">built-in</span>
+                          </div>
+                        ))}
+                        {customRoles.map((r) => (
+                          <div key={r.name} className="flex items-center justify-between text-xs text-slate-200 bg-slate-900/60 rounded-lg px-3 py-2">
+                            <span>
+                              {r.name} <span className="text-[10px] text-slate-500">inherits {r.base}</span>
+                            </span>
+                            <button
+                              type="button"
+                              title={`Remove ${r.name}`}
+                              onClick={() => saveRoles(customRoles.filter((x) => x.name !== r.name))}
+                              className="text-rose-400 hover:text-rose-300"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex gap-2 pt-1">
+                          <input
+                            value={newRoleName}
+                            onChange={(e) => setNewRoleName(e.target.value)}
+                            placeholder="New role name"
+                            maxLength={30}
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
+                          />
+                          <select
+                            value={newRoleBase}
+                            onChange={(e) => setNewRoleBase(e.target.value)}
+                            className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white"
+                          >
+                            {ROLES.map((r) => (
+                              <option key={r} value={r}>inherits {r}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const n = newRoleName.trim();
+                              if (!n) return;
+                              saveRoles([...customRoles, { name: n, base: newRoleBase }]);
+                              setNewRoleName("");
+                            }}
+                            className="bg-teal-600 hover:bg-teal-500 text-white rounded-lg px-3 text-xs font-bold"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {roleMsg && <div className="text-[11px] text-amber-300">{roleMsg}</div>}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-1.5">Phone</label>

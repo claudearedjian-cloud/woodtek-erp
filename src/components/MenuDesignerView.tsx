@@ -8,7 +8,7 @@ import {
   type MenuConfig,
   type MenuConfigItem,
 } from "@/lib/menuConfig";
-import { ROLES } from "@/lib/permissions";
+import { allRoles, registerCustomRoles } from "@/lib/permissions";
 
 interface Props {
   currentUser: any;
@@ -36,7 +36,7 @@ function buildRows(cfg: MenuConfig | null): Row[] {
       const reg = MENU_REGISTRY.find((r) => r.id === id)!;
       const c = byId.get(id);
       const roles: Record<string, boolean> = {};
-      for (const r of ROLES) {
+      for (const r of allRoles()) {
         roles[r] = typeof c?.roles?.[r] === "boolean" ? c.roles[r]! : defaultVisibleFor(r, id);
       }
       return {
@@ -53,6 +53,18 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
   const [rows, setRows] = useState<Row[]>(() => buildRows(menuConfig));
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Pick up custom roles so their columns appear in the matrix.
+  React.useEffect(() => {
+    fetch("/api/roles", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { roles: [] }))
+      .then((d) => {
+        registerCustomRoles(Array.isArray(d.roles) ? d.roles : []);
+        setRows(buildRows(menuConfig));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const move = (i: number, d: number) =>
     setRows((rs) => {
@@ -179,7 +191,7 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-3 pl-9">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Visible for:</span>
-              {ROLES.map((r) => (
+              {allRoles().map((r) => (
                 <label key={r} className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"

@@ -43,6 +43,8 @@ schtasks /Run /TN "\WoodTek ERP"
 - All other roles unchanged.
 - **Menu Designer** (added 2026-09-08): Manager-only top-level tab (`designer` module) to rename/reorder/regroup items and toggle per-role visibility. Stored as JSON at `<project>/data/menu-config.json` (env `WOODTEK_DATA_DIR` set by start-prod.cjs; API `/api/menu-config`, PUT/DELETE require `users:manage`). Defaults live in `src/lib/menuConfig.ts` (`MENU_REGISTRY`); `resolveMenu()` merges defaults + config per role; Sidebar renders its output. Reset button deletes the file.
 
+- **Custom Roles** (added 2026-09-08): Manager can add/remove roles in Settings > Users > "Manage roles" (panel inside the add/edit-user form). A custom role is a **named alias of a built-in role** ("inherits ..."): it gets that role's full permission set, module visibility and data scoping. Storage: `<project>/data/roles-config.json` (`{version:1,roles:[{name,base}]}`, API `/api/roles`, PUT requires `users:manage`; removing a role still assigned to users is refused with 400). Registry: `registerCustomRoles/allRoles/baseRoleOf/getCustomRoles` in `src/lib/permissions.ts` (client-safe); server reads the file via `src/lib/rolesConfig.server.ts` (`ensureRolesRegistered()` — called from auth, users/menu-config/roles routes). **Session carries the BASE role** (`getSessionUser`/login POST resolve via `baseRoleOf`) so all ~40 legacy `role === "..."` checks keep working untouched; `displayRole` carries the custom name for UI (sidebar, profile). Menu Designer shows a column per custom role (overrides keyed by custom name; visibility defaults via base). Client registry filled at bootstrap (`page.tsx` fetches `/api/roles`). Built-in roles cannot be removed or shadowed; name <=30 chars, max 20 custom roles.
+
 ## Gotchas learned the hard way
 1. Build-before-End ⇒ EBUSY (server holds `.next\standalone`).
 2. SYSTEM task ⇒ taskkill denied; use `schtasks /End|Run`.
@@ -57,4 +59,4 @@ schtasks /Run /TN "\WoodTek ERP"
 
 ## How the agent verified changes (rebuild if needed)
 - `npm install && npm run typecheck` (`tsc --noEmit`) in a clone — the project's own check.
-- A `render-test.js` SSR harness (typescript `transpileModule` + `react-dom/server`) rendered the real `Sidebar` per role and asserted hidden/visible labels (39 checks). Needs `typescript`, `react`, `react-dom`, `lucide-react` from the repo's package.json.
+- A `render-test.js` SSR harness (typescript `transpileModule` + `react-dom/server`) rendered the real `Sidebar` per role and asserted hidden/visible labels (52 checks). Needs `typescript`, `react`, `react-dom`, `lucide-react` from the repo's package.json.

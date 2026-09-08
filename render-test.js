@@ -115,5 +115,37 @@ check(opCfg.includes("Live WIP Board"), "config: override shows WIP for operator
 check(!opCfg.includes("Executive Dashboard"), "config: manager-only override does not leak to operator");
 check(opCfg.includes("QA Corner"), "config: operator gets group-promoted moved item");
 
+// ---- custom roles (named aliases of built-in roles) ----
+const perms = require("./compiled/lib/permissions.js");
+const menuCfg = require("./compiled/lib/menuConfig.js");
+perms.registerCustomRoles([
+  { name: "Foreman", base: "Machine Operator" },
+  { name: "Manager", base: "Technician" }, // collides with built-in -> must drop
+  { name: "Ghost", base: "Nonexistent" },  // invalid base -> must drop
+]);
+check(perms.allRoles().includes("Foreman"), "custom role appears in allRoles()");
+check(!perms.allRoles().includes("Ghost"), "invalid custom role is dropped");
+check(perms.allRoles().filter((r) => r === "Manager").length === 1, "custom role cannot shadow a built-in name");
+check(perms.baseRoleOf("Foreman") === "Machine Operator", "baseRoleOf maps custom -> base");
+check(perms.baseRoleOf("Manager") === "Manager", "baseRoleOf leaves built-ins alone");
+check(perms.can("Foreman", "users:manage") === false, "custom name has no direct matrix entry");
+check(perms.can(perms.baseRoleOf("Foreman"), "operations:update-status") === true, "base role actions apply to custom role");
+
+const fMenu = menuCfg.resolveMenu("Foreman", null);
+const fIds = [...fMenu.top.map((i) => i.id), ...fMenu.settings.map((i) => i.id)];
+check(fIds.includes("station"), "custom operator role sees Operator Station");
+check(fIds.includes("quality"), "custom operator role sees Scrap & Rework");
+check(!fIds.includes("orders"), "custom operator role cannot see Orders");
+
+const hideStation = { version: 1, items: [{ id: "station", roles: { Foreman: false } }] };
+const fMenu2 = menuCfg.resolveMenu("Foreman", hideStation);
+check(![...fMenu2.top.map((i) => i.id), ...fMenu2.settings.map((i) => i.id)].includes("station"), "per-custom-role override hides station");
+const oMenu = menuCfg.resolveMenu("Machine Operator", hideStation);
+check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includes("station"), "custom-role override does not leak to base role");
+
+const foreman = renderToString(React.createElement(Sidebar, props("Foreman")));
+check(foreman.includes("Operator Station Mode"), "Sidebar renders for custom role");
+check(!foreman.includes("Orders &amp; Routing"), "Sidebar hides base-denied modules for custom role");
+
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

@@ -26,6 +26,7 @@ import FullscreenSplash from "@/components/FullscreenSplash";
 import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import type { MenuConfig } from "@/lib/menuConfig";
+import { registerCustomRoles } from "@/lib/permissions";
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -102,6 +103,17 @@ export default function WoodTekERP() {
           if (mcRes.ok) setMenuConfig((await mcRes.json()).config ?? null);
         } catch {
           /* menu config is optional */
+        }
+
+        // Custom roles registry (client mirror of data/roles-config.json).
+        try {
+          const rolesRes = await fetch("/api/roles", { cache: "no-store" });
+          if (rolesRes.ok) {
+            const rd = await rolesRes.json();
+            registerCustomRoles(Array.isArray(rd.roles) ? rd.roles : []);
+          }
+        } catch {
+          /* custom roles are optional */
         }
 
         // Restore an existing signed session so a refresh does not log you out.

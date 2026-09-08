@@ -125,6 +125,59 @@ export function can(role: string | null | undefined, action: Action): boolean {
   return (MATRIX[role] ?? []).includes(action);
 }
 
+// ---------------------------------------------------------------- custom roles
+// Custom roles (created by a Manager in Settings > Users > Manage roles) are
+// named aliases of a built-in role: they inherit that role's complete
+// permission set, module visibility and data scoping. The user table stores
+// the custom name; the server session stores the BASE role, so every existing
+// role check keeps working untouched. The registry is filled from
+// data/roles-config.json (server) or /api/roles at bootstrap (client).
+
+export interface CustomRole {
+  name: string;
+  base: Role;
+}
+
+let CUSTOM_ROLES: CustomRole[] = [];
+
+/** Accepts unknown input (API body / fetched JSON) and stores a validated list. */
+export function registerCustomRoles(list: unknown): void {
+  const out: CustomRole[] = [];
+  const seen = new Set<string>();
+  const builtIn: readonly string[] = ROLES;
+  if (Array.isArray(list)) {
+    for (const entry of list) {
+      const name = String((entry as CustomRole | null)?.name ?? "").trim();
+      const base = String((entry as CustomRole | null)?.base ?? "");
+      if (!name || name.length > 30) continue;
+      if (builtIn.some((r) => r.toLowerCase() === name.toLowerCase())) continue;
+      if (!builtIn.includes(base)) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name, base: base as Role });
+      if (out.length >= 20) break;
+    }
+  }
+  CUSTOM_ROLES = out;
+}
+
+export function getCustomRoles(): CustomRole[] {
+  return CUSTOM_ROLES;
+}
+
+/** Built-in roles plus registered custom roles. */
+export function allRoles(): string[] {
+  return [...ROLES, ...CUSTOM_ROLES.map((r) => r.name)];
+}
+
+/** Maps a custom role name to the built-in role it inherits from. */
+export function baseRoleOf(role: string | null | undefined): string {
+  if (!role) return "";
+  const hit = CUSTOM_ROLES.find((r) => r.name === role);
+  return hit ? hit.base : role;
+}
+
 const LABELS: Record<Action, string> = {
   "orders:read": "view production orders",
   "orders:write": "create new production orders",

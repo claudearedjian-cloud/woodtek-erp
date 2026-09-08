@@ -5,6 +5,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ROLES = void 0;
 exports.can = can;
+exports.registerCustomRoles = registerCustomRoles;
+exports.getCustomRoles = getCustomRoles;
+exports.allRoles = allRoles;
+exports.baseRoleOf = baseRoleOf;
 exports.deniedMessage = deniedMessage;
 exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "QA & Dispatch", "Technician"];
 /** Everything a signed-in user may do regardless of role. */
@@ -85,6 +89,47 @@ function can(role, action) {
     // If someone asks for "operations:write", they really need the full set,
     // so we keep that as a strict check.
     return (MATRIX[role] ?? []).includes(action);
+}
+let CUSTOM_ROLES = [];
+/** Accepts unknown input (API body / fetched JSON) and stores a validated list. */
+function registerCustomRoles(list) {
+    const out = [];
+    const seen = new Set();
+    const builtIn = exports.ROLES;
+    if (Array.isArray(list)) {
+        for (const entry of list) {
+            const name = String(entry?.name ?? "").trim();
+            const base = String(entry?.base ?? "");
+            if (!name || name.length > 30)
+                continue;
+            if (builtIn.some((r) => r.toLowerCase() === name.toLowerCase()))
+                continue;
+            if (!builtIn.includes(base))
+                continue;
+            const key = name.toLowerCase();
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            out.push({ name, base: base });
+            if (out.length >= 20)
+                break;
+        }
+    }
+    CUSTOM_ROLES = out;
+}
+function getCustomRoles() {
+    return CUSTOM_ROLES;
+}
+/** Built-in roles plus registered custom roles. */
+function allRoles() {
+    return [...exports.ROLES, ...CUSTOM_ROLES.map((r) => r.name)];
+}
+/** Maps a custom role name to the built-in role it inherits from. */
+function baseRoleOf(role) {
+    if (!role)
+        return "";
+    const hit = CUSTOM_ROLES.find((r) => r.name === role);
+    return hit ? hit.base : role;
 }
 const LABELS = {
     "orders:read": "view production orders",

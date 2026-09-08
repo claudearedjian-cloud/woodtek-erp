@@ -13,6 +13,8 @@ import {
   recordFailure,
   clearFailures,
 } from "@/lib/auth";
+import { baseRoleOf } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 /** GET /api/auth — who am I? Used to restore the session after a page refresh. */
 export async function GET() {
@@ -71,11 +73,16 @@ export async function POST(request: Request) {
 
     clearFailures(rateKey);
 
+    // Custom roles resolve to the built-in role they inherit (same as
+    // getSessionUser), so the client sees one consistent user shape.
+    ensureRolesRegistered();
+    const base = baseRoleOf(candidate.role) || candidate.role;
     const safeUser = {
       id: candidate.id,
       name: candidate.name,
       email: candidate.email,
-      role: candidate.role,
+      role: base,
+      displayRole: candidate.role !== base ? candidate.role : undefined,
       avatarColor: candidate.avatarColor,
     };
 

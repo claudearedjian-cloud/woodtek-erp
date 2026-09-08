@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { asc } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
+import { allRoles } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 export async function GET() {
   const { error: authError } = await authorize("users:read");
@@ -39,11 +41,16 @@ export async function POST(request: Request) {
     if (!name || !email || !/^\d{4}$/.test(String(pin))) {
       return NextResponse.json({ error: "Name, email, and a four-digit PIN are required." }, { status: 400 });
     }
+    ensureRolesRegistered();
+    const roleStr = String(role || "Machine Operator").trim();
+    if (!allRoles().includes(roleStr)) {
+      return NextResponse.json({ error: `Unknown role "${roleStr}".` }, { status: 400 });
+    }
 
     const [newUser] = await db.insert(users).values({
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
-      role,
+      role: roleStr,
       avatarColor,
       pin: await hashPin(String(pin)),
       active: true,

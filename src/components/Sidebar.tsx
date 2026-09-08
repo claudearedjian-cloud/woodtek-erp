@@ -73,7 +73,9 @@ export default function Sidebar({
   isOpen,
   onClose,
 }: SidebarProps) {
-  const resolved = resolveMenu(currentUser?.role, menuConfig);
+  // Custom roles: menu overrides are keyed by the custom name, and the base
+  // role decides module access — resolveMenu handles both.
+  const resolved = resolveMenu(currentUser?.displayRole || currentUser?.role, menuConfig);
 
   // Shop-floor operators get a clean touchscreen: the Active Role Persona
   // panel (profile card + hover role switcher) is hidden for them. They
@@ -210,7 +212,7 @@ export default function Sidebar({
             <div className="flex-1 min-w-0">
               <div className="text-sm font-bold text-white truncate">{currentUser?.name || "Not signed in"}</div>
               <div className="text-[11px] text-slate-400 font-semibold truncate flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 inline" /> {currentUser?.role || "Sign in required"}
+                <ShieldCheck className="w-3 h-3 inline" /> {currentUser?.displayRole || currentUser?.role || "Sign in required"}
               </div>
             </div>
             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transform group-hover:translate-x-0.5 transition" />
