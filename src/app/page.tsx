@@ -23,7 +23,9 @@ import DowntimeView from "@/components/DowntimeView";
 import RecipeManagerView from "@/components/RecipeManagerView";
 import PimsImportView from "@/components/PimsImportView";
 import FullscreenSplash from "@/components/FullscreenSplash";
+import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
+import type { MenuConfig } from "@/lib/menuConfig";
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -42,6 +44,7 @@ export default function WoodTekERP() {
   const [inventory, setInventory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [menuConfig, setMenuConfig] = useState<MenuConfig | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   // Show the fullscreen welcome splash when a user signs in.
   // It closes once the dashboard finishes loading.
@@ -91,6 +94,14 @@ export default function WoodTekERP() {
         // Demo data is opt-in only; it must never silently populate a factory DB.
         if (process.env.NEXT_PUBLIC_WOODTEK_DEMO === "on") {
           await fetch("/api/seed", { method: "POST" });
+        }
+
+        // Menu Designer configuration (optional; sidebar falls back to defaults).
+        try {
+          const mcRes = await fetch("/api/menu-config", { cache: "no-store" });
+          if (mcRes.ok) setMenuConfig((await mcRes.json()).config ?? null);
+        } catch {
+          /* menu config is optional */
         }
 
         // Restore an existing signed session so a refresh does not log you out.
@@ -181,7 +192,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -216,6 +227,7 @@ export default function WoodTekERP() {
         allUsers={users}
         onSwitchUser={(user) => requestProfileSwitch(user)}
         onRequestSwitch={() => requestProfileSwitch()}
+        menuConfig={menuConfig}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -271,6 +283,9 @@ export default function WoodTekERP() {
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}
           {activeTab === "recipes" && <RecipeManagerView onRefresh={fetchAllData} />}
           {activeTab === "pims" && <PimsImportView onSelectOrder={handleSelectOrder} />}
+          {activeTab === "designer" && (
+            <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />
+          )}
           {activeTab === "settings" && <SettingsView currentUser={currentUser} />}
         </main>
       </div>

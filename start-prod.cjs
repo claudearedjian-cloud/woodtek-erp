@@ -167,7 +167,7 @@ function startServer() {
   child = spawn(process.execPath, [SERVER], {
     cwd: STANDALONE,
     stdio: ["inherit", "pipe", "pipe"],
-    env: { ...process.env, HOSTNAME: HOST, PORT },
+    env: { ...process.env, HOSTNAME: HOST, PORT, WOODTEK_DATA_DIR: path.join(ROOT, "data") },
   });
 
   const tap = (stream, out) =>

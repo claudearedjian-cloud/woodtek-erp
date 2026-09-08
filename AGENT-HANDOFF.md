@@ -41,6 +41,7 @@ schtasks /Run /TN "\WoodTek ERP"
 - **Machine Operator** sees only: Operator Station Mode, Scrap & Rework, Workforce & Shifts (+ Auto Workflow Engine card). *Active Role Persona* panel hidden; "Switch profile (PIN required)" kept.
 - **Manager**: Routing Recipes, Downtime Log, Workforce & Shifts, PIMS Import, Shop Floor Monitor are nested **under General Settings** (indented sub-menu).
 - All other roles unchanged.
+- **Menu Designer** (added 2026-09-08): Manager-only top-level tab (`designer` module) to rename/reorder/regroup items and toggle per-role visibility. Stored as JSON at `<project>/data/menu-config.json` (env `WOODTEK_DATA_DIR` set by start-prod.cjs; API `/api/menu-config`, PUT/DELETE require `users:manage`). Defaults live in `src/lib/menuConfig.ts` (`MENU_REGISTRY`); `resolveMenu()` merges defaults + config per role; Sidebar renders its output. Reset button deletes the file.
 
 ## Gotchas learned the hard way
 1. Build-before-End ⇒ EBUSY (server holds `.next\standalone`).

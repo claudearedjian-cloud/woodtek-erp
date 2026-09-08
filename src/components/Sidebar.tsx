@@ -8,7 +8,6 @@ import {
   Tablet,
   Users,
   Package,
-  Wrench,
   ShieldCheck,
   UserCheck,
   ChevronRight,
@@ -24,10 +23,32 @@ import {
   Zap,
   LockKeyhole,
   Workflow,
-  Import
+  Import,
+  SlidersHorizontal,
 } from "lucide-react";
-import { canAccessModule, type ModuleId } from "@/lib/moduleAccess";
+import { resolveMenu, type MenuConfig } from "@/lib/menuConfig";
 import BrandMark from "@/components/BrandMark";
+
+const ICONS: Record<string, any> = {
+  dashboard: LayoutDashboard,
+  wip: Activity,
+  orders: ClipboardList,
+  recipes: Workflow,
+  schedule: CalendarDays,
+  gantt: GanttChartSquare,
+  machines: Cpu,
+  cmms: Zap,
+  downtime: Zap,
+  quality: AlertTriangle,
+  workforce: CalendarClock,
+  station: Tablet,
+  customers: Users,
+  inventory: Package,
+  pims: Import,
+  reports: FileText,
+  settings: SettingsIcon,
+  designer: SlidersHorizontal,
+};
 
 interface SidebarProps {
   activeTab: string;
@@ -36,6 +57,7 @@ interface SidebarProps {
   allUsers: any[];
   onSwitchUser: (user: any) => void;
   onRequestSwitch: () => void;
+  menuConfig: MenuConfig | null;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -47,52 +69,68 @@ export default function Sidebar({
   allUsers,
   onSwitchUser,
   onRequestSwitch,
+  menuConfig,
   isOpen,
   onClose,
 }: SidebarProps) {
-  const navItems = [
-    { id: "dashboard", label: "Executive Dashboard", icon: LayoutDashboard, badge: "" },
-    { id: "wip", label: "Live WIP Board", icon: Activity, badge: "Live" },
-    { id: "orders", label: "Orders & Routing", icon: ClipboardList, badge: "Live" },
-    { id: "recipes", label: "Routing Recipes", icon: Workflow, badge: "Recipe" },
-    { id: "schedule", label: "Dispatch Schedule", icon: CalendarDays, badge: "Plan" },
-    { id: "gantt", label: "Gantt Chart", icon: GanttChartSquare, badge: "Timeline" },
-    { id: "machines", label: "Shop Floor Monitor", icon: Cpu, badge: "" },
-    { id: "cmms", label: "Asset CMMS", icon: Zap, badge: "PM" },
-    { id: "downtime", label: "Downtime Log", icon: Zap, badge: "Down" },
-    { id: "quality", label: "Scrap & Rework", icon: AlertTriangle, badge: "QA" },
-    { id: "workforce", label: "Workforce & Shifts", icon: CalendarClock, badge: "Shift" },
-    { id: "station", label: "Operator Station Mode", icon: Tablet, badge: "Touch" },
-    { id: "customers", label: "Clients & Architects", icon: Users, badge: "" },
-    { id: "inventory", label: "Wood & Edge Stock", icon: Package, badge: "" },
-    { id: "pims", label: "PIMS Import", icon: Import, badge: "Link" },
-    { id: "reports", label: "System Reports", icon: FileText, badge: "PDF" },
-    { id: "settings", label: "General Settings", icon: SettingsIcon, badge: "" },
-  ];
-
-  // Map the legacy tab id to our canonical ModuleId and filter by role
-  const visibleNavItems = navItems.filter(item => {
-    const moduleId = item.id === "station" ? "operator" : (item.id as ModuleId);
-    return canAccessModule(currentUser?.role, moduleId);
-  });
+  const resolved = resolveMenu(currentUser?.role, menuConfig);
 
   // Shop-floor operators get a clean touchscreen: the Active Role Persona
   // panel (profile card + hover role switcher) is hidden for them. They
   // keep the PIN switch button so they can still sign in/out.
   const isOperator = currentUser?.role === "Machine Operator";
 
-  // In the Manager view, plant-configuration modules are grouped under
-  // General Settings instead of cluttering the top-level list.
-  const isManager = currentUser?.role === "Manager";
-  const SETTINGS_GROUP = ["recipes", "downtime", "workforce", "pims", "machines"];
-  const topNavItems = isManager
-    ? visibleNavItems.filter((item) => !SETTINGS_GROUP.includes(item.id))
-    : visibleNavItems;
-  const settingsSubItems = isManager
-    ? SETTINGS_GROUP.map((id) => visibleNavItems.find((i) => i.id === id)).filter(
-        (i): i is (typeof navItems)[number] => Boolean(i),
-      )
-    : [];
+  const renderItem = (
+    item: { id: string; label: string; badge: string },
+    sub: boolean,
+  ) => {
+    const Icon = ICONS[item.id] ?? Layers;
+    const isActive =
+      activeTab === item.id ||
+      (activeTab.startsWith("order-") && item.id === "orders") ||
+      (item.id === "settings" && resolved.settings.some((s) => s.id === activeTab));
+    const cls = sub
+      ? `relative w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] transition-all duration-150 ${
+          isActive
+            ? "bg-slate-800 font-bold text-amber-400"
+            : "text-slate-400 hover:bg-slate-800/70 hover:text-white"
+        }`
+      : `relative w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 group ${
+          isActive
+            ? "bg-gradient-to-r from-amber-500 to-amber-600 font-bold text-slate-950 shadow-lg shadow-amber-950/40"
+            : "text-slate-300 hover:bg-slate-800/70 hover:text-white"
+        }`;
+    return (
+      <button key={item.id} onClick={() => { setActiveTab(item.id); onClose(); }} className={cls}>
+        {!sub && isActive && (
+          <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-amber-400" />
+        )}
+        <div className={`flex min-w-0 flex-1 items-center ${sub ? "gap-2" : "gap-2.5"}`}>
+          <Icon
+            className={`${sub ? "h-4 w-4" : "h-5 w-5"} shrink-0 transition-transform group-hover:scale-110 ${
+              isActive ? (sub ? "text-amber-400" : "text-slate-950") : "text-slate-400 group-hover:text-amber-400"
+            }`}
+          />
+          <span className="truncate">{item.label}</span>
+        </div>
+        {item.badge && (
+          <span
+            className={`shrink-0 rounded-full font-bold uppercase ${
+              sub
+                ? "border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[9px] text-amber-400"
+                : isActive
+                  ? "bg-slate-950/25 px-2 py-0.5 text-[10px] text-slate-950"
+                  : "border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] text-amber-400"
+            }`}
+          >
+            {item.badge}
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  const empty = resolved.top.length === 0 && resolved.settings.length === 0;
 
   return (
     <aside className={`fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:relative md:translate-x-0 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
@@ -120,7 +158,7 @@ export default function Sidebar({
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
           Operations & Control
         </div>
-        {visibleNavItems.length === 0 ? (
+        {empty ? (
           <div className="mx-1 my-2 rounded-xl border border-dashed border-slate-700/80 bg-slate-950/40 px-4 py-5 text-center">
             <LockKeyhole className="mx-auto mb-2 h-5 w-5 text-amber-500/80" />
             <p className="text-xs font-bold text-slate-300">Sign in to continue</p>
@@ -129,69 +167,16 @@ export default function Sidebar({
             </p>
           </div>
         ) : (
-          topNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive =
-              activeTab === item.id ||
-              (activeTab.startsWith("order-") && item.id === "orders") ||
-              (item.id === "settings" && SETTINGS_GROUP.includes(activeTab));
-            return (
-              <React.Fragment key={item.id}>
-              <button
-                onClick={() => { setActiveTab(item.id); onClose(); }}
-                className={`relative w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 group ${
-                  isActive
-                    ? "bg-gradient-to-r from-amber-500 to-amber-600 font-bold text-slate-950 shadow-lg shadow-amber-950/40"
-                    : "text-slate-300 hover:bg-slate-800/70 hover:text-white"
-                }`}
-              >
-                {isActive && (
-                  <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-amber-400" />
-                )}
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  <Icon className={`h-5 w-5 shrink-0 transition-transform group-hover:scale-110 ${isActive ? "text-slate-950" : "text-slate-400 group-hover:text-amber-400"}`} />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                    isActive ? "bg-slate-950/25 text-slate-950" : "border border-slate-700 bg-slate-800 text-amber-400"
-                  }`}>
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-              {item.id === "settings" && settingsSubItems.length > 0 && (
+          resolved.top.map((item) => (
+            <React.Fragment key={item.id}>
+              {renderItem(item, false)}
+              {item.id === "settings" && resolved.settings.length > 0 && (
                 <div className="ml-5 mt-1 space-y-1 border-l-2 border-slate-700/60 pl-3 pb-1">
-                  {settingsSubItems.map((sub) => {
-                    const SubIcon = sub.icon;
-                    const subActive = activeTab === sub.id;
-                    return (
-                      <button
-                        key={sub.id}
-                        onClick={() => { setActiveTab(sub.id); onClose(); }}
-                        className={`relative w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] transition-all duration-150 ${
-                          subActive
-                            ? "bg-slate-800 font-bold text-amber-400"
-                            : "text-slate-400 hover:bg-slate-800/70 hover:text-white"
-                        }`}
-                      >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <SubIcon className={`h-4 w-4 shrink-0 ${subActive ? "text-amber-400" : "text-slate-500"}`} />
-                          <span className="truncate">{sub.label}</span>
-                        </div>
-                        {sub.badge && (
-                          <span className="shrink-0 rounded-full border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-400">
-                            {sub.badge}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                  {resolved.settings.map((s) => renderItem(s, true))}
                 </div>
               )}
-              </React.Fragment>
-            );
-          })
+            </React.Fragment>
+          ))
         )}
 
         <div className="mx-3 mt-5 border-t border-slate-800/80 pt-4" />

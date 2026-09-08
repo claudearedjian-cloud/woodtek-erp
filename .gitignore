@@ -2,6 +2,7 @@ node_modules/
 .next/
 logs/
 backups/
+data/
 *.log
 *.bak
 *.zip
