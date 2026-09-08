@@ -18,6 +18,19 @@ const STANDALONE = path.join(ROOT, ".next", "standalone");
 function log(msg) { console.log(`\n\x1b[36m[build-prod]\x1b[0m ${msg}`); }
 function run(cmd) { log(`> ${cmd}`); execSync(cmd, { stdio: "inherit", cwd: ROOT }); }
 
+// If the WoodTek server is still listening, the build cannot replace
+// .next/standalone (EBUSY). Fail fast with the exact fix instead.
+function serverRunning(port) {
+  return new Promise((resolve) => {
+    const net = require("node:net");
+    const sock = net.connect({ host: "127.0.0.1", port });
+    const done = (v) => { sock.destroy(); resolve(v); };
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+    sock.setTimeout(1000, () => done(false));
+  });
+}
+
 function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -30,6 +43,18 @@ function copyDir(src, dest) {
 
 async function main() {
   log("=== WoodTek ERP production build ===\n");
+
+  const port = Number(process.env.PORT || 3000);
+  if (await serverRunning(port)) {
+    console.error(
+      `\n[build-prod] A server is already listening on port ${port}.`,
+      `\n[build-prod] Stop it FIRST, then re-run this build:`,
+      `\n    schtasks /End /TN "\\WoodTek ERP"`,
+      `\n    node scripts\\build-prod.cjs`,
+      `\n    schtasks /Run /TN "\\WoodTek ERP"\n`,
+    );
+    process.exit(1);
+  }
 
   log("Step 1/3: Building Next.js production bundle (standalone)...");
   run("npx next build");
