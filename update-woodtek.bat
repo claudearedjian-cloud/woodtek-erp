@@ -8,6 +8,8 @@ rem ===========================================================================
 cd /d %~dp0
 
 echo [update] Pulling latest code from GitHub...
+rem Repo files that builds/edits may dirty locally — repo version always wins:
+git checkout -- tsconfig.json next.config.ts next-env.d.ts 2>nul
 git pull
 if errorlevel 1 (
   echo [update] git pull failed — check the message above.
