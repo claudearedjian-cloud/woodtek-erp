@@ -7,6 +7,14 @@ rem Double-click AFTER the agent says "pushed". Never paste command sequences.
 rem ===========================================================================
 cd /d %~dp0
 
+rem schtasks on the SYSTEM-run task needs admin rights — self-elevate:
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+  echo [update] Requesting administrator rights — click Yes on the UAC prompt...
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+
 echo [update] Pulling latest code from GitHub...
 rem Repo files that builds/edits may dirty locally — repo version always wins:
 git checkout -- tsconfig.json next.config.ts next-env.d.ts 2>nul

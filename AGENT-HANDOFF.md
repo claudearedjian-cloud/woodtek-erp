@@ -52,6 +52,7 @@ schtasks /Run /TN "\WoodTek ERP"
 6. The zip contained a stale nested `src/src/` copy (ignored in git); the live tree is top-level `src/`.
 7. PowerShell: `rmdir /s /q` is cmd syntax; use `Remove-Item -Recurse -Force`.
 8. An old untracked `update-woodtek.bat` (from the zip era) can block pulls; delete it once — the repo ships the real one.
+10. `schtasks /End|Run` on the SYSTEM task needs an ELEVATED shell (`Access is denied` otherwise); `update-woodtek.bat` self-elevates via UAC.
 9. Repo config files (`tsconfig.json`, `next.config.ts`, `next-env.d.ts`) can get dirty locally and block pulls; `update-woodtek.bat` now runs `git checkout --` on them before every pull — repo version always wins.
 
 ## How the agent verified changes (rebuild if needed)
