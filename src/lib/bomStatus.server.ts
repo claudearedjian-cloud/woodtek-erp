@@ -1,8 +1,9 @@
 // ============================================================================
-// Warehouse fulfilment status for BOM allocations — SERVER ONLY.
+// Warehouse fulfilment + operator receipt for BOM allocations — SERVER ONLY.
 // The orderMaterials table has no workflow columns and we avoid DB migrations,
-// so the Requested -> Prepared -> Delivered flow lives in a JSON overlay
-// keyed by allocation id (data/bom-status.json; survives rebuilds, backed up).
+// so Requested -> Prepared -> Delivered (per line) and the operator's
+// received/not-received confirmation (per order) live in a JSON overlay
+// (data/bom-status.json; survives rebuilds, covered by backups).
 // ============================================================================
 
 import fs from "node:fs";
@@ -16,9 +17,15 @@ export interface BomStatusEntry {
   updatedAt?: string;
 }
 
-export interface BomStatusFile {
+export interface BomReceivedEntry {
+  received: boolean;
+  at?: string;
+}
+
+interface RawFile {
   version: 1;
   entries: Record<string, BomStatusEntry>;
+  received: Record<string, BomReceivedEntry>;
 }
 
 function fileLocation(): string {
@@ -26,16 +33,32 @@ function fileLocation(): string {
   return path.join(dir, "bom-status.json");
 }
 
-export function readBomStatus(): BomStatusFile {
+function readRaw(): RawFile {
   try {
     const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    if (parsed && typeof parsed.entries === "object" && parsed.entries) {
-      return { version: 1, entries: parsed.entries };
-    }
+    return {
+      version: 1,
+      entries: parsed && typeof parsed.entries === "object" && parsed.entries ? parsed.entries : {},
+      received: parsed && typeof parsed.received === "object" && parsed.received ? parsed.received : {},
+    };
   } catch {
-    /* missing or corrupt -> empty */
+    return { version: 1, entries: {}, received: {} };
   }
-  return { version: 1, entries: {} };
+}
+
+function writeRaw(data: RawFile): void {
+  const file = fileLocation();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+}
+
+export function readBomStatus(): { version: 1; entries: Record<string, BomStatusEntry> } {
+  const raw = readRaw();
+  return { version: 1, entries: raw.entries };
+}
+
+export function readReceived(): Record<string, BomReceivedEntry> {
+  return readRaw().received;
 }
 
 export function setBomStatus(
@@ -43,13 +66,17 @@ export function setBomStatus(
   status: BomStatus,
   machineId?: number | null,
 ): void {
-  const data = readBomStatus();
+  const data = readRaw();
   data.entries[String(allocationId)] = {
     status,
     machineId: machineId ?? null,
     updatedAt: new Date().toISOString(),
   };
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+  writeRaw(data);
+}
+
+export function setOrderReceived(orderId: number, received: boolean): void {
+  const data = readRaw();
+  data.received[String(orderId)] = { received, at: new Date().toISOString() };
+  writeRaw(data);
 }

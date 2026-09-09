@@ -34,6 +34,7 @@ interface BoardOrder {
   customerCompany: string | null;
   materials: Line[];
   machines: { id: number; code: string | null; name: string | null }[];
+  received: boolean | null;
 }
 
 const STATUS_STYLE: Record<Line["status"], string> = {
@@ -167,6 +168,12 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                   <span className="rounded-lg bg-slate-800 px-2 py-1 text-slate-300">
                     Due {order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"}
                   </span>
+                  {order.received === true && (
+                    <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">✓ Operator received</span>
+                  )}
+                  {order.received === false && (
+                    <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-300">✗ Operator: NOT received</span>
+                  )}
                 </div>
               </div>
 

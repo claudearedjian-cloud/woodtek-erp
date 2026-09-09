@@ -19,7 +19,7 @@ import {
 } from "@/db/schema";
 import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { readBomStatus, setBomStatus, type BomStatus } from "@/lib/bomStatus.server";
+import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus } from "@/lib/bomStatus.server";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -82,10 +82,11 @@ export async function GET() {
     ]);
 
     const overlay = readBomStatus().entries;
+    const receivedMap = readReceived();
 
     const byOrder = new Map<number, any>();
     for (const o of openOrders) {
-      byOrder.set(o.id, { ...o, materials: [], machines: [] });
+      byOrder.set(o.id, { ...o, materials: [], machines: [], received: receivedMap[String(o.id)]?.received ?? null });
     }
     for (const m of mats) {
       const order = byOrder.get(m.orderId);
@@ -126,6 +127,17 @@ export async function PUT(request: Request) {
   }
   try {
     const body = await request.json();
+
+    // Order-level confirmation from the operator station: received yes/no.
+    if (body.orderId != null && typeof body.received === "boolean") {
+      const orderId = Number(body.orderId);
+      if (!Number.isInteger(orderId) || orderId <= 0) {
+        return NextResponse.json({ error: "A valid orderId is required." }, { status: 400 });
+      }
+      setOrderReceived(orderId, body.received);
+      return NextResponse.json({ ok: true, orderId, received: body.received });
+    }
+
     const allocationId = Number(body.allocationId);
     const status = String(body.status) as BomStatus;
     if (!Number.isInteger(allocationId) || !VALID.includes(status)) {

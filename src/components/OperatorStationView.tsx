@@ -79,6 +79,8 @@ export default function OperatorStationView({
 }: OperatorStationViewProps) {
   const [selectedMachineId, setSelectedMachineId] = useState<number | null>(null);
   const [operations, setOperations] = useState<any[]>([]);
+  const [bomByOrder, setBomByOrder] = useState<Record<number, any[]>>({});
+  const [receivedByOrder, setReceivedByOrder] = useState<Record<number, boolean | null>>({});
   const [loadingOps, setLoadingOps] = useState(false);
   const [actionSuccess, setActionSuccess] = useState("");
   const [actionError, setActionError] = useState("");
@@ -153,9 +155,45 @@ export default function OperatorStationView({
     }
   };
 
+  // BOM board for this operator: requested materials + receipt confirmation.
+  const fetchBomBoard = async () => {
+    try {
+      const r = await fetch("/api/bom", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      const byOrder: Record<number, any[]> = {};
+      const rec: Record<number, boolean | null> = {};
+      for (const o of d.orders ?? []) {
+        byOrder[o.id] = o.materials ?? [];
+        rec[o.id] = o.received ?? null;
+      }
+      setBomByOrder(byOrder);
+      setReceivedByOrder(rec);
+    } catch {
+      /* board is best-effort */
+    }
+  };
+
+  const confirmReceived = async (orderId: number, received: boolean) => {
+    try {
+      await fetch("/api/bom", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, received }),
+      });
+      await fetchBomBoard();
+    } catch {
+      /* ignore */
+    }
+  };
+
   useEffect(() => {
     fetchMachineQueue();
-    const interval = setInterval(fetchMachineQueue, 10000);
+    fetchBomBoard();
+    const interval = setInterval(() => {
+      fetchMachineQueue();
+      fetchBomBoard();
+    }, 10000);
     return () => clearInterval(interval);
   }, [selectedMachineId]);
 
@@ -515,6 +553,50 @@ export default function OperatorStationView({
                       {op.rejectReason && (
                         <div className="text-[11px] font-bold text-rose-300 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1 rounded-lg inline-block">
                           Reject reason: {op.rejectReason}
+                        </div>
+                      )}
+
+                      {(bomByOrder[op.orderId] ?? []).length > 0 && (
+                        <div className="mt-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                              Requested materials (BOM)
+                            </span>
+                            {receivedByOrder[op.orderId] === true && (
+                              <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-black text-emerald-300">RECEIVED ✓</span>
+                            )}
+                            {receivedByOrder[op.orderId] === false && (
+                              <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-black text-rose-300">NOT RECEIVED ✗</span>
+                            )}
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            {(bomByOrder[op.orderId] ?? []).map((m: any) => (
+                              <div key={m.id} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="truncate font-bold text-slate-200">
+                                  {m.quantityUsed} {m.itemUnit || "pcs"} — {m.itemName || m.itemSku}
+                                </span>
+                                <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${m.status === "Delivered" ? "bg-emerald-500/10 text-emerald-300" : m.status === "Prepared" ? "bg-sky-500/10 text-sky-300" : "bg-amber-500/10 text-amber-300"}`}>
+                                  {m.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => confirmReceived(op.orderId, true)}
+                              className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-3 py-2.5 text-xs font-black text-emerald-300 hover:bg-emerald-600/40"
+                            >
+                              MATERIALS RECEIVED
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => confirmReceived(op.orderId, false)}
+                              className="rounded-xl border-2 border-rose-600 bg-rose-600/10 px-3 py-2.5 text-xs font-black text-rose-300 hover:bg-rose-600/30"
+                            >
+                              NOT RECEIVED
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
