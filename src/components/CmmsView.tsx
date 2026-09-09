@@ -74,7 +74,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
   const [assetHistory, setAssetHistory] = useState<any[]>([]);
   const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
 
-  const canManage = currentUser?.role === "Manager" || currentUser?.role === "Technician";
+  const canManage = ["Manager", "Technician", "QA & Dispatch"].includes(currentUser?.role);
 
   const sites: string[] = settings?.site_locations ?? ["Main Plant Bay A"];
   const eventTypes: string[] = useMemo(() => {

@@ -49,7 +49,20 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
   const [meter, setMeter] = useState("");
   const [remarks, setRemarks] = useState("");
 
-  const canManage = currentUser?.role === "Manager" || currentUser?.role === "Technician";
+  const canManage = ["Manager", "Technician", "QA & Dispatch"].includes(currentUser?.role);
+
+  const deleteLog = async (logId: number) => {
+    if (!confirm("Delete this maintenance entry? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/cmms/logs?logId=${logId}`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Could not delete entry");
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete entry");
+    }
+  };
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -299,7 +312,7 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                 {uploading ? "Uploading…" : "Upload New Image"}
               </button>
-              {!canManage && <p className="mt-2 text-[10px] text-slate-600">Manager or Technician role required</p>}
+              {!canManage && <p className="mt-2 text-[10px] text-slate-600">Manager, Technician or QA &amp; Dispatch role required</p>}
             </>
           )}
           <input
@@ -421,7 +434,7 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
           </button>
           {!canManage && (
             <p className="mt-2 text-center text-[11px] text-slate-500">
-              Read-only view — Manager or Technician role is required to commit maintenance.
+              Read-only view — Manager, Technician or QA &amp; Dispatch role is required to commit maintenance.
             </p>
           )}
         </div>
@@ -442,8 +455,19 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
               <li key={l.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-black uppercase text-slate-300">{l.eventType}</span>
-                  <span className="font-mono text-[10px] text-slate-500">
-                    {new Date(l.createdAt).toLocaleString()} · {Number(l.runtimeAtEvent).toLocaleString()} hrs
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-slate-500">
+                      {new Date(l.createdAt).toLocaleString()} · {Number(l.runtimeAtEvent).toLocaleString()} hrs
+                    </span>
+                    {canManage && (
+                      <button
+                        onClick={() => deleteLog(l.id)}
+                        title="Delete entry"
+                        className="rounded p-1 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-slate-200">{l.description}</p>

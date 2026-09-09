@@ -247,7 +247,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const { error: authError } = await authorize("machines:write");
+  const { error: authError } = await authorize("cmms:write");
   if (authError) return authError;
 
   try {

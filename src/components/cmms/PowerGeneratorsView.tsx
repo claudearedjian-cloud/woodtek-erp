@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   RefreshCw,
   MapPin,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 
 interface Props {
@@ -50,7 +52,9 @@ export default function PowerGeneratorsView({ currentUser, onChanged }: Props) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<any>({});
 
-  const canManage = currentUser?.role === "Manager" || currentUser?.role === "Technician";
+  const canManage = ["Manager", "Technician", "QA & Dispatch"].includes(currentUser?.role);
+  const [editUnit, setEditUnit] = useState<any>(null);
+  const [editForm, setEditForm] = useState<any>({});
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -109,6 +113,73 @@ export default function PowerGeneratorsView({ currentUser, onChanged }: Props) {
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save telemetry");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (unit: any) => {
+    setEditForm({
+      assetTag: unit.assetTag ?? "",
+      name: unit.name ?? "",
+      brand: unit.brand ?? "",
+      assetType: unit.assetType ?? "Generators",
+      site: unit.site ?? "",
+      serialNumber: unit.serialNumber ?? "",
+      series: unit.series ?? "",
+      productionYear: unit.productionYear ? String(unit.productionYear) : "",
+      ratingKva: String(unit.ratingKva ?? ""),
+      powerStatus: unit.powerStatus ?? "Standby",
+      status: unit.status ?? "Operational",
+      criticality: unit.criticality ?? "Medium",
+      runtimeHours: String(unit.runtimeHours ?? 0),
+      serviceIntervalHours: String(unit.serviceIntervalHours ?? 500),
+      lastServiceHours: String(unit.lastServiceHours ?? 0),
+      notes: unit.notes ?? "",
+    });
+    setEditUnit(unit);
+    setError("");
+  };
+
+  const submitEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editUnit) return;
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/cmms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editUnit.id, machineId: editUnit.machineId ?? null, ...editForm }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Failed to save asset");
+      setEditUnit(null);
+      setNotice(`Asset ${editForm.assetTag || editUnit.assetTag} updated.`);
+      setTimeout(() => setNotice(""), 4000);
+      await load(true);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save asset");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeUnit = async (unit: any) => {
+    if (!confirm(`Delete ${unit.assetTag} — ${unit.name}? Its maintenance history will also be deleted.`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/cmms?assetId=${unit.id}`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Failed to delete asset");
+      setNotice(`${unit.assetTag} removed from the fleet.`);
+      setTimeout(() => setNotice(""), 4000);
+      await load(true);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete asset");
     } finally {
       setSaving(false);
     }
@@ -276,11 +347,33 @@ export default function PowerGeneratorsView({ currentUser, onChanged }: Props) {
                   onClick={() => openConsole(u)}
                   disabled={!canManage}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 py-2.5 text-xs font-bold text-slate-200 transition hover:border-emerald-500/50 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={canManage ? "Capture a live diagnostic reading" : "Manager or Technician role required"}
+                  title={canManage ? "Capture a live diagnostic reading" : "Manager, Technician or QA & Dispatch role required"}
                 >
                   <SlidersHorizontal className="h-4 w-4 text-emerald-400" />
                   Open Engine Diagnostic Console
                 </button>
+
+                {canManage && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEdit(u)}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 py-2 text-xs font-bold text-slate-200 transition hover:border-emerald-500/50 hover:bg-slate-800"
+                      title="Edit this asset"
+                    >
+                      <Pencil className="h-3.5 w-3.5 text-emerald-400" />
+                      Edit Asset
+                    </button>
+                    <button
+                      onClick={() => removeUnit(u)}
+                      disabled={saving}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-xs font-bold text-rose-300 transition hover:border-rose-500/50 hover:bg-rose-500/10 disabled:opacity-50"
+                      title="Delete this asset and its maintenance history"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -350,6 +443,111 @@ export default function PowerGeneratorsView({ currentUser, onChanged }: Props) {
               <button type="button" onClick={() => setConsole(null)} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700">Cancel</button>
               <button type="submit" disabled={saving} className="rounded-xl bg-emerald-500 px-6 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
                 {saving ? "Saving…" : "Save Diagnostic Reading"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {/* Edit asset modal */}
+      {editUnit && (
+        <div className="fixed inset-0 z-[95] flex items-start justify-center overflow-y-auto bg-slate-950/85 p-4 backdrop-blur-sm sm:items-center">
+          <form onSubmit={submitEdit} className="my-8 w-full max-w-2xl space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-emerald-400">
+                  <Pencil className="h-3.5 w-3.5" /> Edit plant asset
+                </div>
+                <h3 className="truncate text-base font-black text-white">{editUnit.name}</h3>
+                <p className="mt-0.5 font-mono text-[11px] text-slate-400">{editUnit.assetTag} · {editUnit.site}</p>
+              </div>
+              <button type="button" onClick={() => setEditUnit(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Asset Tag" icon={Zap}>
+                <input required value={editForm.assetTag} onChange={(e) => setEditForm({ ...editForm, assetTag: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Name" icon={Zap}>
+                <input required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+              </Field>
+              <Field label="Brand" icon={Zap}>
+                <input value={editForm.brand} onChange={(e) => setEditForm({ ...editForm, brand: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+              </Field>
+              <Field label="Asset Type" icon={Zap}>
+                <input value={editForm.assetType} onChange={(e) => setEditForm({ ...editForm, assetType: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+              </Field>
+              <Field label="Site / Location" icon={MapPin}>
+                <input value={editForm.site} onChange={(e) => setEditForm({ ...editForm, site: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+              </Field>
+              <Field label="Serial Number" icon={Zap}>
+                <input value={editForm.serialNumber} onChange={(e) => setEditForm({ ...editForm, serialNumber: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Series" icon={Zap}>
+                <input value={editForm.series} onChange={(e) => setEditForm({ ...editForm, series: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+              </Field>
+              <Field label="Production Year" icon={Zap}>
+                <input type="number" min="1900" max="2100" value={editForm.productionYear} onChange={(e) => setEditForm({ ...editForm, productionYear: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Rating (kVA)" icon={Zap}>
+                <input type="number" min="0" value={editForm.ratingKva} onChange={(e) => setEditForm({ ...editForm, ratingKva: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Hour Meter (hrs)" icon={Activity}>
+                <input type="number" min="0" value={editForm.runtimeHours} onChange={(e) => setEditForm({ ...editForm, runtimeHours: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Service Interval (hrs)" icon={Gauge}>
+                <input type="number" min="1" value={editForm.serviceIntervalHours} onChange={(e) => setEditForm({ ...editForm, serviceIntervalHours: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+              <Field label="Last Service at (hrs)" icon={Gauge}>
+                <input type="number" min="0" value={editForm.lastServiceHours} onChange={(e) => setEditForm({ ...editForm, lastServiceHours: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 font-mono text-xs text-white" />
+              </Field>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-bold text-slate-300">Operating Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {POWER_STATES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, powerStatus: s })}
+                    className={`rounded-xl border px-3 py-2 text-[11px] font-bold transition ${
+                      editForm.powerStatus === s ? statusPill(s) : "border-slate-700 bg-slate-950 text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Asset Status" icon={CheckCircle2}>
+                <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white">
+                  <option>Operational</option>
+                  <option>Under Maintenance</option>
+                  <option>Decommissioned</option>
+                </select>
+              </Field>
+              <Field label="Criticality" icon={AlertTriangle}>
+                <select value={editForm.criticality} onChange={(e) => setEditForm({ ...editForm, criticality: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white">
+                  <option>Low</option>
+                  <option>Medium</option>
+                  <option>High</option>
+                  <option>Critical</option>
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Notes" icon={SlidersHorizontal}>
+              <textarea rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white" />
+            </Field>
+
+            <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+              <button type="button" onClick={() => setEditUnit(null)} className="rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700">Cancel</button>
+              <button type="submit" disabled={saving} className="rounded-xl bg-emerald-500 px-6 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+                {saving ? "Saving…" : "Save Changes"}
               </button>
             </div>
           </form>
