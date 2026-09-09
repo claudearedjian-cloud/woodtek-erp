@@ -217,6 +217,17 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+// Best effort: if this supervisor exits for ANY reason while the server child
+// is alive, take the child down with it (reduces orphaned port holders when
+// Task Scheduler hard-terminates the supervisor).
+process.on("exit", () => {
+  try {
+    if (childAlive()) child.kill();
+  } catch {
+    /* nothing more we can do */
+  }
+});
+
 (async () => {
   // v2 preflight: never spawn into a taken port.
   const owner = await findPortOwner(PORT);

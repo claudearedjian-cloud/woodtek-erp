@@ -31,6 +31,23 @@ function serverRunning(port) {
   });
 }
 
+// PID currently listening on `port` (Windows netstat), or null.
+function findPortOwner(port) {
+  try {
+    const out = execSync("netstat -ano", { encoding: "utf8", timeout: 8000 });
+    const re = /^\s*TCP\s+\S+:(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$/;
+    for (const line of out.split(/\r?\n/)) {
+      const m = line.match(re);
+      if (m && m[1] === String(port)) return Number(m[2]);
+    }
+  } catch {
+    /* netstat unavailable */
+  }
+  return null;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -46,14 +63,33 @@ async function main() {
 
   const port = Number(process.env.PORT || 3000);
   if (await serverRunning(port)) {
-    console.error(
-      `\n[build-prod] A server is already listening on port ${port}.`,
-      `\n[build-prod] Stop it FIRST, then re-run this build:`,
-      `\n    schtasks /End /TN "\\WoodTek ERP"`,
-      `\n    node scripts\\build-prod.cjs`,
-      `\n    schtasks /Run /TN "\\WoodTek ERP"\n`,
-    );
-    process.exit(1);
+    if (process.platform === "win32") {
+      // Self-heal: end the task, then kill any orphaned server on the port.
+      // (schtasks /End stops the supervisor but can leave the child server alive.)
+      log(`A server is listening on port ${port} — stopping it...`);
+      try { execSync('schtasks /End /TN "\\WoodTek ERP"', { stdio: "ignore" }); } catch { /* not running / no rights */ }
+      await sleep(2000);
+      if (await serverRunning(port)) {
+        const pid = findPortOwner(port);
+        if (pid) {
+          log(`Killing leftover server process (PID ${pid})...`);
+          try { execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" }); } catch { /* needs elevation */ }
+          await sleep(1500);
+        }
+      }
+    }
+    if (await serverRunning(port)) {
+      console.error(
+        `\n[build-prod] Port ${port} is STILL occupied and could not be freed automatically.`,
+        `\n[build-prod] In an ADMINISTRATOR window run:`,
+        `\n    schtasks /End /TN "\\WoodTek ERP"`,
+        `\n    netstat -ano | findstr :${port}`,
+        `\n    taskkill /F /T /PID <the PID from the LISTENING line>`,
+        `\nThen re-run this build.\n`,
+      );
+      process.exit(1);
+    }
+    log(`Port ${port} is free — continuing.`);
   }
 
   log("Step 1/3: Building Next.js production bundle (standalone)...");

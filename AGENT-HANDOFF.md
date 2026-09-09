@@ -59,6 +59,7 @@ schtasks /Run /TN "\WoodTek ERP"
 7. PowerShell: `rmdir /s /q` is cmd syntax; use `Remove-Item -Recurse -Force`.
 8. An old untracked `update-woodtek.bat` (from the zip era) can block pulls; delete it once — the repo ships the real one.
 10. `schtasks /End|Run` on the SYSTEM task needs an ELEVATED shell (`Access is denied` otherwise); `update-woodtek.bat` self-elevates via UAC.
+11. `schtasks /End` stops only the supervisor (start-prod.cjs) — the spawned server child can survive as an ORPHAN holding port 3000. `build-prod.cjs` now self-heals (End task → netstat → taskkill the listener); the bat also kills leftovers after /End; start-prod.cjs kills its child on any exit.
 9. Repo config files (`tsconfig.json`, `next.config.ts`, `next-env.d.ts`) can get dirty locally and block pulls; `update-woodtek.bat` now runs `git checkout --` on them before every pull — repo version always wins.
 
 ## How the agent verified changes (rebuild if needed)

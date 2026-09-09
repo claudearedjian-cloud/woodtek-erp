@@ -29,6 +29,11 @@ echo.
 echo [update] Stopping the WoodTek server...
 schtasks /End /TN "\WoodTek ERP"
 
+rem Give the server a moment to release the port, then kill any leftover listener
+rem (schtasks /End can orphan the actual server process).
+timeout /t 2 /nobreak >nul
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":3000 "') do taskkill /F /T /PID %%p >nul 2>&1
+
 echo.
 echo [update] Building (1-2 minutes)...
 call node scripts\build-prod.cjs
