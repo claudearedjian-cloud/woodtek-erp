@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Save
 } from "lucide-react";
+import { DEFAULT_PROJECT_TYPES } from "@/lib/projectTypes";
 
 interface OrdersViewProps {
   orders: any[];
@@ -85,6 +86,12 @@ export default function OrdersView({
   const [newCatName, setNewCatName] = useState("");
   const [catMsg, setCatMsg] = useState("");
 
+  // Project categories: managed list, merged with defaults and in-use values.
+  const [projectTypes, setProjectTypes] = useState<string[]>(DEFAULT_PROJECT_TYPES);
+  const [showPtMgr, setShowPtMgr] = useState(false);
+  const [newPtName, setNewPtName] = useState("");
+  const [ptMsg, setPtMsg] = useState("");
+
   const machineCategories = Array.from(new Set((machines || []).map((m: any) => m.category).filter(Boolean))).sort();
   const allCategories = Array.from(new Set([...categoryList, ...machineCategories])).sort();
 
@@ -114,6 +121,38 @@ export default function OrdersView({
       setCatMsg("Categories updated.");
     } catch {
       setCatMsg("Network error — categories not saved.");
+    }
+  };
+
+  const canManageProjectTypes = currentUser?.role === "Manager";
+
+  useEffect(() => {
+    fetch("/api/project-types", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { types: [] }))
+      .then((d) => {
+        const t = Array.isArray(d.types) ? d.types : [];
+        if (t.length > 0) setProjectTypes(Array.from(new Set([...DEFAULT_PROJECT_TYPES, ...t])));
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveProjectTypes = async (next: string[]) => {
+    setPtMsg("");
+    try {
+      const res = await fetch("/api/project-types", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ types: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPtMsg(data.error || "Failed to save project categories.");
+        return;
+      }
+      setProjectTypes(Array.from(new Set([...DEFAULT_PROJECT_TYPES, ...(Array.isArray(data.types) ? data.types : [])])));
+      setPtMsg("Project categories updated.");
+    } catch {
+      setPtMsg("Network error — project categories not saved.");
     }
   };
 
@@ -606,12 +645,64 @@ export default function OrdersView({
                     onChange={(e) => setProjectType(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   >
-                    <option value="Custom Hospitality Furniture">Hospitality Furniture</option>
-                    <option value="Custom Kitchens">Custom Kitchens & Pantry</option>
-                    <option value="Wardrobe Fit-out">Wardrobe & Closet Fit-out</option>
-                    <option value="Commercial Office & Retail">Commercial Office & Retail</option>
-                    <option value="Precision Sizing & Banding Only">Express Trade Cutting & Banding</option>
+                    {Array.from(new Set([
+                      ...projectTypes,
+                      ...orders.map((o: any) => o.projectType).filter(Boolean),
+                      projectType,
+                    ])).map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
                   </select>
+                  {canManageProjectTypes && (
+                    <button
+                      type="button"
+                      onClick={() => setShowPtMgr(v => !v)}
+                      className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-teal-300 hover:text-teal-200"
+                    >
+                      <Wrench className="h-3.5 w-3.5" /> {showPtMgr ? "Hide project categories" : "Add / remove project categories"}
+                    </button>
+                  )}
+                  {showPtMgr && canManageProjectTypes && (
+                    <div className="mt-2 rounded-xl border border-teal-800/60 bg-slate-950/70 p-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {projectTypes.map(t => (
+                          <span key={t} className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] text-slate-200">
+                            {t}
+                            <button
+                              type="button"
+                              onClick={() => saveProjectTypes(projectTypes.filter(x => x !== t))}
+                              className="text-rose-400 hover:text-rose-300"
+                              title={`Remove ${t}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          value={newPtName}
+                          onChange={e => setNewPtName(e.target.value)}
+                          placeholder="New project category"
+                          maxLength={40}
+                          className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const n = newPtName.trim();
+                            if (!n) return;
+                            saveProjectTypes([...projectTypes, n]);
+                            setNewPtName("");
+                          }}
+                          className="flex items-center gap-1 rounded-lg bg-teal-600 px-3 text-[11px] font-bold text-white hover:bg-teal-500"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Add
+                        </button>
+                      </div>
+                      {ptMsg && <div className="mt-1.5 text-[11px] text-amber-300">{ptMsg}</div>}
+                    </div>
+                  )}
                 </div>
               </div>
 
