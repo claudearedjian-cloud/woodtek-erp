@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { baseRoleOf } from "@/lib/permissions";
 import { 
   Cpu, 
   Plus, 
@@ -278,7 +279,7 @@ export default function MachinesView({
                   >
                     <option value="" className="bg-slate-900 text-slate-400 italic">Unassigned</option>
                     {users
-                      .filter(u => u.role === "Machine Operator" || u.role === "Technician" || u.role === "Manager")
+                      .filter(u => ["Machine Operator", "Technician", "Manager"].includes(baseRoleOf(u.role)))
                       .map(u => (
                         <option key={u.id} value={u.id} className="bg-slate-900 text-white">
                           {u.name} ({u.role})

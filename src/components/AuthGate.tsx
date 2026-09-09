@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
+import { baseRoleOf } from "@/lib/permissions";
 import {
   ArrowRight,
   Delete,
@@ -37,7 +38,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
     if (initialUser?.id) {
       setSelectedId(initialUser.id);
     } else if (!selectedId && users.length > 0) {
-      const defaultUser = users.find(u => u.role === "Manager") || users[0];
+      const defaultUser = users.find(u => baseRoleOf(u.role) === "Manager") || users[0];
       setSelectedId(defaultUser.id);
     }
   }, [initialUser, users, selectedId]);

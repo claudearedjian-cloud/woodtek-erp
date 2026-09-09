@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { users, customers } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
+import { baseRoleOf } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 const SAFE_USER_COLUMNS = {
   id: users.id,
@@ -21,6 +23,7 @@ export async function GET(request: Request) {
   if (authError) return authError;
 
   try {
+    ensureRolesRegistered();
     const url = new URL(request.url);
     const entityType = url.searchParams.get("entity");
     const entityId = url.searchParams.get("entityId");
@@ -29,9 +32,9 @@ export async function GET(request: Request) {
       let allUsers = await db.select(SAFE_USER_COLUMNS).from(users).orderBy(asc(users.name));
       
       if (entityType === "operators") {
-        allUsers = allUsers.filter(u => u.role === "Machine Operator");
+        allUsers = allUsers.filter(u => baseRoleOf(u.role) === "Machine Operator");
       } else if (entityType === "technicians") {
-        allUsers = allUsers.filter(u => u.role === "Technician");
+        allUsers = allUsers.filter(u => baseRoleOf(u.role) === "Technician");
       } else if (entityType === "users") {
         // All users
       }
@@ -64,9 +67,9 @@ export async function GET(request: Request) {
       summary: {
         totalUsers: allUsers.length,
         totalClients: allClients.length,
-        operators: allUsers.filter(u => u.role === "Machine Operator").length,
-        technicians: allUsers.filter(u => u.role === "Technician").length,
-        managers: allUsers.filter(u => u.role === "Manager").length,
+        operators: allUsers.filter(u => baseRoleOf(u.role) === "Machine Operator").length,
+        technicians: allUsers.filter(u => baseRoleOf(u.role) === "Technician").length,
+        managers: allUsers.filter(u => baseRoleOf(u.role) === "Manager").length,
       }
     });
   } catch (error: any) {
