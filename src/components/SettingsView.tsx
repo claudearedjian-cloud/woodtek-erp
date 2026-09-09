@@ -98,6 +98,147 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     }
   };
 
+  const roleManagerPanel = (
+    <>
+                  <div className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
+        <button type="button" onClick={() => setShowRoleMgr((v) => !v)} className="text-xs font-bold text-teal-300 hover:text-teal-200 flex items-center gap-1.5">
+          <UserCog className="w-3.5 h-3.5" /> {showRoleMgr ? "Hide role manager" : "Manage roles (add / remove)"}
+        </button>
+        {showRoleMgr && (
+          <div className="mt-3 space-y-2">
+            {ROLES.map((r) => (
+              <div key={r} className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
+                <span>{r}</span>
+                <span className="text-[10px] text-slate-500">built-in</span>
+              </div>
+            ))}
+            {customRoles.map((r) => (
+              <div key={r.name}>
+                <div className="flex items-center justify-between text-xs text-slate-200 bg-slate-900/60 rounded-lg px-3 py-2">
+                  <span>
+                    {r.name}{" "}
+                    <span className="text-[10px] text-slate-500">
+                      inherits {r.base}
+                      {r.modules && r.modules.length > 0 ? ` · ${r.modules.length} screen(s) only` : ""}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      title="Choose which screens this role sees"
+                      onClick={() => {
+                        if (screensRole === r.name) { setScreensRole(null); return; }
+                        setScreensRole(r.name);
+                        setScreenSel(r.modules ?? []);
+                      }}
+                      className="text-slate-400 hover:text-teal-300"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title={`Remove ${r.name}`}
+                      onClick={() => saveRoles(customRoles.filter((x) => x.name !== r.name))}
+                      className="text-rose-400 hover:text-rose-300"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                </div>
+                {screensRole === r.name && (
+                  <div className="mt-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+                    <div className="text-[10px] font-bold uppercase text-slate-500">
+                      Screens this role sees — none selected = full {r.base} access
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {SCREEN_CHOICES.map((m) => (
+                        <label
+                          key={m}
+                          className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${screenSel.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={screenSel.includes(m)}
+                            onChange={() => setScreenSel((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
+                          />
+                          {MODULE_LABELS[m]}
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        saveRoles(customRoles.map((x) => (x.name === screensRole ? { ...x, modules: screenSel.length ? screenSel : undefined } : x)));
+                        setScreensRole(null);
+                      }}
+                      className="mt-2 rounded-lg bg-teal-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-teal-500"
+                    >
+                      Save screens
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="flex gap-2 pt-1">
+              <input
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                placeholder="New role name"
+                maxLength={30}
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
+              />
+              <select
+                value={newRoleBase}
+                onChange={(e) => setNewRoleBase(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white"
+              >
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>inherits {r}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const n = newRoleName.trim();
+                  if (!n) return;
+                  saveRoles([...customRoles, { name: n, base: newRoleBase, ...(addScreens.length ? { modules: addScreens } : {}) }]);
+                  setNewRoleName("");
+                  setAddScreens([]);
+                }}
+                className="bg-teal-600 hover:bg-teal-500 text-white rounded-lg px-3 text-xs font-bold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="pt-1">
+              <div className="text-[10px] font-bold uppercase text-slate-500">
+                Screens (optional — none selected = full {newRoleBase} access)
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {SCREEN_CHOICES.map((m) => (
+                  <label
+                    key={m}
+                    className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${addScreens.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="hidden"
+                      checked={addScreens.includes(m)}
+                      onChange={() => setAddScreens((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
+                    />
+                    {MODULE_LABELS[m]}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {roleMsg && <div className="text-[11px] text-amber-300">{roleMsg}</div>}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   const fetchEntities = async () => {
     setLoading(true);
     try {
@@ -278,6 +419,15 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
+        {activeTab === "users" && (
+          <button
+            type="button"
+            onClick={() => setShowRoleMgr((v) => !v)}
+            className="flex items-center gap-2 border border-teal-700 bg-teal-500/10 text-teal-300 font-black px-4 py-2.5 rounded-xl text-xs transition hover:bg-teal-500/20"
+          >
+            <UserCog className="w-4 h-4" /> Manage roles
+          </button>
+        )}
         <button
           onClick={() => openModal()}
           className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs shadow-lg shadow-amber-600/30 transition"
@@ -286,6 +436,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           <span>Add {activeTab === "clients" ? "Client" : activeTab === "technicians" ? "Technician" : activeTab === "operators" ? "Operator" : "User"}</span>
         </button>
       </div>
+
+      {activeTab === "users" && showRoleMgr && !showModal && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{roleManagerPanel}</div>
+      )}
 
       {/* Entity List */}
       {loading ? (
@@ -440,142 +594,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                       </div>
                     </div>
                   </div>
-                  <div className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
-                    <button type="button" onClick={() => setShowRoleMgr((v) => !v)} className="text-xs font-bold text-teal-300 hover:text-teal-200 flex items-center gap-1.5">
-                      <UserCog className="w-3.5 h-3.5" /> {showRoleMgr ? "Hide role manager" : "Manage roles (add / remove)"}
-                    </button>
-                    {showRoleMgr && (
-                      <div className="mt-3 space-y-2">
-                        {ROLES.map((r) => (
-                          <div key={r} className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
-                            <span>{r}</span>
-                            <span className="text-[10px] text-slate-500">built-in</span>
-                          </div>
-                        ))}
-                        {customRoles.map((r) => (
-                          <div key={r.name}>
-                            <div className="flex items-center justify-between text-xs text-slate-200 bg-slate-900/60 rounded-lg px-3 py-2">
-                              <span>
-                                {r.name}{" "}
-                                <span className="text-[10px] text-slate-500">
-                                  inherits {r.base}
-                                  {r.modules && r.modules.length > 0 ? ` · ${r.modules.length} screen(s) only` : ""}
-                                </span>
-                              </span>
-                              <span className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  title="Choose which screens this role sees"
-                                  onClick={() => {
-                                    if (screensRole === r.name) { setScreensRole(null); return; }
-                                    setScreensRole(r.name);
-                                    setScreenSel(r.modules ?? []);
-                                  }}
-                                  className="text-slate-400 hover:text-teal-300"
-                                >
-                                  <Edit className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  title={`Remove ${r.name}`}
-                                  onClick={() => saveRoles(customRoles.filter((x) => x.name !== r.name))}
-                                  className="text-rose-400 hover:text-rose-300"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </span>
-                            </div>
-                            {screensRole === r.name && (
-                              <div className="mt-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
-                                <div className="text-[10px] font-bold uppercase text-slate-500">
-                                  Screens this role sees — none selected = full {r.base} access
-                                </div>
-                                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                  {SCREEN_CHOICES.map((m) => (
-                                    <label
-                                      key={m}
-                                      className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${screenSel.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        className="hidden"
-                                        checked={screenSel.includes(m)}
-                                        onChange={() => setScreenSel((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
-                                      />
-                                      {MODULE_LABELS[m]}
-                                    </label>
-                                  ))}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    saveRoles(customRoles.map((x) => (x.name === screensRole ? { ...x, modules: screenSel.length ? screenSel : undefined } : x)));
-                                    setScreensRole(null);
-                                  }}
-                                  className="mt-2 rounded-lg bg-teal-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-teal-500"
-                                >
-                                  Save screens
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <div className="flex gap-2 pt-1">
-                          <input
-                            value={newRoleName}
-                            onChange={(e) => setNewRoleName(e.target.value)}
-                            placeholder="New role name"
-                            maxLength={30}
-                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white"
-                          />
-                          <select
-                            value={newRoleBase}
-                            onChange={(e) => setNewRoleBase(e.target.value)}
-                            className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white"
-                          >
-                            {ROLES.map((r) => (
-                              <option key={r} value={r}>inherits {r}</option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const n = newRoleName.trim();
-                              if (!n) return;
-                              saveRoles([...customRoles, { name: n, base: newRoleBase, ...(addScreens.length ? { modules: addScreens } : {}) }]);
-                              setNewRoleName("");
-                              setAddScreens([]);
-                            }}
-                            className="bg-teal-600 hover:bg-teal-500 text-white rounded-lg px-3 text-xs font-bold"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <div className="pt-1">
-                          <div className="text-[10px] font-bold uppercase text-slate-500">
-                            Screens (optional — none selected = full {newRoleBase} access)
-                          </div>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {SCREEN_CHOICES.map((m) => (
-                              <label
-                                key={m}
-                                className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${addScreens.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  className="hidden"
-                                  checked={addScreens.includes(m)}
-                                  onChange={() => setAddScreens((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
-                                />
-                                {MODULE_LABELS[m]}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                        {roleMsg && <div className="text-[11px] text-amber-300">{roleMsg}</div>}
-                      </div>
-                    )}
-                  </div>
+{roleManagerPanel}
                   <div>
                     <label className="block text-xs font-bold text-slate-300 mb-1.5">Phone</label>
                     <input type="text" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white" />
