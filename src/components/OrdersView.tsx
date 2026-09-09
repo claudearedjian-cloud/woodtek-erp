@@ -160,7 +160,9 @@ export default function OrdersView({
       .then((r) => (r.ok ? r.json() : { types: [] }))
       .then((d) => {
         const t = Array.isArray(d.types) ? d.types : [];
-        if (t.length > 0) setProjectTypes(Array.from(new Set([...DEFAULT_PROJECT_TYPES, ...t])));
+        // Trust the stored list as-is — merging DEFAULT_PROJECT_TYPES here would
+        // resurrect categories the manager deleted.
+        if (t.length > 0) setProjectTypes(t);
       })
       .catch(() => {});
   }, []);
@@ -178,7 +180,7 @@ export default function OrdersView({
         setPtMsg(data.error || "Failed to save project categories.");
         return;
       }
-      setProjectTypes(Array.from(new Set([...DEFAULT_PROJECT_TYPES, ...(Array.isArray(data.types) ? data.types : [])])));
+      setProjectTypes(Array.isArray(data.types) ? data.types : []);
       setPtMsg("Project categories updated.");
     } catch {
       setPtMsg("Network error — project categories not saved.");
