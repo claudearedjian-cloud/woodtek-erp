@@ -13,8 +13,16 @@ import {
   RefreshCw,
   Route,
   Trash2,
+  Truck,
   X,
 } from "lucide-react";
+import { can } from "@/lib/permissions";
+import {
+  STAGE_LABELS,
+  flowFor,
+  isServiceFlow,
+  nextStage,
+} from "@/lib/dispatch";
 
 interface ScheduleViewProps {
   machines: any[];
@@ -53,6 +61,48 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   const [saving, setSaving] = useState(false);
 
   const canSchedule = currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator";
+
+  // ---- Dispatch queue: completed orders awaiting the delivery pipeline ----
+  const [dispatchOrders, setDispatchOrders] = useState<any[]>([]);
+  const [dispatchBusy, setDispatchBusy] = useState<number | null>(null);
+
+  const canDispatch =
+    can(currentUser?.role, "quality:write") ||
+    can(currentUser?.role, "orders:write") ||
+    can(currentUser?.role, "inventory:write");
+
+  const fetchDispatch = async () => {
+    try {
+      const r = await fetch("/api/dispatch", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      setDispatchOrders(Array.isArray(d.orders) ? d.orders : []);
+    } catch {
+      /* best effort */
+    }
+  };
+
+  const setDispatchStage = async (orderId: number, stage: string) => {
+    setDispatchBusy(orderId);
+    try {
+      await fetch("/api/dispatch", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, stage }),
+      });
+      await fetchDispatch();
+    } catch {
+      /* ignore */
+    } finally {
+      setDispatchBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    fetchDispatch();
+    const t = setInterval(fetchDispatch, 20000);
+    return () => clearInterval(t);
+  }, []);
 
   const fetchOperations = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -243,6 +293,70 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           <button onClick={() => { setError(""); setNotice(""); }} className="rounded-lg p-1 hover:bg-white/10"><X className="h-4 w-4" /></button>
         </div>
       )}
+
+      {/* ---- Dispatch queue: completed orders ---- */}
+      <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-black text-white">
+            <Truck className="h-4 w-4 text-emerald-400" /> Dispatch queue — completed orders
+          </h2>
+          <span className="text-[11px] font-bold text-slate-500">
+            Service orders go straight to awaiting delivery; project orders follow Cleaning → QC → Packing.
+          </span>
+        </div>
+        {dispatchOrders.length === 0 ? (
+          <div className="py-6 text-center text-xs text-slate-500">No completed orders waiting for dispatch.</div>
+        ) : (
+          <div className="space-y-2.5">
+            {dispatchOrders.map((o: any) => {
+              const flow = flowFor(o.projectType);
+              const nxt = nextStage(o.projectType, o.stage);
+              return (
+                <div key={o.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-xs font-black text-amber-400">{o.orderNumber}</span>
+                      <span className="text-xs font-bold text-white">{o.title}</span>
+                      {o.customerCompany && <span className="text-[11px] text-slate-400">— {o.customerCompany}</span>}
+                    </div>
+                    <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      {isServiceFlow(o.projectType) ? "Service" : "Project"} · {o.projectType}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {flow.map((st) => (
+                      <span
+                        key={st}
+                        className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${
+                          st === o.stage
+                            ? st === "delivered"
+                              ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
+                              : "border-amber-500 bg-amber-500/20 text-amber-300"
+                            : flow.indexOf(st) < flow.indexOf(o.stage)
+                              ? "border-emerald-600/40 bg-emerald-500/5 text-emerald-500/70"
+                              : "border-slate-800 bg-slate-900 text-slate-600"
+                        }`}
+                      >
+                        {STAGE_LABELS[st]}
+                      </span>
+                    ))}
+                  </div>
+                  {canDispatch && o.stage !== "delivered" && nxt && (
+                    <button
+                      type="button"
+                      disabled={dispatchBusy === o.id}
+                      onClick={() => setDispatchStage(o.id, nxt)}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
         <section className="h-fit rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm xl:sticky xl:top-24">
