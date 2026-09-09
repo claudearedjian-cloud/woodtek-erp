@@ -11,6 +11,7 @@ import MachinesView from "@/components/MachinesView";
 import OperatorStationView from "@/components/OperatorStationView";
 import CustomersView from "@/components/CustomersView";
 import InventoryView from "@/components/InventoryView";
+import WarehouseView from "@/components/WarehouseView";
 import ScheduleView from "@/components/ScheduleView";
 import GanttView from "@/components/GanttView";
 import CmmsView from "@/components/CmmsView";
@@ -204,7 +205,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -269,7 +270,7 @@ export default function WoodTekERP() {
           {activeTab === "orders" && (
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}
               showNewModal={showNewModal && canCreateOrders} setShowNewModal={setShowNewModal} customers={customers}
-              templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} />
+              templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} inventoryItems={inventory} />
           )}
           {activeTab === "schedule" && (
             <ScheduleView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} searchQuery={searchQuery} />
@@ -282,6 +283,7 @@ export default function WoodTekERP() {
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={fetchAllData} />}
+          {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
           {activeTab === "gantt" && (
             <GanttView machines={machines} onSelectOrder={handleSelectOrder} searchQuery={searchQuery} />
           )}

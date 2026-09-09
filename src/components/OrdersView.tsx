@@ -40,6 +40,7 @@ interface OrdersViewProps {
   machines: any[];
   searchQuery?: string;
   currentUser?: any;
+  inventoryItems?: any[];
 }
 
 export default function OrdersView({
@@ -54,6 +55,7 @@ export default function OrdersView({
   machines = [],
   searchQuery = "",
   currentUser,
+  inventoryItems = [],
 }: OrdersViewProps) {
   const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -77,6 +79,8 @@ export default function OrdersView({
   // exact machine (Beam Saw / Rover A vs G vs Baz / Orma) the operator chose.
   type StepDraft = { operationName: string; machineId: string; machineCategory: string; estimatedMinutes: string; auto: boolean };
   const [steps, setSteps] = useState<StepDraft[]>([]);
+  // BOM: materials requested for this order (warehouse prepares them).
+  const [bom, setBom] = useState<{ itemId: string; qty: string }[]>([]);
   const [recipeId, setRecipeId] = useState<string>("");
   const [recipeName, setRecipeName] = useState("");
 
@@ -257,6 +261,9 @@ export default function OrdersView({
           auto: Boolean(s.auto),
           estimatedMinutes: Number(s.estimatedMinutes) || 60,
         })),
+        bom: bom
+          .filter(b => b.itemId)
+          .map(b => ({ itemId: Number(b.itemId), quantityUsed: Math.max(1, Number(b.qty) || 1) })),
       };
 
       const res = await fetch("/api/orders", {
@@ -275,6 +282,7 @@ export default function OrdersView({
       setTotalValue("");
       setNotes("");
       setSteps([]);
+      setBom([]);
       setRecipeId("");
       setRecipeName("");
       onRefresh();
@@ -929,6 +937,55 @@ export default function OrdersView({
                           <button type="button" onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} className="p-0.5 text-slate-500 hover:text-amber-400 disabled:opacity-30"><ChevronDown className="h-3.5 w-3.5" /></button>
                         </div>
                         <button type="button" onClick={() => removeStep(idx)} className="p-1.5 text-slate-500 transition hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* BOM — materials the warehouse must prepare for this order */}
+                <div className="mt-3 space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-slate-400">
+                      Materials / BOM ({bom.length}) — the warehouse prepares these once the order is issued
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setBom(b => [...b, { itemId: inventoryItems[0] ? String(inventoryItems[0].id) : "", qty: "1" }])}
+                      className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add material
+                    </button>
+                  </div>
+                  {bom.length === 0 ? (
+                    <div className="py-3 text-center text-[11px] text-slate-500">
+                      No materials requested yet — add panels, edge banding, hardware…
+                    </div>
+                  ) : (
+                    bom.map((b, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-2">
+                        <select
+                          value={b.itemId}
+                          onChange={e => setBom(list => list.map((x, k) => (k === i ? { ...x, itemId: e.target.value } : x)))}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                        >
+                          <option value="">Select item…</option>
+                          {inventoryItems.map((it: any) => (
+                            <option key={it.id} value={it.id}>
+                              {it.name} ({it.sku} · {it.stockQuantity} {it.unit} in stock)
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          value={b.qty}
+                          onChange={e => setBom(list => list.map((x, k) => (k === i ? { ...x, qty: e.target.value } : x)))}
+                          className="w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center font-mono text-xs text-white"
+                          title="Quantity"
+                        />
+                        <button type="button" onClick={() => setBom(list => list.filter((_, k) => k !== i))} className="p-1.5 text-slate-500 transition hover:text-rose-400">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     ))
                   )}

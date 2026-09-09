@@ -116,6 +116,13 @@ check(opCfg.includes("Live WIP Board"), "config: override shows WIP for operator
 check(!opCfg.includes("Executive Dashboard"), "config: manager-only override does not leak to operator");
 check(opCfg.includes("QA Corner"), "config: operator gets group-promoted moved item");
 
+// ---- Warehouse & BOM module ----
+const qa = renderToString(React.createElement(Sidebar, props("QA & Dispatch")));
+check(mgr.includes("Warehouse &amp; BOM"), "manager sees Warehouse & BOM");
+check(qa.includes("Warehouse &amp; BOM"), "QA & Dispatch sees Warehouse & BOM");
+check(!op.includes("Warehouse &amp; BOM"), "operator does not see Warehouse & BOM");
+check(!tech.includes("Warehouse &amp; BOM"), "technician does not see Warehouse & BOM");
+
 // ---- custom roles (named aliases of built-in roles) ----
 const perms = require("./compiled/lib/permissions.js");
 const menuCfg = require("./compiled/lib/menuConfig.js");

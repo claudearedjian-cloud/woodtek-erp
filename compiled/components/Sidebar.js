@@ -29,6 +29,7 @@ const ICONS = {
     reports: lucide_react_1.FileText,
     settings: lucide_react_1.Settings,
     designer: lucide_react_1.SlidersHorizontal,
+    warehouse: lucide_react_1.Warehouse,
 };
 function Sidebar({ activeTab, setActiveTab, currentUser, allUsers, onSwitchUser, onRequestSwitch, menuConfig, isOpen, onClose, }) {
     // Custom roles: menu overrides are keyed by the custom name, and the base

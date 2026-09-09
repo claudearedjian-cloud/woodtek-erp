@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orders, customers, orderOperations, machines, operationTemplates, users, downtimeEvents } from "@/db/schema";
+import { orders, customers, orderOperations, machines, operationTemplates, users, downtimeEvents, orderMaterials, inventoryItems } from "@/db/schema";
 import { and, eq, desc, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { chooseFreestMachine } from "@/lib/machineCategories";
 import { authorize } from "@/lib/auth";
@@ -227,6 +227,29 @@ export async function POST(request: Request) {
         { orderId: newOrder.id, machineId: saw?.id || null, stepOrder: 1, operationName: "Standard Panel Sizing & Cutting", estimatedMinutes: 90, status: "Ready" },
         { orderId: newOrder.id, machineId: asm?.id || null, stepOrder: 2, operationName: "Assembly & Quality Assurance", estimatedMinutes: 120, status: "Pending" },
       ]);
+    }
+
+    // Optional BOM lines entered on the new-order form. They land in the same
+    // orderMaterials table as manual allocations (warehouse board + BOM tab).
+    if (Array.isArray(body.bom) && body.bom.length > 0) {
+      const lines = (body.bom as any[])
+        .map((b) => ({ itemId: Number(b?.itemId), qty: Math.max(1, Number(b?.quantityUsed) || 1) }))
+        .filter((b) => Number.isInteger(b.itemId) && b.itemId > 0);
+      if (lines.length > 0) {
+        const items = await db
+          .select({ id: inventoryItems.id, unitCost: inventoryItems.unitCost })
+          .from(inventoryItems)
+          .where(inArray(inventoryItems.id, lines.map((l) => l.itemId)));
+        const costOf = new Map(items.map((i) => [i.id, i.unitCost]));
+        await db.insert(orderMaterials).values(
+          lines.map((l) => ({
+            orderId: newOrder.id,
+            itemId: l.itemId,
+            quantityUsed: l.qty,
+            costPerUnit: costOf.get(l.itemId) ?? "0.00",
+          })),
+        );
+      }
     }
 
     return NextResponse.json(newOrder, { status: 201 });

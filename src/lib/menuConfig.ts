@@ -33,6 +33,7 @@ export const MENU_REGISTRY: MenuRegistryItem[] = [
   { id: "workforce", label: "Workforce & Shifts", badge: "Shift", group: "settings" },
   { id: "station", label: "Operator Station Mode", badge: "Touch", group: "top" },
   { id: "customers", label: "Clients & Architects", badge: "", group: "top" },
+  { id: "warehouse", label: "Warehouse & BOM", badge: "BOM", group: "top" },
   { id: "inventory", label: "Wood & Edge Stock", badge: "", group: "settings" },
   { id: "pims", label: "PIMS Import", badge: "Link", group: "settings" },
   { id: "reports", label: "System Reports", badge: "PDF", group: "top" },

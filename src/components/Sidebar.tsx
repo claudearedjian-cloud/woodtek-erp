@@ -25,6 +25,7 @@ import {
   Workflow,
   Import,
   SlidersHorizontal,
+  Warehouse as WarehouseIcon,
 } from "lucide-react";
 import { resolveMenu, type MenuConfig } from "@/lib/menuConfig";
 import BrandMark from "@/components/BrandMark";
@@ -48,6 +49,7 @@ const ICONS: Record<string, any> = {
   reports: FileText,
   settings: SettingsIcon,
   designer: SlidersHorizontal,
+  warehouse: WarehouseIcon,
 };
 
 interface SidebarProps {

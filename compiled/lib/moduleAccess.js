@@ -35,6 +35,7 @@ exports.MODULES_BY_ROLE = {
         "recipes",
         "pims",
         "designer",
+        "warehouse",
     ],
     "Sales Coordinator": [
         "dashboard",
@@ -62,6 +63,7 @@ exports.MODULES_BY_ROLE = {
         "wip",
         "quality",
         "downtime",
+        "warehouse",
     ],
     Technician: [
         "dashboard",
