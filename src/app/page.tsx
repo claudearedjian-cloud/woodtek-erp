@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import AuthGate from "@/components/AuthGate";
 import DashboardView from "@/components/DashboardView";
+import PlantView from "@/components/PlantView";
 import OrdersView from "@/components/OrdersView";
 import OrderWorkflowDetail from "@/components/OrderWorkflowDetail";
 import MachinesView from "@/components/MachinesView";
@@ -31,6 +32,15 @@ import { registerCustomRoles } from "@/lib/permissions";
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  // Dashboard status buttons navigate to Orders pre-filtered by status.
+  const [ordersPresetStatus, setOrdersPresetStatus] = useState<string | null>(null);
+  const navigateWithStatus = (tab: string, status?: string) => {
+    setOrdersPresetStatus(status ?? null);
+    setActiveTab(tab);
+  };
+  useEffect(() => {
+    if (activeTab !== "orders") setOrdersPresetStatus(null);
+  }, [activeTab]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewModal, setShowNewModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -205,7 +215,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -267,11 +277,13 @@ export default function WoodTekERP() {
         />
 
         <main key={activeTab} className="flex-1 pb-16 animate-fade-up">
-          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={setActiveTab} />}
+          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} />}
+          {activeTab === "plant" && <PlantView onNavigate={setActiveTab} />}
           {activeTab === "orders" && (
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}
               showNewModal={showNewModal && canCreateOrders} setShowNewModal={setShowNewModal} customers={customers}
-              templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} inventoryItems={inventory} />
+              templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} inventoryItems={inventory}
+              presetStatus={ordersPresetStatus} />
           )}
           {activeTab === "schedule" && (
             <ScheduleView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} searchQuery={searchQuery} />

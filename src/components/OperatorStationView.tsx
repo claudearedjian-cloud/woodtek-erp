@@ -511,7 +511,7 @@ export default function OperatorStationView({
                         }`}>
                           {op.status}
                         </span>
-                        <span className="font-mono text-sm font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
+                        <span className="font-mono text-base font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
                           {op.orderNumber}
                         </span>
                         <span className="text-xs text-slate-400 font-bold bg-slate-800 px-2.5 py-1 rounded-xl">

@@ -22,6 +22,7 @@ export interface MenuRegistryItem {
 export const MENU_REGISTRY: MenuRegistryItem[] = [
   { id: "dashboard", label: "Executive Dashboard", badge: "", group: "top" },
   { id: "wip", label: "Live WIP Board", badge: "Live", group: "top" },
+  { id: "plant", label: "Plant Performance", badge: "OEE", group: "top" },
   { id: "orders", label: "Orders & Routing", badge: "Live", group: "top" },
   { id: "recipes", label: "Routing Recipes", badge: "Recipe", group: "settings" },
   { id: "schedule", label: "Dispatch Schedule", badge: "Plan", group: "top" },

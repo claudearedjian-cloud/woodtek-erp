@@ -37,6 +37,7 @@ exports.MODULES_BY_ROLE = {
         "pims",
         "designer",
         "warehouse",
+        "plant",
     ],
     "Sales Coordinator": [
         "dashboard",
@@ -45,6 +46,7 @@ exports.MODULES_BY_ROLE = {
         "schedule",
         "reports",
         "wip",
+        "plant",
     ],
     // Shop-floor operators only see what they work with: their station,
     // quality (scrap & rework) and workforce/shifts. Everything else is
@@ -65,6 +67,7 @@ exports.MODULES_BY_ROLE = {
         "quality",
         "downtime",
         "warehouse",
+        "plant",
     ],
     Technician: [
         "dashboard",
@@ -74,6 +77,7 @@ exports.MODULES_BY_ROLE = {
         "workforce",
         "wip",
         "downtime",
+        "plant",
     ],
 };
 /** Human labels for every module (role editor UI). */
@@ -97,6 +101,7 @@ exports.MODULE_LABELS = {
     pims: "PIMS Import",
     warehouse: "Warehouse & BOM",
     designer: "Menu Designer",
+    plant: "Plant Performance",
 };
 /**
  * Resolves a role's module visibility. A custom role with an explicit

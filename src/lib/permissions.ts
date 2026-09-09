@@ -137,7 +137,7 @@ export function can(role: string | null | undefined, action: Action): boolean {
 const KNOWN_MODULE_IDS = [
   "dashboard", "orders", "machines", "operator", "customers", "inventory",
   "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip",
-  "quality", "downtime", "recipes", "pims", "warehouse",
+  "quality", "downtime", "recipes", "pims", "warehouse", "plant",
 ];
 
 export interface CustomRole {

@@ -208,7 +208,8 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
                         <span className="font-mono tabular-nums text-amber-300"><Timer className="w-3.5 h-3.5 inline mr-1" />{fmtClock(now - new Date(job.startTime).getTime())}</span>
                       </div>
                       <div className="text-xs font-bold text-white truncate mt-1 group-hover:text-amber-300 transition">{job.operationName}</div>
-                      <div className="text-[11px] text-slate-400 truncate font-mono mt-0.5">{job.orderNumber}</div>
+                      <div className="font-mono text-sm font-black text-amber-400 truncate mt-0.5">{job.orderNumber}</div>
+                      {job.customerName && <div className="text-[11px] text-slate-300 font-bold truncate">{job.customerName}</div>}
                     </div>
                   ) : (
                     <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-center text-xs text-slate-500 italic">
@@ -220,7 +221,7 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
                     <div className="text-[11px] text-slate-400">
                       <span className="font-bold text-slate-300">Queue ({m.queue.length}):</span>{" "}
                       {m.queue.slice(0, 2).map((o: any) => (
-                        <span key={o.id} className="inline-block bg-slate-800/80 text-slate-300 rounded px-1.5 py-0.5 mr-1 font-mono">{o.orderNumber}</span>
+                        <span key={o.id} className="inline-block bg-amber-500/10 text-amber-300 rounded px-1.5 py-0.5 mr-1 font-mono font-bold">{o.orderNumber}</span>
                       ))}
                       {m.queue.length > 2 && <span className="text-slate-500">+{m.queue.length - 2}</span>}
                       <span className="ml-1 text-slate-500">~{m.queueMinutes}m</span>
@@ -259,7 +260,7 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs font-black text-amber-400">{o.orderNumber}</span>
+                          <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
                           <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
                             o.priority === "Urgent" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
                             : o.priority === "High" ? "bg-orange-500/20 text-orange-300 border border-orange-500/40"

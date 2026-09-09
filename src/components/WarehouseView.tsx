@@ -157,7 +157,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
             <div key={order.id} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/60 px-4 py-3">
                 <div>
-                  <span className="font-mono text-xs font-black text-amber-400">{order.orderNumber}</span>
+                  <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                   <span className="ml-2 text-sm font-bold text-white">{order.title}</span>
                   {order.customerCompany && (
                     <span className="ml-2 text-xs text-slate-400">— {order.customerCompany}</span>

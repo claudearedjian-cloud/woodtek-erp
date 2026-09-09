@@ -42,11 +42,15 @@ export async function GET() {
     );
 
     // --- Machines with live state ----------------------------------------
+    const orderCustomerById = new Map(orders.map((o: any) => [o.id, o.customerName ?? null]));
     const machineBoard = machines.map(m => {
       const machineOps = operations
         .filter(o => o.machineId === m.id)
         .sort((a, b) => a.stepOrder - b.stepOrder);
-      const currentJob = machineOps.find(o => o.status === "In Progress") || null;
+      const currentOp = machineOps.find(o => o.status === "In Progress") || null;
+      const currentJob = currentOp
+        ? { ...currentOp, customerName: orderCustomerById.get(currentOp.orderId) ?? null }
+        : null;
       const queue = machineOps.filter(o => o.status === "Ready" || o.status === "Pending");
       const openDown = activeDowntime.find(d => d.machineId === m.id) || null;
 

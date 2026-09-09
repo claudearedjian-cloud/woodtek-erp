@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { 
-  DollarSign, 
   Layers, 
   Cpu, 
   AlertTriangle, 
@@ -10,44 +9,28 @@ import {
   CheckCircle2, 
   TrendingUp, 
   ArrowRight, 
-  Wrench, 
   Activity, 
   Flame, 
   User, 
-  Zap,
-  Gauge,
-  Timer,
-  RefreshCcw
 } from "lucide-react";
 
 interface DashboardViewProps {
   data: any;
   loading: boolean;
-  onNavigate: (tab: string) => void;
+  onNavigate: (tab: string, status?: string) => void;
 }
 
-const OEE_WINDOWS = [
-  { id: "today", label: "Today" },
-  { id: "7d", label: "7 Days" },
-  { id: "30d", label: "30 Days" },
+// Top bar: one button per order status, click to open Orders & Routing pre-filtered.
+const STATUS_BUTTONS = [
+  { label: "In Production", key: "InProduction", cls: "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300" },
+  { label: "Pending", key: "Pending", cls: "border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300" },
+  { label: "Quality Review", key: "QualityReview", cls: "border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/20 text-violet-300" },
+  { label: "Completed", key: "Completed", cls: "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300" },
+  { label: "Delivered", key: "Delivered", cls: "border-teal-500/40 bg-teal-500/10 hover:bg-teal-500/20 text-teal-300" },
+  { label: "On Hold", key: "OnHold", cls: "border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300" },
 ] as const;
 
 export default function DashboardView({ data, loading, onNavigate }: DashboardViewProps) {
-  const [oeeWindow, setOeeWindow] = useState<"today" | "7d" | "30d">("7d");
-  const [oee, setOee] = useState<any>(data?.oee ?? null);
-
-  useEffect(() => {
-    if (data?.oee) setOee(data.oee);
-  }, [data]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/dashboard?window=${oeeWindow}`, { cache: "no-store" })
-      .then(r => (r.ok ? r.json() : null))
-      .then(p => { if (!cancelled && p?.oee) setOee(p.oee); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [oeeWindow]);
   if (loading || !data) {
     return (
       <div className="p-6 space-y-6">
@@ -69,10 +52,36 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
     );
   }
 
-  const { kpis = {}, machineWorkloads = [], primaryBottleneck, lowStockItems = [], activeShopJobs = [], orderStatusDistribution = {} } = data;
+  const { kpis = {}, machineWorkloads = [], primaryBottleneck, activeShopJobs = [], orderStatusDistribution = {} } = data;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Order status quick bar */}
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Orders by status — click to open</h3>
+          <button
+            onClick={() => onNavigate("orders")}
+            className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition"
+          >
+            <span>All orders</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {STATUS_BUTTONS.map((b) => (
+            <button
+              key={b.key}
+              onClick={() => onNavigate("orders", b.label)}
+              className={`rounded-xl border p-3 text-left transition ${b.cls}`}
+            >
+              <div className="text-2xl font-black text-white tracking-tight">{orderStatusDistribution[b.key] ?? 0}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-wider mt-0.5">{b.label}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Bottleneck Warning Banner */}
       {primaryBottleneck && primaryBottleneck.queueLength > 1 && (
         <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-rose-500/10 border border-amber-500/30 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-lg shadow-amber-950/20">
@@ -103,7 +112,7 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
       )}
 
       {/* KPI Tiles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Active Orders */}
         <div 
           onClick={() => onNavigate("orders")}
@@ -121,46 +130,6 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
               <TrendingUp className="w-3.5 h-3.5" /> {kpis.urgentOrdersCount} urgent
             </span>
             <span>in shop pipeline</span>
-          </div>
-        </div>
-
-        {/* Pipeline Value */}
-        <div 
-          onClick={() => onNavigate("orders")}
-          className="bg-slate-900/90 hover:bg-slate-800/80 border border-slate-800/80 rounded-2xl p-5 shadow-sm transition cursor-pointer group"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">WIP Pipeline Value</span>
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition">
-              <DollarSign className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-white tracking-tight">{kpis.totalPipelineValue != null ? `$${Number(kpis.totalPipelineValue).toLocaleString()}` : <span className="text-slate-600 italic text-lg">restricted</span>}</div>
-          <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-slate-400">
-            <span>Across {kpis.customerCount} commercial clients</span>
-          </div>
-        </div>
-
-        {/* Machine Utilization */}
-        <div 
-          onClick={() => onNavigate("machines")}
-          className="bg-slate-900/90 hover:bg-slate-800/80 border border-slate-800/80 rounded-2xl p-5 shadow-sm transition cursor-pointer group"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Machine Utilization</span>
-            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition">
-              <Cpu className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-white tracking-tight">{kpis.utilizationRate}%</div>
-          <div className="w-full bg-slate-800 h-1.5 rounded-full mt-2.5 overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-500 to-amber-500 h-full rounded-full" style={{ width: `${kpis.utilizationRate}%` }} />
-          </div>
-          <div className="flex items-center justify-between mt-1.5 text-[11px] font-medium text-slate-400">
-            <span>{kpis.inUseMachines} / {kpis.totalMachines} operational</span>
-            {kpis.maintenanceMachines > 0 && (
-              <span className="text-amber-400 font-bold">{kpis.maintenanceMachines} in maintenance</span>
-            )}
           </div>
         </div>
 
@@ -189,9 +158,6 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
           </div>
         </div>
       </div>
-
-      {/* OEE & Plant Performance */}
-      <OeePanel oee={oee} window={oeeWindow} onWindowChange={(w) => setOeeWindow(w)} onNavigate={onNavigate} />
 
       {/* Main Row: Live Manufacturing Stream & Machine Queue Table */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -242,8 +208,8 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-extrabold text-white text-sm truncate group-hover:text-amber-400 transition">
-                            {job.operationName}
+                          <span className="font-mono text-base font-black text-amber-400 tracking-tight">
+                            {job.orderNumber}
                           </span>
                           <span className={`text-[10px] px-2 py-0.5 rounded font-extrabold uppercase tracking-wider ${
                             isRunning ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-300 border border-slate-700"
@@ -251,10 +217,13 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
                             {job.status}
                           </span>
                         </div>
-                        <div className="text-xs text-slate-400 truncate mt-1 flex items-center gap-2">
-                          <span className="font-mono text-slate-300 font-bold">{job.orderNumber}</span>
-                          <span>•</span>
+                        <div className="text-xs text-slate-300 truncate mt-1">
+                          <span className="font-bold text-white">{job.customerName || "—"}</span>
+                          <span className="text-slate-500"> · </span>
                           <span className="truncate">{job.orderTitle}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-semibold mt-0.5 truncate">
+                          {job.operationName}
                         </div>
                       </div>
                     </div>
@@ -309,7 +278,9 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
                       }`}>
                         {m.status}
                       </span>
-                      <span className="text-[11px] text-slate-500">${m.hourlyCost}/hr</span>
+                      <span className="text-[11px] text-slate-500">
+                        {m.hourlyCost != null ? `$${m.hourlyCost}/hr` : ""}
+                      </span>
                     </div>
                   </div>
 
@@ -327,165 +298,6 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function OeeGauge({ value }: { value: number | null }) {
-  const radius = 62;
-  const circumference = 2 * Math.PI * radius;
-  const fraction = value == null ? 0 : Math.max(0, Math.min(1, value / 100));
-  const color = value == null ? "#475569" : value >= 85 ? "#10b981" : value >= 70 ? "#f59e0b" : "#f43f5e";
-
-  return (
-    <div className="relative flex h-40 w-40 items-center justify-center">
-      <svg viewBox="0 0 160 160" className="h-full w-full -rotate-90">
-        <circle cx="80" cy="80" r={radius} fill="none" stroke="#1e293b" strokeWidth="14" />
-        <circle
-          cx="80" cy="80" r={radius} fill="none" stroke={color} strokeWidth="14"
-          strokeLinecap="round" strokeDasharray={`${fraction * circumference} ${circumference}`}
-          style={{ transition: "stroke-dasharray 0.6s ease, stroke 0.3s ease" }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-black tracking-tight text-white">{value == null ? "—" : `${value}%`}</span>
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">OEE</span>
-      </div>
-    </div>
-  );
-}
-
-function ComponentBar({ label, value, color, hint }: { label: string; value: number | null; color: string; hint?: string }) {
-  return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-xs font-bold text-slate-300">{label}</span>
-        <span className="font-mono text-sm font-black" style={{ color }}>{value == null ? "—" : `${value}%`}</span>
-      </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${value == null ? 0 : value}%`, background: color }}
-        />
-      </div>
-      {hint && <div className="mt-1 text-[10px] text-slate-500">{hint}</div>}
-    </div>
-  );
-}
-
-function OeePanel({
-  oee,
-  window,
-  onWindowChange,
-  onNavigate,
-}: {
-  oee: any;
-  window: "today" | "7d" | "30d";
-  onWindowChange: (w: "today" | "7d" | "30d") => void;
-  onNavigate: (tab: string) => void;
-}) {
-  const oeeValue: number | null = oee?.oee ?? null;
-  const oeeColor = oeeValue == null ? "#64748b" : oeeValue >= 85 ? "#10b981" : oeeValue >= 70 ? "#f59e0b" : "#f43f5e";
-  const machines = oee?.machineAvailability ?? [];
-
-  return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-5 shadow-sm">
-      <div className="mb-5 flex flex-col gap-3 border-b border-slate-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="rounded-lg bg-blue-500/10 p-2 text-blue-400"><Gauge className="h-5 w-5" /></div>
-          <div>
-            <h3 className="text-base font-black text-white">OEE &amp; Plant Performance</h3>
-            <p className="text-[11px] text-slate-400">{oee?.windowLabel ?? "Last 7 days"} · availability × performance × quality</p>
-          </div>
-        </div>
-        <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950 p-1">
-          {OEE_WINDOWS.map((w) => (
-            <button
-              key={w.id}
-              onClick={() => onWindowChange(w.id)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                window === w.id ? "bg-slate-800 text-amber-400" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Composite OEE gauge */}
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
-          <OeeGauge value={oeeValue} />
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500">
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> ≥85% world-class</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> ≥70% good</span>
-            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500" /> &lt;70% needs focus</span>
-          </div>
-          <button
-            onClick={() => onNavigate("reports")}
-            className="mt-3 flex items-center gap-1 text-xs font-bold text-amber-400 hover:text-amber-300 transition"
-          >
-            <TrendingUp className="h-3.5 w-3.5" /> Deep-dive in Reports <ArrowRight className="h-3 w-3" />
-          </button>
-        </div>
-
-        {/* Component bars */}
-        <div className="flex flex-col justify-center gap-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
-          <ComponentBar label="Availability" value={oee?.availability ?? null} color="#38bdf8" hint={`${oee?.totalDowntimeHours ?? 0}h downtime`} />
-          <ComponentBar label="Performance" value={oee?.performance ?? null} color="#a78bfa" hint={`${oee?.completedOps ?? 0} completed ops`} />
-          <ComponentBar label="Quality" value={oee?.quality ?? null} color="#34d399" hint={`${oee?.rejectedOps ?? 0} rejected / rework ops`} />
-        </div>
-
-        {/* Loss signals */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400"><Timer className="h-4 w-4 text-rose-400" /> Downtime</div>
-            <div className="mt-1 text-2xl font-black text-white">{oee?.totalDowntimeHours ?? 0}<span className="text-sm font-bold text-slate-500"> hrs</span></div>
-          </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400"><DollarSign className="h-4 w-4 text-rose-400" /> Scrap cost</div>
-            <div className="mt-1 text-2xl font-black text-white">${Number(oee?.scrapCost ?? 0).toLocaleString()}</div>
-          </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400"><Flame className="h-4 w-4 text-orange-400" /> Scrap qty</div>
-            <div className="mt-1 text-2xl font-black text-white">{oee?.scrapQty ?? 0}<span className="text-sm font-bold text-slate-500"> pcs</span></div>
-          </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400"><RefreshCcw className="h-4 w-4 text-amber-400" /> Open rework</div>
-            <div className={`mt-1 text-2xl font-black ${(oee?.openRework ?? 0) > 0 ? "text-amber-300" : "text-emerald-400"}`}>{oee?.openRework ?? 0}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Per-machine availability */}
-      {machines.length > 0 && (
-        <div className="mt-5 border-t border-slate-800 pt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Station availability</h4>
-            <button onClick={() => onNavigate("downtime")} className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300 transition">
-              Downtime log <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
-            {machines.map((m: any) => (
-              <div key={m.machineId} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="font-mono text-[11px] font-black text-amber-400">{m.code}</span>
-                  <span className={`font-mono text-xs font-black ${m.availability >= 95 ? "text-emerald-400" : m.availability >= 80 ? "text-amber-300" : "text-rose-400"}`}>{m.availability}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                  <div
-                    className={`h-full rounded-full ${m.availability >= 95 ? "bg-emerald-500" : m.availability >= 80 ? "bg-amber-500" : "bg-rose-500"}`}
-                    style={{ width: `${m.availability}%` }}
-                  />
-                </div>
-                <div className="mt-1 truncate text-[10px] text-slate-500">{m.downtimeMinutes > 0 ? `${m.downtimeMinutes}m down` : "no downtime"}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

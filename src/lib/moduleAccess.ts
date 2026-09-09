@@ -29,7 +29,8 @@ export type ModuleId =
   | "recipes"
   | "pims"
   | "designer"
-  | "warehouse";
+  | "warehouse"
+  | "plant";
 
 /**
  * Every module a role is allowed to access. Manager sees all. Other roles
@@ -56,6 +57,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "pims",
     "designer",
     "warehouse",
+    "plant",
   ],
   "Sales Coordinator": [
     "dashboard",
@@ -64,6 +66,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "schedule",
     "reports",
     "wip",
+    "plant",
   ],
   // Shop-floor operators only see what they work with: their station,
   // quality (scrap & rework) and workforce/shifts. Everything else is
@@ -84,6 +87,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "quality",
     "downtime",
     "warehouse",
+    "plant",
   ],
   Technician: [
     "dashboard",
@@ -93,6 +97,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "workforce",
     "wip",
     "downtime",
+    "plant",
   ],
 };
 
@@ -117,6 +122,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   pims: "PIMS Import",
   warehouse: "Warehouse & BOM",
   designer: "Menu Designer",
+  plant: "Plant Performance",
 };
 
 /**

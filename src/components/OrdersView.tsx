@@ -42,6 +42,7 @@ interface OrdersViewProps {
   searchQuery?: string;
   currentUser?: any;
   inventoryItems?: any[];
+  presetStatus?: string | null;
 }
 
 export default function OrdersView({
@@ -57,9 +58,14 @@ export default function OrdersView({
   searchQuery = "",
   currentUser,
   inventoryItems = [],
+  presetStatus = null,
 }: OrdersViewProps) {
   const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
-  const [statusFilter, setStatusFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState(presetStatus ?? "All");
+  // Dashboard status buttons: apply the requested filter whenever it changes.
+  useEffect(() => {
+    if (presetStatus) setStatusFilter(presetStatus);
+  }, [presetStatus]);
   // Dispatch pipeline stage per completed order (Orders & Routing stays in sync with delivery).
   const [dispatchByOrder, setDispatchByOrder] = useState<Record<string, DispatchStage>>({});
   useEffect(() => {
@@ -490,7 +496,7 @@ export default function OrdersView({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="font-mono text-xs font-black text-amber-400">{order.orderNumber}</span>
+                    <span className="font-mono text-base font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
                       {order.status}
                     </span>
@@ -584,7 +590,7 @@ export default function OrdersView({
                       className="p-4 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/50 rounded-xl transition cursor-pointer shadow-sm group"
                     >
                       <div className="flex items-center justify-between mb-2">
-                        <span className="font-mono text-[11px] font-extrabold text-amber-400">{order.orderNumber}</span>
+                        <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                         <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase ${getPriorityBadge(order.priority)}`}>
                           {order.priority}
                         </span>

@@ -251,8 +251,9 @@ export default function MachinesView({
                         <Activity className="w-3.5 h-3.5 animate-spin text-amber-400" />
                         <span>Running Now</span>
                       </div>
-                      <div className="text-xs font-bold text-white truncate group-hover:text-amber-300 transition">
-                        {m.activeJob.orderNumber} • {m.activeJob.orderTitle}
+                      <div className="truncate">
+                        <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{m.activeJob.orderNumber}</span>
+                        <span className="text-xs font-bold text-white group-hover:text-amber-300 transition"> • {m.activeJob.orderTitle}</span>
                       </div>
                     </div>
                   ) : m.queueCount > 0 ? (
