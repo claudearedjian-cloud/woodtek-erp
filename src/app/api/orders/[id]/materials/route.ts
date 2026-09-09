@@ -234,5 +234,5 @@ async function isTerminal(orderId: number): Promise<boolean> {
     .select({ status: orders.status })
     .from(orders)
     .where(eq(orders.id, orderId));
-  return o?.status === "Completed" || o?.status === "Cancelled";
+  return o?.status === "Completed" || o?.status === "Delivered" || o?.status === "Cancelled";
 }

@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       });
       reportData = {
         totalOrders: filteredOrders.length,
-        completedOrders: filteredOrders.filter(o => o.status === "Completed").length,
+        completedOrders: filteredOrders.filter(o => o.status === "Completed" || o.status === "Delivered").length,
         inProductionOrders: filteredOrders.filter(o => o.status === "In Production").length,
         pendingOrders: filteredOrders.filter(o => o.status === "Pending").length,
         totalValue: filteredOrders.reduce((sum, o) => sum + parseFloat(o.totalValue || "0"), 0),
@@ -106,7 +106,7 @@ export async function POST(request: Request) {
           Pending: allOrders.filter(o => o.status === "Pending").length,
           InProduction: allOrders.filter(o => o.status === "In Production").length,
           QualityReview: allOrders.filter(o => o.status === "Quality Review").length,
-          Completed: allOrders.filter(o => o.status === "Completed").length,
+          Completed: allOrders.filter(o => o.status === "Completed" || o.status === "Delivered").length,
           OnHold: allOrders.filter(o => o.status === "On Hold").length,
         },
         orders: allOrders.map(o => ({
@@ -148,7 +148,7 @@ export async function POST(request: Request) {
             email: c.email,
             phone: c.phone,
             totalOrders: custOrders.length,
-            activeOrders: custOrders.filter(o => o.status !== "Completed" && o.status !== "On Hold").length,
+            activeOrders: custOrders.filter(o => o.status !== "Completed" && o.status !== "Delivered" && o.status !== "On Hold").length,
             totalSpend: custOrders.reduce((sum, o) => sum + parseFloat(o.totalValue || "0"), 0),
             creditLimit: c.creditLimit,
             currentBalance: c.currentBalance,

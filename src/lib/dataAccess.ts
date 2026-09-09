@@ -110,6 +110,7 @@ async function allowedOrderIdsSubquery(user: SessionUser) {
         or(
           eq(orders.status, "Quality Review"),
           eq(orders.status, "Completed"),
+          eq(orders.status, "Delivered"),
           eq(orders.status, "In Production"),
         ),
       );
@@ -425,7 +426,7 @@ export async function computeDashboardKpisForUser(user: SessionUser): Promise<Da
     0,
   );
   const urgent = activeOrders.filter(o => o.priority === "Urgent" || o.priority === "High").length;
-  const completed = orderRows.filter(o => o.status === "Completed").length;
+  const completed = orderRows.filter(o => o.status === "Completed" || o.status === "Delivered").length;
 
   const inUseMachines = machineRows.filter(m => {
     const busy = opRows.some(o => o.machineId === m.id && o.status === "In Progress");

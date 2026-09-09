@@ -122,7 +122,7 @@ export async function GET(request: Request) {
       0,
     );
     const urgentOrdersCount = activeOrders.filter(o => o.priority === "Urgent" || o.priority === "High").length;
-    const completedThisMonth = orderRows.filter(o => o.status === "Completed").length;
+    const completedThisMonth = orderRows.filter(o => o.status === "Completed" || o.status === "Delivered").length;
 
     // Machine Utilization & Bottleneck Analysis
     const totalMachines = machineRows.length;
@@ -179,7 +179,7 @@ export async function GET(request: Request) {
         Pending: orderRows.filter(o => o.status === "Pending").length,
         InProduction: orderRows.filter(o => o.status === "In Production").length,
         QualityReview: orderRows.filter(o => o.status === "Quality Review").length,
-        Completed: orderRows.filter(o => o.status === "Completed").length,
+        Completed: orderRows.filter(o => o.status === "Completed" || o.status === "Delivered").length,
         OnHold: orderRows.filter(o => o.status === "On Hold").length,
       },
       oee,

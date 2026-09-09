@@ -10,7 +10,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, orders } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
@@ -68,7 +68,7 @@ export async function GET() {
       })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
-      .where(eq(orders.status, "Completed"))
+      .where(inArray(orders.status, ["Completed", "Delivered"]))
       .orderBy(asc(orders.dueDate));
 
     const stages = readFile().stages;
@@ -103,6 +103,10 @@ export async function PUT(request: Request) {
     const data = readFile();
     data.stages[String(orderId)] = { stage, updatedAt: new Date().toISOString() };
     writeFile(data);
+    if (stage === "delivered") {
+      // Delivery confirmed at the gate: the order leaves open work everywhere.
+      await db.update(orders).set({ status: "Delivered" }).where(eq(orders.id, orderId));
+    }
     return NextResponse.json({ ok: true, orderId, stage });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update dispatch stage";

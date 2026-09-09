@@ -307,6 +307,7 @@ export default function OrderWorkflowDetail({
 
   const getStatusBadge = (s: string) => {
     if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+    if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border border-teal-500/30";
     if (s === "In Progress") return "bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse";
     if (s === "Ready") return "bg-blue-500/20 text-blue-300 border border-blue-500/30";
     if (s === "Rejected/Rework") return "bg-rose-500/20 text-rose-300 border border-rose-500/30";
@@ -327,7 +328,7 @@ export default function OrderWorkflowDetail({
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="font-mono text-base font-black text-amber-400">{order.orderNumber}</span>
             <span className={`text-xs font-extrabold px-2.5 py-0.5 rounded uppercase ${
-              order.status === "Completed" ? "bg-emerald-500 text-slate-950 font-black" : "bg-amber-500 text-slate-950 font-black"
+              order.status === "Completed" ? "bg-emerald-500 text-slate-950 font-black" : order.status === "Delivered" ? "bg-teal-500 text-slate-950 font-black" : "bg-amber-500 text-slate-950 font-black"
             }`}>
               {order.status}
             </span>

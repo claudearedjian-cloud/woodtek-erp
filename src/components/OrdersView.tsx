@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { STAGE_LABELS, type DispatchStage } from "@/lib/dispatch";
 import { 
   ClipboardList, 
   Plus, 
@@ -59,6 +60,24 @@ export default function OrdersView({
 }: OrdersViewProps) {
   const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
   const [statusFilter, setStatusFilter] = useState("All");
+  // Dispatch pipeline stage per completed order (Orders & Routing stays in sync with delivery).
+  const [dispatchByOrder, setDispatchByOrder] = useState<Record<string, DispatchStage>>({});
+  useEffect(() => {
+    let alive = true;
+    const loadDispatch = () =>
+      fetch("/api/dispatch")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!alive || !data?.orders) return;
+          const map: Record<string, DispatchStage> = {};
+          data.orders.forEach((o: any) => { map[String(o.id)] = (o.stage || "awaiting_delivery") as DispatchStage; });
+          setDispatchByOrder(map);
+        })
+        .catch(() => {});
+    loadDispatch();
+    const t = setInterval(loadDispatch, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
   const [priorityFilter, setPriorityFilter] = useState("All");
 
   // Form State for new order
@@ -338,6 +357,7 @@ export default function OrdersView({
 
   const getStatusBadge = (s: string) => {
     if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+    if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border-teal-500/30";
     if (s === "In Production") return "bg-amber-500/20 text-amber-300 border-amber-500/30";
     if (s === "Quality Review") return "bg-purple-500/20 text-purple-300 border-purple-500/30";
     if (s === "On Hold") return "bg-rose-500/20 text-rose-300 border-rose-500/30";
@@ -345,13 +365,14 @@ export default function OrdersView({
   };
 
   const isOverdue = (order: any) =>
-    order.status !== "Completed" && new Date(order.dueDate).getTime() < Date.now();
+    order.status !== "Completed" && order.status !== "Delivered" && new Date(order.dueDate).getTime() < Date.now();
 
   const kanbanColumns = [
     { title: "Pending Start", status: "Pending", color: "border-slate-600" },
     { title: "In Production", status: "In Production", color: "border-amber-500" },
     { title: "Quality Review", status: "Quality Review", color: "border-purple-500" },
     { title: "Completed & Ready", status: "Completed", color: "border-emerald-500" },
+    { title: "Delivered", status: "Delivered", color: "border-teal-500" },
   ];
 
   if (loading) {
@@ -379,7 +400,7 @@ export default function OrdersView({
           <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
             <Filter className="w-3.5 h-3.5 text-amber-500" /> Status:
           </span>
-          {["All", "Pending", "In Production", "Quality Review", "Completed", "On Hold", "Cancelled"].map((s) => (
+          {["All", "Pending", "In Production", "Quality Review", "Completed", "Delivered", "On Hold", "Cancelled"].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -473,6 +494,11 @@ export default function OrdersView({
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
                       {order.status}
                     </span>
+                    {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                        Dispatch: {STAGE_LABELS[dispatchByOrder[String(order.id)]]}
+                      </span>
+                    )}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${getPriorityBadge(order.priority)}`}>
                       {order.priority}
                     </span>
@@ -569,6 +595,13 @@ export default function OrdersView({
                       <div className="text-[11px] text-slate-400 font-semibold mb-3 truncate">
                         {order.customerCompany || order.customerName}
                       </div>
+                      {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
+                        <div className="mb-2">
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                            Dispatch: {STAGE_LABELS[dispatchByOrder[String(order.id)]]}
+                          </span>
+                        </div>
+                      )}
                       
                       {/* Station pill & progress */}
                       <div className="p-2 bg-slate-950/70 rounded-lg border border-slate-800/80 text-[11px] mb-2">

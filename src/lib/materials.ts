@@ -52,6 +52,7 @@ export async function computeReservationsByItem(): Promise<Map<number, number>> 
         eq(orderMaterials.released, false),
         // Only count allocations for orders that are still active
         ne(orders.status, "Completed"),
+        ne(orders.status, "Delivered"),
         ne(orders.status, "On Hold"),
         ne(orders.status, "Cancelled"),
       ),
@@ -132,6 +133,7 @@ export async function computeOrderMaterialsStatus(orderId: number): Promise<Mate
           eq(orderMaterials.consumed, false),
           eq(orderMaterials.released, false),
           ne(orders.status, "Completed"),
+          ne(orders.status, "Delivered"),
           ne(orders.status, "On Hold"),
           ne(orders.status, "Cancelled"),
           ne(orderMaterials.id, a.id),  // exclude this one

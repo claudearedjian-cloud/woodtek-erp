@@ -42,6 +42,7 @@ export async function GET() {
       .where(
         and(
           ne(orders.status, "Completed"),
+          ne(orders.status, "Delivered"),
           ne(orders.status, "On Hold"),
           ne(orders.status, "Cancelled"),
         ),

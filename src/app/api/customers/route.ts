@@ -24,7 +24,7 @@ export async function GET() {
 
     const enriched = scoped.map(c => {
       const custOrders = relevantOrders.filter(o => o.customerId === c.id);
-      const activeOrdersCount = custOrders.filter(o => o.status !== "Completed" && o.status !== "On Hold").length;
+      const activeOrdersCount = custOrders.filter(o => o.status !== "Completed" && o.status !== "Delivered" && o.status !== "On Hold").length;
       const totalSpend = custOrders.reduce((sum, o) => sum + parseFloat(o.totalValue || "0"), 0);
       return {
         ...c,
