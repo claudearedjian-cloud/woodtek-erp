@@ -24,6 +24,7 @@ function compile(file, outName) {
 }
 
 compile("src/lib/moduleAccess.ts", "lib/moduleAccess.js");
+compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
@@ -146,6 +147,18 @@ check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includ
 const foreman = renderToString(React.createElement(Sidebar, props("Foreman")));
 check(foreman.includes("Operator Station Mode"), "Sidebar renders for custom role");
 check(!foreman.includes("Orders &amp; Routing"), "Sidebar hides base-denied modules for custom role");
+
+// ---- machine categories helpers ----
+const mc = require("./compiled/lib/machineCategories.js");
+const cats = mc.sanitizeCategories(["  Beam Saw ", "beam saw", "CNC", "", null, 42, "x".repeat(60)]);
+check(cats.length === 4 && cats.includes("42"), "sanitizeCategories trims + dedupes case-insensitively + drops empties (42 coerces to a name)");
+check(cats[0] === "Beam Saw" && cats[3].length === 40, "sanitizeCategories keeps first casing + clamps to 40 chars");
+check(mc.sanitizeCategories("not-a-list").length === 0, "sanitizeCategories rejects non-arrays");
+const m1 = { id: 3 }, m2 = { id: 1 }, m3 = { id: 2 };
+check(mc.chooseFreestMachine([m1, m2, m3], { 3: 5, 1: 2, 2: 7 }).id === 1, "chooseFreestMachine picks lowest load");
+check(mc.chooseFreestMachine([m1, m2], { 3: 4, 1: 4 }).id === 1, "chooseFreestMachine tie-breaks by id");
+check(mc.chooseFreestMachine([], {}) === null, "chooseFreestMachine handles empty list");
+check(mc.chooseFreestMachine([m3], {}).id === 2, "chooseFreestMachine treats unknown load as zero");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

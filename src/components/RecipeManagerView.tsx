@@ -18,6 +18,21 @@ import {
 
 const BASE_CATEGORIES = ["Beam Saw", "Edge Bander", "CNC Router", "Press", "Assembly Table", "Drill Press", "Spray & Finish"];
 
+// Managed category list (API) merged over the built-in defaults.
+function useMachineCategories(): string[] {
+  const [cats, setCats] = React.useState<string[]>(BASE_CATEGORIES);
+  React.useEffect(() => {
+    fetch("/api/machine-categories", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { categories: [] }))
+      .then((d) => {
+        const fromApi = Array.isArray(d.categories) ? d.categories : [];
+        if (fromApi.length > 0) setCats(Array.from(new Set([...BASE_CATEGORIES, ...fromApi])));
+      })
+      .catch(() => {});
+  }, []);
+  return cats;
+}
+
 type StepDraft = { operationName: string; machineCategory: string; estimatedMinutes: string };
 
 interface RecipeManagerViewProps {
@@ -25,6 +40,7 @@ interface RecipeManagerViewProps {
 }
 
 export default function RecipeManagerView({ onRefresh }: RecipeManagerViewProps) {
+  const categories = useMachineCategories();
   const [recipes, setRecipes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -245,8 +261,8 @@ export default function RecipeManagerView({ onRefresh }: RecipeManagerViewProps)
                       placeholder="Operation name" className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white" />
                     <select value={s.machineCategory} onChange={e => updateStep(i, "machineCategory", e.target.value)}
                       className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">
-                      {BASE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      {!BASE_CATEGORIES.includes(s.machineCategory) && <option value={s.machineCategory}>{s.machineCategory}</option>}
+                      {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                      {!categories.includes(s.machineCategory) && <option value={s.machineCategory}>{s.machineCategory}</option>}
                     </select>
                     <input type="number" value={s.estimatedMinutes} onChange={e => updateStep(i, "estimatedMinutes", e.target.value)}
                       className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center font-mono text-xs text-white" title="Estimated minutes" />

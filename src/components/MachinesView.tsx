@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import { 
   Cpu, 
@@ -46,7 +46,17 @@ export default function MachinesView({
   const [assignedOperatorId, setAssignedOperatorId] = useState(users[0]?.id || "");
   const [notes, setNotes] = useState("");
 
-  const categories = ["All", "Beam Saw", "Edge Bander", "CNC Router", "Press", "Panel Saw", "Drill Press", "Spray & Finish", "Assembly Table"];
+  const [categoryList, setCategoryList] = useState<string[]>(["Beam Saw", "Edge Bander", "CNC Router", "Press", "Panel Saw", "Drill Press", "Spray & Finish", "Assembly Table"]);
+  useEffect(() => {
+    fetch("/api/machine-categories", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { categories: [] }))
+      .then((d) => {
+        const fromApi = Array.isArray(d.categories) ? d.categories : [];
+        if (fromApi.length > 0) setCategoryList((prev) => Array.from(new Set([...fromApi, ...prev])));
+      })
+      .catch(() => {});
+  }, []);
+  const categories = ["All", ...Array.from(new Set([...categoryList, ...machines.map((m: any) => m.category).filter(Boolean)]))];
   
   const filteredMachines = categoryFilter === "All" ? machines : machines.filter(m => m.category === categoryFilter);
 

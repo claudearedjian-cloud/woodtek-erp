@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orders, customers, orderOperations, machines, operationTemplates, users } from "@/db/schema";
-import { eq, desc, asc } from "drizzle-orm";
+import { orders, customers, orderOperations, machines, operationTemplates, users, downtimeEvents } from "@/db/schema";
+import { and, eq, desc, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { chooseFreestMachine } from "@/lib/machineCategories";
 import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { getSessionUser } from "@/lib/auth";
@@ -74,6 +75,50 @@ export async function GET(request: Request) {
     console.error("GET orders error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch orders" }, { status: 500 });
   }
+}
+
+/**
+ * Automatic machine assignment: among the machines of the given category,
+ * pick the one with the least open work. Machines in Maintenance/Offline and
+ * machines under active (unresolved) downtime are avoided unless nothing
+ * else is left. Never blocks order creation — falls back to any machine.
+ */
+async function pickFreestMachine(allMachines: typeof machines.$inferSelect[], categoryName: string) {
+  const cat = String(categoryName || "").trim().toLowerCase();
+  let candidates = cat
+    ? allMachines.filter((m) => String(m.category || "").toLowerCase() === cat)
+    : [];
+  if (candidates.length === 0 && cat) {
+    candidates = allMachines.filter((m) => String(m.category || "").toLowerCase().includes(cat));
+  }
+  if (candidates.length === 0) candidates = allMachines;
+
+  const healthy = candidates.filter((m) => m.status !== "Maintenance" && m.status !== "Offline");
+  if (healthy.length > 0) candidates = healthy;
+
+  // Open work per machine (Pending / Ready / In Progress).
+  const load: Record<number, number> = {};
+  try {
+    const rows = await db
+      .select({ machineId: orderOperations.machineId, n: sql<number>`count(*)::int` })
+      .from(orderOperations)
+      .where(and(isNotNull(orderOperations.machineId), inArray(orderOperations.status, ["Pending", "Ready", "In Progress"])))
+      .groupBy(orderOperations.machineId);
+    for (const r of rows) {
+      if (r.machineId != null) load[r.machineId] = Number(r.n) || 0;
+    }
+    // Active downtime: push to the back of the queue.
+    const down = await db
+      .select({ machineId: downtimeEvents.machineId })
+      .from(downtimeEvents)
+      .where(isNull(downtimeEvents.endedAt));
+    for (const d of down) {
+      load[d.machineId] = (load[d.machineId] ?? 0) + 1_000_000;
+    }
+  } catch {
+    /* load info is best-effort; fall back to id order */
+  }
+  return chooseFreestMachine(candidates, load);
 }
 
 export async function POST(request: Request) {
@@ -149,7 +194,7 @@ export async function POST(request: Request) {
       if (tpl && Array.isArray(tpl.defaultStepsJson)) {
         for (let i = 0; i < tpl.defaultStepsJson.length; i++) {
           const step = tpl.defaultStepsJson[i] as any;
-          const matchingMachine = allMachines.find(m => m.category.toLowerCase().includes(step.machineCategory?.toLowerCase() || "")) || allMachines[0];
+          const matchingMachine = await pickFreestMachine(allMachines, step.machineCategory || "");
           await db.insert(orderOperations).values({
             orderId: newOrder.id,
             machineId: matchingMachine ? matchingMachine.id : null,
@@ -163,9 +208,12 @@ export async function POST(request: Request) {
     } else if (customSteps.length > 0) {
       for (let i = 0; i < customSteps.length; i++) {
         const step = customSteps[i];
+        const autoMachine = step.auto && !step.machineId
+          ? await pickFreestMachine(allMachines, step.machineCategory || "")
+          : null;
         await db.insert(orderOperations).values({
           orderId: newOrder.id,
-          machineId: step.machineId ? Number(step.machineId) : null,
+          machineId: step.machineId ? Number(step.machineId) : (autoMachine ? autoMachine.id : null),
           stepOrder: i + 1,
           operationName: step.operationName || `Operation ${i + 1}`,
           estimatedMinutes: step.estimatedMinutes ? Number(step.estimatedMinutes) : 60,
@@ -173,8 +221,8 @@ export async function POST(request: Request) {
         });
       }
     } else {
-      const saw = allMachines.find(m => m.category === "Panel Saw") || allMachines[0];
-      const asm = allMachines.find(m => m.category === "Assembly Table") || allMachines[1] || allMachines[0];
+      const saw = (await pickFreestMachine(allMachines, "Panel Saw")) || allMachines[0];
+      const asm = (await pickFreestMachine(allMachines, "Assembly Table")) || allMachines[1] || allMachines[0];
       await db.insert(orderOperations).values([
         { orderId: newOrder.id, machineId: saw?.id || null, stepOrder: 1, operationName: "Standard Panel Sizing & Cutting", estimatedMinutes: 90, status: "Ready" },
         { orderId: newOrder.id, machineId: asm?.id || null, stepOrder: 2, operationName: "Assembly & Quality Assurance", estimatedMinutes: 120, status: "Pending" },

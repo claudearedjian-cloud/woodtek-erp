@@ -269,7 +269,7 @@ export default function WoodTekERP() {
           {activeTab === "orders" && (
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}
               showNewModal={showNewModal && canCreateOrders} setShowNewModal={setShowNewModal} customers={customers}
-              templates={templates} machines={machines} searchQuery={searchQuery} />
+              templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} />
           )}
           {activeTab === "schedule" && (
             <ScheduleView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} searchQuery={searchQuery} />
