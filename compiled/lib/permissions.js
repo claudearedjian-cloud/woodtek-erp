@@ -90,6 +90,19 @@ function can(role, action) {
     // so we keep that as a strict check.
     return (MATRIX[role] ?? []).includes(action);
 }
+// ---------------------------------------------------------------- custom roles
+// Custom roles (created by a Manager in Settings > Users > Manage roles) are
+// named aliases of a built-in role: they inherit that role's complete
+// permission set, module visibility and data scoping. The user table stores
+// the custom name; the server session stores the BASE role, so every existing
+// role check keeps working untouched. The registry is filled from
+// data/roles-config.json (server) or /api/roles at bootstrap (client).
+/** Module ids a restricted custom role may see ("" list = full base access). */
+const KNOWN_MODULE_IDS = [
+    "dashboard", "orders", "machines", "operator", "customers", "inventory",
+    "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip",
+    "quality", "downtime", "recipes", "pims", "warehouse",
+];
 let CUSTOM_ROLES = [];
 /** Accepts unknown input (API body / fetched JSON) and stores a validated list. */
 function registerCustomRoles(list) {
@@ -110,7 +123,11 @@ function registerCustomRoles(list) {
             if (seen.has(key))
                 continue;
             seen.add(key);
-            out.push({ name, base: base });
+            const rawModules = Array.isArray(entry?.modules) ? entry.modules : undefined;
+            const modules = rawModules
+                ? rawModules.map((m) => String(m)).filter((m) => KNOWN_MODULE_IDS.includes(m)).slice(0, KNOWN_MODULE_IDS.length)
+                : undefined;
+            out.push({ name, base: base, ...(modules && modules.length ? { modules } : {}) });
             if (out.length >= 20)
                 break;
         }

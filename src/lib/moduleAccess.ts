@@ -8,6 +8,7 @@
 // ============================================================================
 
 import type { Role } from "@/lib/dataAccess";
+import { getCustomRoles } from "@/lib/permissions";
 
 export type ModuleId =
   | "dashboard"
@@ -95,13 +96,46 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
   ],
 };
 
+/** Human labels for every module (role editor UI). */
+export const MODULE_LABELS: Record<ModuleId, string> = {
+  dashboard: "Executive Dashboard",
+  orders: "Orders & Routing",
+  machines: "Shop Floor Monitor",
+  operator: "Operator Station",
+  customers: "Clients & Architects",
+  inventory: "Wood & Edge Stock",
+  schedule: "Dispatch Schedule",
+  gantt: "Gantt Chart",
+  cmms: "Asset CMMS",
+  reports: "System Reports",
+  settings: "General Settings",
+  workforce: "Workforce & Shifts",
+  wip: "Live WIP Board",
+  quality: "Scrap & Rework",
+  downtime: "Downtime Log",
+  recipes: "Routing Recipes",
+  pims: "PIMS Import",
+  warehouse: "Warehouse & BOM",
+  designer: "Menu Designer",
+};
+
+/**
+ * Resolves a role's module visibility. A custom role with an explicit
+ * `modules` allowlist sees EXACTLY those screens; otherwise it inherits its
+ * base role's full list.
+ */
 export function canAccessModule(role: Role | string | null | undefined, module: ModuleId): boolean {
   if (!role) return false;
-  const modules = (MODULES_BY_ROLE as Record<string, ModuleId[]>)[role] ?? [];
-  return modules.includes(module);
+  const custom = getCustomRoles().find((r) => r.name === role);
+  if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
+  const key = custom ? custom.base : (role as string);
+  return ((MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? []).includes(module);
 }
 
 export function listModulesForRole(role: Role | string | null | undefined): ModuleId[] {
   if (!role) return [];
-  return (MODULES_BY_ROLE as Record<string, ModuleId[]>)[role] ?? [];
+  const custom = getCustomRoles().find((r) => r.name === role);
+  if (custom?.modules && custom.modules.length > 0) return custom.modules as ModuleId[];
+  const key = custom ? custom.base : (role as string);
+  return (MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? [];
 }

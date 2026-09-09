@@ -167,5 +167,17 @@ check(mc.chooseFreestMachine([m1, m2], { 3: 4, 1: 4 }).id === 1, "chooseFreestMa
 check(mc.chooseFreestMachine([], {}) === null, "chooseFreestMachine handles empty list");
 check(mc.chooseFreestMachine([m3], {}).id === 2, "chooseFreestMachine treats unknown load as zero");
 
+// ---- custom role with explicit screen allowlist ----
+perms.registerCustomRoles([
+  { name: "Foreman", base: "Machine Operator" },
+  { name: "WH Super", base: "QA & Dispatch", modules: ["warehouse"] },
+]);
+check(perms.getCustomRoles().find((r) => r.name === "WH Super").modules.length === 1, "role allowlist survives sanitising");
+const whr = renderToString(React.createElement(Sidebar, props("WH Super")));
+check(whr.includes("Warehouse &amp; BOM"), "restricted role sees its allowlisted screen");
+check(!whr.includes("Scrap &amp; Rework"), "restricted role loses base screens (quality)");
+check(!whr.includes("Live WIP Board"), "restricted role loses WIP");
+check(!whr.includes("Executive Dashboard"), "restricted role loses dashboard");
+
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

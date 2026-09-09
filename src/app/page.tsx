@@ -214,11 +214,12 @@ export default function WoodTekERP() {
   useEffect(() => {
     if (!currentUser) return;
     const m = tabToModule(activeTab);
-    if (m && !canAccessModule(currentUser.role, m)) {
+    const guardRole = currentUser.displayRole || currentUser.role;
+    if (m && !canAccessModule(guardRole, m)) {
       // Bounce to the first module this role may actually see — never to a
       // module they cannot access (the old hardcoded "dashboard" would stall
       // roles that no longer have dashboard access, e.g. Machine Operator).
-      const fallback = listModulesForRole(currentUser.role)[0];
+      const fallback = listModulesForRole(guardRole)[0];
       setActiveTab(fallback === "operator" ? "station" : fallback ?? "station");
     }
   }, [currentUser, activeTab]);

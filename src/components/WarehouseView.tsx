@@ -51,6 +51,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
 
   const canUpdate =
     can(currentUser?.role, "inventory:write") || can(currentUser?.role, "orders:write");
+  const isManager = can(currentUser?.role, "users:manage");
 
   const load = useCallback(async () => {
     setError("");
@@ -190,24 +191,33 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                       </div>
                     </div>
 
-                    {order.machines.length > 0 && (
-                      <select
-                        value={line.machineId ?? ""}
-                        disabled={!canUpdate || busyId === line.id}
-                        onChange={(e) =>
-                          setStatus(line, line.status, e.target.value ? Number(e.target.value) : null)
-                        }
-                        className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white disabled:opacity-50"
-                        title="Send to machine"
+                    {isManager ? (
+                      order.machines.length > 0 && (
+                        <select
+                          value={line.machineId ?? ""}
+                          disabled={busyId === line.id}
+                          onChange={(e) =>
+                            setStatus(line, line.status, e.target.value ? Number(e.target.value) : null)
+                          }
+                          className="w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white disabled:opacity-50"
+                          title="Re-route this material (Manager only)"
+                        >
+                          <option value="">— machine —</option>
+                          {order.machines.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.code} — {m.name}
+                            </option>
+                          ))}
+                        </select>
+                      )
+                    ) : line.machineId != null ? (
+                      <span
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] font-bold text-slate-300"
+                        title="Assigned by the routing sequence — only a Manager can change this"
                       >
-                        <option value="">— machine —</option>
-                        {order.machines.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.code} — {m.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                        → {order.machines.find((m) => m.id === line.machineId)?.code || `Machine #${line.machineId}`}
+                      </span>
+                    ) : null}
 
                     <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[line.status]}`}>
                       {line.status}

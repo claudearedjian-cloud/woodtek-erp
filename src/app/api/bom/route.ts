@@ -131,7 +131,14 @@ export async function PUT(request: Request) {
     if (!Number.isInteger(allocationId) || !VALID.includes(status)) {
       return NextResponse.json({ error: "allocationId and a valid status are required." }, { status: 400 });
     }
-    const machineId = body.machineId != null && body.machineId !== "" ? Number(body.machineId) : null;
+    // Only a Manager may change the target machine; everyone else keeps the
+    // machine the routing assigned (or the last manager-chosen one).
+    const existing = readBomStatus().entries[String(allocationId)];
+    const mayRoute = can(user.role, "users:manage");
+    const wantsMachine = body.machineId != null && body.machineId !== "";
+    const machineId = mayRoute && wantsMachine
+      ? Number(body.machineId)
+      : (existing?.machineId ?? null);
     setBomStatus(allocationId, status, machineId);
     return NextResponse.json({ ok: true, allocationId, status, machineId });
   } catch (err: unknown) {

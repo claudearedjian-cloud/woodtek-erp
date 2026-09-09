@@ -21,6 +21,7 @@ import {
   MapPin
 } from "lucide-react";
 import { ROLES, registerCustomRoles } from "@/lib/permissions";
+import { MODULE_LABELS, type ModuleId } from "@/lib/moduleAccess";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -54,7 +55,11 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   });
 
   // ---- custom roles (Manager can add/remove named roles) ----
-  const [customRoles, setCustomRoles] = useState<{ name: string; base: string }[]>([]);
+  const [customRoles, setCustomRoles] = useState<{ name: string; base: string; modules?: string[] }[]>([]);
+  const [addScreens, setAddScreens] = useState<string[]>([]);
+  const [screensRole, setScreensRole] = useState<string | null>(null);
+  const [screenSel, setScreenSel] = useState<string[]>([]);
+  const SCREEN_CHOICES = (Object.keys(MODULE_LABELS) as ModuleId[]).filter((m) => m !== "designer");
   const [showRoleMgr, setShowRoleMgr] = useState(false);
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleBase, setNewRoleBase] = useState<string>("Machine Operator");
@@ -448,18 +453,71 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                           </div>
                         ))}
                         {customRoles.map((r) => (
-                          <div key={r.name} className="flex items-center justify-between text-xs text-slate-200 bg-slate-900/60 rounded-lg px-3 py-2">
-                            <span>
-                              {r.name} <span className="text-[10px] text-slate-500">inherits {r.base}</span>
-                            </span>
-                            <button
-                              type="button"
-                              title={`Remove ${r.name}`}
-                              onClick={() => saveRoles(customRoles.filter((x) => x.name !== r.name))}
-                              className="text-rose-400 hover:text-rose-300"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          <div key={r.name}>
+                            <div className="flex items-center justify-between text-xs text-slate-200 bg-slate-900/60 rounded-lg px-3 py-2">
+                              <span>
+                                {r.name}{" "}
+                                <span className="text-[10px] text-slate-500">
+                                  inherits {r.base}
+                                  {r.modules && r.modules.length > 0 ? ` · ${r.modules.length} screen(s) only` : ""}
+                                </span>
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  title="Choose which screens this role sees"
+                                  onClick={() => {
+                                    if (screensRole === r.name) { setScreensRole(null); return; }
+                                    setScreensRole(r.name);
+                                    setScreenSel(r.modules ?? []);
+                                  }}
+                                  className="text-slate-400 hover:text-teal-300"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title={`Remove ${r.name}`}
+                                  onClick={() => saveRoles(customRoles.filter((x) => x.name !== r.name))}
+                                  className="text-rose-400 hover:text-rose-300"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </span>
+                            </div>
+                            {screensRole === r.name && (
+                              <div className="mt-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+                                <div className="text-[10px] font-bold uppercase text-slate-500">
+                                  Screens this role sees — none selected = full {r.base} access
+                                </div>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {SCREEN_CHOICES.map((m) => (
+                                    <label
+                                      key={m}
+                                      className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${screenSel.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        className="hidden"
+                                        checked={screenSel.includes(m)}
+                                        onChange={() => setScreenSel((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
+                                      />
+                                      {MODULE_LABELS[m]}
+                                    </label>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    saveRoles(customRoles.map((x) => (x.name === screensRole ? { ...x, modules: screenSel.length ? screenSel : undefined } : x)));
+                                    setScreensRole(null);
+                                  }}
+                                  className="mt-2 rounded-lg bg-teal-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-teal-500"
+                                >
+                                  Save screens
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                         <div className="flex gap-2 pt-1">
@@ -484,13 +542,35 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                             onClick={() => {
                               const n = newRoleName.trim();
                               if (!n) return;
-                              saveRoles([...customRoles, { name: n, base: newRoleBase }]);
+                              saveRoles([...customRoles, { name: n, base: newRoleBase, ...(addScreens.length ? { modules: addScreens } : {}) }]);
                               setNewRoleName("");
+                              setAddScreens([]);
                             }}
                             className="bg-teal-600 hover:bg-teal-500 text-white rounded-lg px-3 text-xs font-bold"
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
+                        </div>
+                        <div className="pt-1">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">
+                            Screens (optional — none selected = full {newRoleBase} access)
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {SCREEN_CHOICES.map((m) => (
+                              <label
+                                key={m}
+                                className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${addScreens.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="hidden"
+                                  checked={addScreens.includes(m)}
+                                  onChange={() => setAddScreens((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
+                                />
+                                {MODULE_LABELS[m]}
+                              </label>
+                            ))}
+                          </div>
                         </div>
                         {roleMsg && <div className="text-[11px] text-amber-300">{roleMsg}</div>}
                       </div>

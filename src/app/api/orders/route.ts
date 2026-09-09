@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { orders, customers, orderOperations, machines, operationTemplates, users, downtimeEvents, orderMaterials, inventoryItems } from "@/db/schema";
 import { and, eq, desc, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { chooseFreestMachine } from "@/lib/machineCategories";
+import { setBomStatus } from "@/lib/bomStatus.server";
 import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { getSessionUser } from "@/lib/auth";
@@ -241,14 +242,29 @@ export async function POST(request: Request) {
           .from(inventoryItems)
           .where(inArray(inventoryItems.id, lines.map((l) => l.itemId)));
         const costOf = new Map(items.map((i) => [i.id, i.unitCost]));
-        await db.insert(orderMaterials).values(
-          lines.map((l) => ({
-            orderId: newOrder.id,
-            itemId: l.itemId,
-            quantityUsed: l.qty,
-            costPerUnit: costOf.get(l.itemId) ?? "0.00",
-          })),
-        );
+        const inserted = await db
+          .insert(orderMaterials)
+          .values(
+            lines.map((l) => ({
+              orderId: newOrder.id,
+              itemId: l.itemId,
+              quantityUsed: l.qty,
+              costPerUnit: costOf.get(l.itemId) ?? "0.00",
+            })),
+          )
+          .returning({ id: orderMaterials.id });
+
+        // Materials travel to the FIRST machine of the routing sequence; the
+        // warehouse sees it read-only, only a Manager may re-route later.
+        const [firstOp] = await db
+          .select({ machineId: orderOperations.machineId })
+          .from(orderOperations)
+          .where(eq(orderOperations.orderId, newOrder.id))
+          .orderBy(asc(orderOperations.stepOrder));
+        const firstMachine = firstOp?.machineId ?? null;
+        for (const row of inserted) {
+          setBomStatus(row.id, "Requested", firstMachine);
+        }
       }
     }
 

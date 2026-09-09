@@ -37,8 +37,8 @@ exports.MENU_REGISTRY = [
 ];
 const moduleFor = (id) => id === "station" ? "operator" : id;
 function defaultVisibleFor(role, id) {
-    // Custom roles inherit their base role's module visibility.
-    return (0, moduleAccess_1.canAccessModule)((0, permissions_1.baseRoleOf)(role), moduleFor(id));
+    // canAccessModule resolves custom roles (explicit allowlist or base fallback).
+    return (0, moduleAccess_1.canAccessModule)(role, moduleFor(id));
 }
 // Merge defaults + stored config into an ordered, per-role menu.
 function resolveMenu(role, config) {
@@ -51,7 +51,7 @@ function resolveMenu(role, config) {
         ...cfgItems.map((i) => i.id).filter(known),
         ...exports.MENU_REGISTRY.map((r) => r.id).filter((id) => !byId.has(id)),
     ];
-    const canSeeSettings = (0, moduleAccess_1.canAccessModule)((0, permissions_1.baseRoleOf)(role), "settings");
+    const canSeeSettings = (0, moduleAccess_1.canAccessModule)(role, "settings");
     const top = [];
     const settings = [];
     for (const id of ordered) {

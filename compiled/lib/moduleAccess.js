@@ -8,9 +8,10 @@
 // it to redirect a user who manually types an unreachable URL.
 // ============================================================================
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MODULES_BY_ROLE = void 0;
+exports.MODULE_LABELS = exports.MODULES_BY_ROLE = void 0;
 exports.canAccessModule = canAccessModule;
 exports.listModulesForRole = listModulesForRole;
+const permissions_1 = require("../lib/permissions");
 /**
  * Every module a role is allowed to access. Manager sees all. Other roles
  * see only the modules they need for their day-to-day work.
@@ -75,14 +76,48 @@ exports.MODULES_BY_ROLE = {
         "downtime",
     ],
 };
+/** Human labels for every module (role editor UI). */
+exports.MODULE_LABELS = {
+    dashboard: "Executive Dashboard",
+    orders: "Orders & Routing",
+    machines: "Shop Floor Monitor",
+    operator: "Operator Station",
+    customers: "Clients & Architects",
+    inventory: "Wood & Edge Stock",
+    schedule: "Dispatch Schedule",
+    gantt: "Gantt Chart",
+    cmms: "Asset CMMS",
+    reports: "System Reports",
+    settings: "General Settings",
+    workforce: "Workforce & Shifts",
+    wip: "Live WIP Board",
+    quality: "Scrap & Rework",
+    downtime: "Downtime Log",
+    recipes: "Routing Recipes",
+    pims: "PIMS Import",
+    warehouse: "Warehouse & BOM",
+    designer: "Menu Designer",
+};
+/**
+ * Resolves a role's module visibility. A custom role with an explicit
+ * `modules` allowlist sees EXACTLY those screens; otherwise it inherits its
+ * base role's full list.
+ */
 function canAccessModule(role, module) {
     if (!role)
         return false;
-    const modules = exports.MODULES_BY_ROLE[role] ?? [];
-    return modules.includes(module);
+    const custom = (0, permissions_1.getCustomRoles)().find((r) => r.name === role);
+    if (custom?.modules && custom.modules.length > 0)
+        return custom.modules.includes(module);
+    const key = custom ? custom.base : role;
+    return (exports.MODULES_BY_ROLE[key] ?? []).includes(module);
 }
 function listModulesForRole(role) {
     if (!role)
         return [];
-    return exports.MODULES_BY_ROLE[role] ?? [];
+    const custom = (0, permissions_1.getCustomRoles)().find((r) => r.name === role);
+    if (custom?.modules && custom.modules.length > 0)
+        return custom.modules;
+    const key = custom ? custom.base : role;
+    return exports.MODULES_BY_ROLE[key] ?? [];
 }

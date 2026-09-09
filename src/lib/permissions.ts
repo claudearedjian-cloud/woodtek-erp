@@ -133,9 +133,18 @@ export function can(role: string | null | undefined, action: Action): boolean {
 // role check keeps working untouched. The registry is filled from
 // data/roles-config.json (server) or /api/roles at bootstrap (client).
 
+/** Module ids a restricted custom role may see ("" list = full base access). */
+const KNOWN_MODULE_IDS = [
+  "dashboard", "orders", "machines", "operator", "customers", "inventory",
+  "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip",
+  "quality", "downtime", "recipes", "pims", "warehouse",
+];
+
 export interface CustomRole {
   name: string;
   base: Role;
+  /** Optional explicit screen allowlist; when present it REPLACES the base role's screens. */
+  modules?: string[];
 }
 
 let CUSTOM_ROLES: CustomRole[] = [];
@@ -155,7 +164,11 @@ export function registerCustomRoles(list: unknown): void {
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name, base: base as Role });
+      const rawModules = Array.isArray((entry as any)?.modules) ? (entry as any).modules : undefined;
+      const modules = rawModules
+        ? rawModules.map((m: unknown) => String(m)).filter((m: string) => KNOWN_MODULE_IDS.includes(m)).slice(0, KNOWN_MODULE_IDS.length)
+        : undefined;
+      out.push({ name, base: base as Role, ...(modules && modules.length ? { modules } : {}) });
       if (out.length >= 20) break;
     }
   }
