@@ -14,6 +14,7 @@ import {
   Route,
   Trash2,
   Truck,
+  Wand2,
   X,
 } from "lucide-react";
 import { can } from "@/lib/permissions";
@@ -59,6 +60,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   const [scheduleTime, setScheduleTime] = useState("08:00");
   const [plannerMachineId, setPlannerMachineId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [autoPlanning, setAutoPlanning] = useState(false);
 
   const canSchedule = currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator";
 
@@ -155,6 +157,27 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
 
   const unscheduled = visibleOperations.filter(operation => !operation.scheduledStart);
   const scheduled = visibleOperations.filter(operation => Boolean(operation.scheduledStart));
+
+  // One click: server assigns a slot to every unscheduled open operation,
+  // honoring routing order, order priority/due dates and machine availability.
+  const autoPlan = async () => {
+    setAutoPlanning(true);
+    setError("");
+    try {
+      const response = await fetch("/api/operations/auto-schedule", { method: "POST" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Auto-plan failed.");
+      const extra = payload.skipped ? ` — ${payload.skipped} skipped (machine unavailable)` : "";
+      setNotice(`Auto-planned ${payload.planned} operation${payload.planned === 1 ? "" : "s"} by workflow order and machine availability${extra}.`);
+      setTimeout(() => setNotice(""), 6000);
+      await fetchOperations(true);
+      onRefresh();
+    } catch (autoError) {
+      setError(autoError instanceof Error ? autoError.message : "Auto-plan failed.");
+    } finally {
+      setAutoPlanning(false);
+    }
+  };
 
   const openPlanner = (operation: any) => {
     const defaultDate = operation.scheduledStart ? localDateKey(operation.scheduledStart) : localDateKey(new Date());
@@ -364,6 +387,17 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             <h2 className="flex items-center gap-2 text-sm font-black text-white"><ListFilter className="h-4 w-4 text-amber-400" /> Needs a slot</h2>
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-black text-amber-300">{unscheduled.length}</span>
           </div>
+          {canSchedule && unscheduled.length > 0 && (
+            <button
+              onClick={autoPlan}
+              disabled={autoPlanning}
+              title="Assign slots automatically — respects routing step order, order priority and due dates, and machine availability"
+              className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 px-3 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-600/20 transition hover:from-amber-400 hover:to-amber-500 disabled:opacity-50"
+            >
+              <Wand2 className="h-4 w-4" />
+              {autoPlanning ? "Planning slots…" : `Auto-plan ${unscheduled.length} operation${unscheduled.length === 1 ? "" : "s"}`}
+            </button>
+          )}
           {unscheduled.length === 0 ? (
             <div className="rounded-xl border border-dashed border-emerald-500/30 bg-emerald-500/5 p-5 text-center text-xs text-emerald-200">
               <CheckCircle2 className="mx-auto mb-2 h-7 w-7 text-emerald-400" />
