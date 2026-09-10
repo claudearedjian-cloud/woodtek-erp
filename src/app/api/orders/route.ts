@@ -6,6 +6,7 @@ import { chooseFreestMachine } from "@/lib/machineCategories";
 import { setBomStatus } from "@/lib/bomStatus.server";
 import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
+import { nextOrderNumber } from "@/lib/orderNumbers.server";
 import { getSessionUser } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -163,7 +164,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const finalOrderNum = orderNumber || `ORD-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    // Sequential PO-0001/<year> — per-year counter, auto-resets each new year.
+    const finalOrderNum = orderNumber || (await nextOrderNumber());
 
     // For Sales users, auto-set ownership columns. Managers can optionally
     // pick an assignedSalesId from the body.
