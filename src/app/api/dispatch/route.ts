@@ -23,7 +23,7 @@ import {
 
 interface DispatchFile {
   version: 1;
-  stages: Record<string, { stage: DispatchStage; updatedAt?: string }>;
+  stages: Record<string, { stage: DispatchStage; updatedAt?: string; proof?: { receivedBy: string; deliveredAt: string; notes: string | null } | null }>;
 }
 
 function fileLocation(): string {
@@ -75,6 +75,7 @@ export async function GET() {
     const payload = completed.map((o) => ({
       ...o,
       stage: (stages[String(o.id)]?.stage as DispatchStage) ?? defaultStage(o.projectType),
+      proof: stages[String(o.id)]?.proof ?? null,
     }));
     return NextResponse.json({ orders: payload });
   } catch (err: unknown) {
@@ -101,7 +102,15 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "A valid orderId and stage are required." }, { status: 400 });
     }
     const data = readFile();
-    data.stages[String(orderId)] = { stage, updatedAt: new Date().toISOString() };
+    const entry: any = { stage, updatedAt: new Date().toISOString() };
+    if (body.proof && typeof body.proof === "object") {
+      entry.proof = {
+        receivedBy: String(body.proof.receivedBy ?? "").slice(0, 120) || "—",
+        deliveredAt: new Date().toISOString(),
+        notes: String(body.proof.notes ?? "").slice(0, 500) || null,
+      };
+    }
+    data.stages[String(orderId)] = entry;
     writeFile(data);
     if (stage === "delivered") {
       // Delivery confirmed at the gate: the order leaves open work everywhere.

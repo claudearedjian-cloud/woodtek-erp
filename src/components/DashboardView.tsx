@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { 
   Layers, 
   Cpu, 
@@ -8,6 +8,7 @@ import {
   Clock, 
   CheckCircle2, 
   TrendingUp, 
+  Bell, 
   ArrowRight, 
   Activity, 
   Flame, 
@@ -31,6 +32,21 @@ const STATUS_BUTTONS = [
 ] as const;
 
 export default function DashboardView({ data, loading, onNavigate }: DashboardViewProps) {
+  // Attention center: polls /api/alerts (overdue orders, missing materials, CMMS service, low stock).
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const loadAlerts = () =>
+      fetch("/api/alerts", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && Array.isArray(d?.alerts)) setAlerts(d.alerts); })
+        .catch(() => {});
+    loadAlerts();
+    const t = setInterval(loadAlerts, 20000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
   if (loading || !data) {
     return (
       <div className="p-6 space-y-6">
@@ -60,13 +76,55 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
       <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Orders by status — click to open</h3>
-          <button
-            onClick={() => onNavigate("orders")}
-            className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition"
-          >
-            <span>All orders</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowAlerts(v => !v)}
+                title="Alerts that need attention"
+                className={`relative rounded-xl border p-2 transition ${alerts.length > 0 ? "border-rose-500/50 bg-rose-500/10 hover:bg-rose-500/20" : "border-slate-700 bg-slate-950 hover:bg-slate-800"}`}
+              >
+                <Bell className={`h-4 w-4 ${alerts.length > 0 ? "text-rose-300" : "text-slate-400"}`} />
+                {alerts.length > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 rounded-full bg-rose-500 px-1.5 text-[9px] font-black text-white">
+                    {alerts.length}
+                  </span>
+                )}
+              </button>
+              {showAlerts && (
+                <div className="absolute right-0 top-11 z-40 max-h-96 w-80 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
+                  <div className="px-2 pb-1.5 pt-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Needs attention ({alerts.length})
+                  </div>
+                  {alerts.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500">All clear — nothing needs attention.</div>
+                  ) : (
+                    alerts.map((a: any, i: number) => (
+                      <button
+                        key={i}
+                        onClick={() => { onNavigate(a.tab); setShowAlerts(false); }}
+                        className="mb-1 w-full rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-left transition hover:border-amber-500/40"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className={`h-2 w-2 flex-shrink-0 rounded-full ${
+                            a.severity === "rose" ? "bg-rose-400" : a.severity === "amber" ? "bg-amber-400" : a.severity === "orange" ? "bg-orange-400" : "bg-violet-400"
+                          }`} />
+                          <span className="text-[11px] font-black text-white">{a.title}</span>
+                        </div>
+                        <div className="mt-0.5 pl-3.5 text-[10px] text-slate-400">{a.detail}</div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => onNavigate("orders")}
+              className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 transition"
+            >
+              <span>All orders</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {STATUS_BUTTONS.map((b) => (

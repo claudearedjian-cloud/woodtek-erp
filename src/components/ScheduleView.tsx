@@ -84,6 +84,34 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     }
   };
 
+  // Proof of delivery: "Mark delivered" collects who received the goods.
+  const [proofFor, setProofFor] = useState<any>(null);
+  const [proofForm, setProofForm] = useState({ receivedBy: "", notes: "" });
+
+  const confirmDelivery = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!proofFor) return;
+    setDispatchBusy(proofFor.id);
+    try {
+      await fetch("/api/dispatch", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: proofFor.id,
+          stage: "delivered",
+          proof: { receivedBy: proofForm.receivedBy.trim(), notes: proofForm.notes.trim() },
+        }),
+      });
+      setProofFor(null);
+      setProofForm({ receivedBy: "", notes: "" });
+      await fetchDispatch();
+    } catch {
+      /* ignore */
+    } finally {
+      setDispatchBusy(null);
+    }
+  };
+
   const setDispatchStage = async (orderId: number, stage: string) => {
     setDispatchBusy(orderId);
     try {
@@ -345,6 +373,12 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                     <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       {isServiceFlow(o.projectType) ? "Service" : "Project"} · {o.projectType}
                     </div>
+                    {o.stage === "delivered" && o.proof && (
+                      <div className="mt-1 text-[10px] font-bold text-emerald-400">
+                        ✓ Delivered to {o.proof.receivedBy} · {new Date(o.proof.deliveredAt).toLocaleString()}
+                        {o.proof.notes ? ` · ${o.proof.notes}` : ""}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {flow.map((st) => (
@@ -368,7 +402,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                     <button
                       type="button"
                       disabled={dispatchBusy === o.id}
-                      onClick={() => setDispatchStage(o.id, nxt)}
+                      onClick={() => (nxt === "delivered" ? (setProofForm({ receivedBy: "", notes: "" }), setProofFor(o)) : setDispatchStage(o.id, nxt))}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
@@ -466,6 +500,52 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             </div>
             <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-xs leading-relaxed text-blue-100"><Clock3 className="mr-1 inline h-3.5 w-3.5 text-blue-300" /> The end time is calculated automatically from the estimated operation duration.</div>
             <div className="flex justify-end gap-2 border-t border-slate-800 pt-4"><button type="button" onClick={() => setPlannerOp(null)} className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700">Cancel</button><button type="submit" disabled={saving} className="rounded-xl bg-amber-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50">{saving ? "Checking capacity…" : "Save dispatch slot"}</button></div>
+          </form>
+        </div>
+      )}
+
+      {proofFor && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <form onSubmit={confirmDelivery} className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <div className="mb-1 font-mono text-xs font-black text-amber-400">{proofFor.orderNumber}</div>
+                <h3 className="text-base font-black text-white flex items-center gap-2"><Truck className="h-4 w-4 text-emerald-400" /> Proof of delivery</h3>
+                <p className="mt-1 text-xs text-slate-400">{proofFor.title}{proofFor.customerCompany ? ` — ${proofFor.customerCompany}` : ""}</p>
+              </div>
+              <button type="button" onClick={() => setProofFor(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-bold text-slate-300">Received by *</label>
+              <input
+                autoFocus
+                required
+                value={proofForm.receivedBy}
+                onChange={(e) => setProofForm({ ...proofForm, receivedBy: e.target.value })}
+                placeholder="Name of the person who received the goods"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-bold text-slate-300">Notes (optional)</label>
+              <textarea
+                rows={2}
+                value={proofForm.notes}
+                onChange={(e) => setProofForm({ ...proofForm, notes: e.target.value })}
+                placeholder="Condition on arrival, gate pass number…"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs leading-relaxed text-emerald-100">
+              <CheckCircle2 className="mr-1 inline h-3.5 w-3.5 text-emerald-300" />
+              The order will be marked <strong>Delivered</strong>, stamped with the date and time, and removed from open production everywhere.
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-800 pt-4">
+              <button type="button" onClick={() => setProofFor(null)} className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700">Cancel</button>
+              <button type="submit" disabled={dispatchBusy === proofFor.id} className="rounded-xl bg-emerald-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+                {dispatchBusy === proofFor.id ? "Saving…" : "Confirm delivery"}
+              </button>
+            </div>
           </form>
         </div>
       )}

@@ -567,12 +567,12 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
                       <input type="email" required value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white" />
                     </div>
                   </div>
-                  {!editingEntity && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-300 mb-1.5">4-Digit PIN *</label>
-                      <input type="text" maxLength={4} pattern="\d{4}" required={!editingEntity} value={formData.pin} onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, "").slice(0, 4) })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white font-mono tracking-widest" placeholder="0000" />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                      {editingEntity ? "Reset PIN (leave empty to keep the current PIN)" : "4-Digit PIN *"}
+                    </label>
+                    <input type="text" maxLength={4} pattern="\d{4}" required={!editingEntity} value={formData.pin} onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, "").slice(0, 4) })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white font-mono tracking-widest" placeholder="0000" />
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-300 mb-1.5">Role</label>
