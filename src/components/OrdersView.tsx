@@ -501,7 +501,7 @@ export default function OrdersView({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="font-mono text-base font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
+                    <span className="font-mono text-xl font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
                       {order.status}
                     </span>
@@ -521,7 +521,7 @@ export default function OrdersView({
                     {order.title}
                   </h3>
                   <div className="flex items-center gap-4 text-xs text-slate-400 mt-1">
-                    <span className="font-semibold text-slate-300 flex items-center gap-1">
+                    <span className="text-sm font-extrabold text-white flex items-center gap-1">
                       <User className="w-3.5 h-3.5 text-slate-500" /> {order.customerCompany || order.customerName}
                     </span>
                     <span className={`flex items-center gap-1 ${isOverdue(order) ? "font-bold text-rose-300" : "text-slate-400"}`}>
@@ -595,7 +595,7 @@ export default function OrdersView({
                       className="p-4 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/50 rounded-xl transition cursor-pointer shadow-sm group"
                     >
                       <div className="flex items-center justify-between mb-2">
-                        <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
+                        <span className="font-mono text-base font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                         <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase ${getPriorityBadge(order.priority)}`}>
                           {order.priority}
                         </span>
@@ -603,7 +603,7 @@ export default function OrdersView({
                       <h4 className="font-bold text-white text-sm line-clamp-2 group-hover:text-amber-300 transition mb-2">
                         {order.title}
                       </h4>
-                      <div className="text-[11px] text-slate-400 font-semibold mb-3 truncate">
+                      <div className="text-xs text-white font-extrabold mb-3 truncate">
                         {order.customerCompany || order.customerName}
                       </div>
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (

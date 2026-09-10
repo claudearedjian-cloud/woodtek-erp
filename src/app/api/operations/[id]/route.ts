@@ -213,6 +213,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           ));
       }
 
+      // First machine start flips the ORDER itself into production so the
+      // orders board reflects reality without a manual status change.
+      if (requestedStatus === "In Progress") {
+        const [parentOrder] = await tx.select().from(orders).where(eq(orders.id, updatedOp.orderId));
+        if (parentOrder && (parentOrder.status === "Quoted" || parentOrder.status === "Deposit Paid")) {
+          await tx.update(orders)
+            .set({ status: "In Production" })
+            .where(eq(orders.id, parentOrder.id));
+        }
+      }
+
       const allOps = await tx
         .select()
         .from(orderOperations)

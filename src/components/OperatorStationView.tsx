@@ -552,7 +552,7 @@ export default function OperatorStationView({
                         }`}>
                           {op.status}
                         </span>
-                        <span className="font-mono text-base font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
+                        <span className="font-mono text-lg font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
                           {op.orderNumber}
                         </span>
                         <span className="text-xs text-slate-400 font-bold bg-slate-800 px-2.5 py-1 rounded-xl">
@@ -573,9 +573,14 @@ export default function OperatorStationView({
                         <ArrowRight className="w-5 h-5 text-slate-500 inline" />
                       </h4>
 
-                      <div className="text-sm font-bold text-slate-300 truncate">
+                      <div className="text-base font-extrabold text-white truncate">
                         Project: {op.orderTitle}
                       </div>
+                      {(op.customerCompany || op.customerName) && (
+                        <div className="text-base font-black text-amber-300 truncate">
+                          Client: {op.customerCompany || op.customerName}
+                        </div>
+                      )}
 
                       <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 pt-1">
                         <span className="flex items-center gap-1">

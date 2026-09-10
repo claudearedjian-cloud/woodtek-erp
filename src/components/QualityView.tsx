@@ -236,7 +236,7 @@ export default function QualityView({ currentUser, onSelectOrder }: QualityViewP
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button onClick={() => onSelectOrder(e.orderId)} className="font-mono text-xs font-black text-amber-400 hover:text-amber-300">{e.orderNumber}</button>
+                      <button onClick={() => onSelectOrder(e.orderId)} className="font-mono text-sm font-black text-amber-400 hover:text-amber-300">{e.orderNumber}</button>
                       <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{e.operationName || e.orderTitle || "—"}</div>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-300">{e.machineCode || "—"}</td>

@@ -57,6 +57,8 @@ export type ScopedOperation = typeof orderOperations.$inferSelect & {
   orderTitle: string | null;
   orderNumber: string | null;
   customerId: number | null;
+  customerName: string | null;
+  customerCompany: string | null;
 };
 
 // -------------------------------------------------------------------- helpers
@@ -384,11 +386,14 @@ export async function listOperationsForUser(
       orderTitle: orders.title,
       orderNumber: orders.orderNumber,
       customerId: orders.customerId,
+      customerName: customers.name,
+      customerCompany: customers.company,
     })
     .from(orderOperations)
     .leftJoin(machines, eq(orderOperations.machineId, machines.id))
     .leftJoin(users, eq(orderOperations.operatorId, users.id))
     .leftJoin(orders, eq(orderOperations.orderId, orders.id))
+    .leftJoin(customers, eq(orders.customerId, customers.id))
     .where(whereClauses.length > 0 ? and(...whereClauses) : undefined)
     .orderBy(asc(orderOperations.stepOrder));
 

@@ -208,8 +208,8 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
                         <span className="font-mono tabular-nums text-amber-300"><Timer className="w-3.5 h-3.5 inline mr-1" />{fmtClock(now - new Date(job.startTime).getTime())}</span>
                       </div>
                       <div className="text-xs font-bold text-white truncate mt-1 group-hover:text-amber-300 transition">{job.operationName}</div>
-                      <div className="font-mono text-sm font-black text-amber-400 truncate mt-0.5">{job.orderNumber}</div>
-                      {job.customerName && <div className="text-[11px] text-slate-300 font-bold truncate">{job.customerName}</div>}
+                      <div className="font-mono text-base font-black text-amber-400 truncate mt-0.5">{job.orderNumber}</div>
+                      {job.customerName && <div className="text-xs text-white font-extrabold truncate">{job.customerName}</div>}
                     </div>
                   ) : (
                     <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-center text-xs text-slate-500 italic">
@@ -260,7 +260,7 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
+                          <span className="font-mono text-base font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
                           <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
                             o.priority === "Urgent" ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
                             : o.priority === "High" ? "bg-orange-500/20 text-orange-300 border border-orange-500/40"

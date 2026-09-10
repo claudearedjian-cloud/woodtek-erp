@@ -512,7 +512,7 @@ export default function OrderWorkflowDetail({
             <ArrowLeft className="w-4 h-4" /> Back to Orders Dashboard
           </button>
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="font-mono text-base font-black text-amber-400">{order.orderNumber}</span>
+            <span className="font-mono text-2xl font-black text-amber-400">{order.orderNumber}</span>
             <span className={`text-xs font-extrabold px-2.5 py-0.5 rounded uppercase ${
               order.status === "Completed" ? "bg-emerald-500 text-slate-950 font-black" : order.status === "Delivered" ? "bg-teal-500 text-slate-950 font-black" : "bg-amber-500 text-slate-950 font-black"
             }`}>
@@ -523,8 +523,8 @@ export default function OrderWorkflowDetail({
             </span>
           </div>
           <h1 className="text-xl font-extrabold text-white mt-1 tracking-tight">{order.title}</h1>
-          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-3">
-            <span>Client: <strong className="text-slate-200">{order.customerCompany || order.customerName}</strong></span>
+          <p className="text-sm text-slate-400 mt-0.5 flex flex-wrap items-center gap-3">
+            <span>Client: <strong className="text-white font-extrabold text-sm">{order.customerCompany || order.customerName}</strong></span>
             <span>•</span>
             <span>Due Date: <strong className="text-amber-400">{new Date(order.dueDate).toLocaleDateString()}</strong></span>
             {order.totalValue != null && (

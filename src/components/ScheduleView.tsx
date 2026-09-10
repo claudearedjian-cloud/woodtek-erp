@@ -366,7 +366,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                 <div key={o.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
+                      <span className="font-mono text-base font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
                       <span className="text-xs font-bold text-white">{o.title}</span>
                       {o.customerCompany && <span className="text-[11px] text-slate-400">— {o.customerCompany}</span>}
                     </div>
