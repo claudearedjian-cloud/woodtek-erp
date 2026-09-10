@@ -962,6 +962,49 @@ function ReportContent({ data, type }: { data: any; type: string }) {
     );
   }
 
+  if (type === "Order Status") {
+    const byStatus = data.byStatus ?? {};
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <StatCard label="Pending" value={String(byStatus.Pending ?? 0)} icon={AlertTriangle} />
+          <StatCard label="In Production" value={String(byStatus.InProduction ?? 0)} color="text-amber-600" icon={Cpu} />
+          <StatCard label="Quality Review" value={String(byStatus.QualityReview ?? 0)} color="text-violet-600" icon={CheckCircle2} />
+          <StatCard label="Completed" value={String(byStatus.Completed ?? 0)} color="text-emerald-600" icon={CheckCircle2} />
+          <StatCard label="On Hold" value={String(byStatus.OnHold ?? 0)} color="text-rose-600" icon={AlertTriangle} />
+        </div>
+
+        <div>
+          <h3 className="text-lg font-bold text-slate-900 mb-4">All Orders</h3>
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                <th className="py-2 px-3">Order #</th>
+                <th className="py-2 px-3">Title</th>
+                <th className="py-2 px-3">Status</th>
+                <th className="py-2 px-3 text-center">Progress</th>
+                <th className="py-2 px-3">Due</th>
+                <th className="py-2 px-3 text-right">Value</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm">
+              {(data.orders ?? []).map((o: any, idx: number) => (
+                <tr key={idx} className="border-b border-slate-100">
+                  <td className="py-2 px-3 font-mono text-xs font-bold">{o.orderNumber}</td>
+                  <td className="py-2 px-3">{o.title}</td>
+                  <td className="py-2 px-3"><span className="text-xs font-bold px-2 py-1 rounded bg-slate-100">{o.status}</span></td>
+                  <td className="py-2 px-3 text-center font-mono">{o.progressPercent}%</td>
+                  <td className="py-2 px-3 text-xs text-slate-500">{o.dueDate ? new Date(o.dueDate).toLocaleDateString() : "—"}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold">${Number(o.totalValue || 0).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   return <div className="text-slate-500 text-sm">Report type not recognized.</div>;
 }
 
