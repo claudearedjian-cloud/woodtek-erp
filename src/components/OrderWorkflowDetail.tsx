@@ -23,8 +23,11 @@ import {
   Boxes,
   DollarSign,
   FileText,
+  QrCode,
+  X,
 } from "lucide-react";
 import jsPDF from "jspdf";
+import QRCode from "qrcode";
 import autoTable from "jspdf-autotable";
 import { can } from "@/lib/permissions";
 
@@ -205,6 +208,38 @@ export default function OrderWorkflowDetail({
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Unable to delete operation.");
     }
+  };
+
+  // Printable QR sticker: scanning it opens this order on any device on the network.
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrUrl, setQrUrl] = useState("");
+
+  const openQr = async () => {
+    if (!order) return;
+    const link = `${window.location.origin}/?order=${order.id}`;
+    try {
+      const dataUrl = await QRCode.toDataURL(link, { width: 480, margin: 2, color: { dark: "#0f172a", light: "#ffffff" } });
+      setQrUrl(dataUrl);
+      setQrOpen(true);
+    } catch {
+      /* QR generation failed — ignore */
+    }
+  };
+
+  const printQr = () => {
+    if (!order || !qrUrl) return;
+    const w = window.open("", "_blank", "width=420,height=560");
+    if (!w) return;
+    w.document.write(`<!doctype html><html><head><title>Sticker ${order.orderNumber}</title></head>
+      <body style="font-family:Arial,sans-serif;text-align:center;padding:24px">
+        <img src="${qrUrl}" style="width:280px;height:280px" />
+        <div style="font-size:22px;font-weight:900;letter-spacing:1px;margin-top:8px">${order.orderNumber}</div>
+        <div style="font-size:13px;color:#334155;margin-top:4px;max-width:300px;margin-left:auto;margin-right:auto">${String(order.title || "").replace(/</g, "&lt;")}</div>
+        <div style="font-size:11px;color:#64748b;margin-top:4px">${String(order.customerCompany || "").replace(/</g, "&lt;")}</div>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
   };
 
   // Branded client-facing quotation PDF built from the order, its BOM and its routing.
@@ -521,6 +556,13 @@ export default function OrderWorkflowDetail({
             title="Download a branded quotation PDF for this client"
           >
             <FileText className="w-4 h-4" /> Quotation PDF
+          </button>
+          <button
+            onClick={openQr}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-sky-300 hover:border-sky-500/50 hover:text-sky-200 transition"
+            title="Print a QR sticker for this order"
+          >
+            <QrCode className="w-4 h-4" /> QR Sticker
           </button>
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
@@ -1133,6 +1175,29 @@ export default function OrderWorkflowDetail({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {qrOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6 text-center shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-black text-white">Order QR sticker</h3>
+              <button onClick={() => setQrOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="rounded-2xl bg-white p-4 inline-block">
+              {qrUrl && <img src={qrUrl} alt="Order QR code" className="h-56 w-56" />}
+            </div>
+            <div className="mt-3 font-mono text-xl font-black text-amber-400">{order.orderNumber}</div>
+            <div className="text-xs text-slate-400 truncate">{order.title}</div>
+            <p className="mt-2 text-[10px] text-slate-500">Scan with a phone to open this order, or scan at the Operator Station to jump to its job card.</p>
+            <div className="mt-4 flex justify-center gap-2">
+              <button onClick={() => setQrOpen(false)} className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700">Close</button>
+              <button onClick={printQr} className="rounded-xl bg-sky-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-sky-400">Print sticker</button>
+            </div>
           </div>
         </div>
       )}

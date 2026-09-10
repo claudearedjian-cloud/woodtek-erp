@@ -20,6 +20,7 @@ import {
   Zap,
   Trash2,
   RefreshCcw,
+  ScanLine,
 } from "lucide-react";
 
 interface OperatorStationViewProps {
@@ -107,6 +108,31 @@ export default function OperatorStationView({
   // C6 — new-job arrival flash
   const knownOpIds = useRef<Set<number>>(new Set());
   const [newJobFlash, setNewJobFlash] = useState(false);
+  const [scanValue, setScanValue] = useState("");
+  const [scannedOpId, setScannedOpId] = useState<number | null>(null);
+
+  // QR / barcode scan: accepts a full sticker URL, an order number, or a bare order id.
+  const handleScan = (event: React.FormEvent) => {
+    event.preventDefault();
+    const raw = scanValue.trim();
+    if (!raw) return;
+    const idMatch = raw.match(/order=(\d+)/);
+    const match = operations.find((op: any) =>
+      (idMatch && String(op.orderId) === idMatch[1]) ||
+      (op.orderNumber && raw.toLowerCase().includes(String(op.orderNumber).toLowerCase())),
+    );
+    setScanValue("");
+    if (!match) {
+      setActionError(`No job from "${raw}" on this station.`);
+      setTimeout(() => setActionError(""), 4000);
+      return;
+    }
+    setScannedOpId(match.id);
+    setActionSuccess(`Scanned ${match.orderNumber} — ${match.operationName}`);
+    setTimeout(() => { setScannedOpId(null); setActionSuccess(""); }, 5000);
+    const el = document.getElementById(`station-op-${match.id}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   const myMachineId = currentUser
     ? machines.find((m: any) => Number(m.assignedOperatorId) === Number(currentUser.id))?.id ?? null
@@ -478,6 +504,20 @@ export default function OperatorStationView({
           </button>
         </div>
 
+        {/* Scan box: QR sticker or barcode scanner input */}
+        <form onSubmit={handleScan} className="mb-4 flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/90 p-2.5">
+          <ScanLine className="ml-1 h-5 w-5 flex-shrink-0 text-sky-400" />
+          <input
+            value={scanValue}
+            onChange={(e) => setScanValue(e.target.value)}
+            placeholder="Scan the order sticker (or type the order number)…"
+            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white placeholder-slate-500 focus:outline-none"
+          />
+          <button type="submit" className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white hover:bg-sky-500">
+            Find job
+          </button>
+        </form>
+
         {operations.length === 0 ? (
           <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-16 text-center my-6 shadow-sm">
             <CheckCircle2 className="w-20 h-20 text-emerald-500 mx-auto mb-4 stroke-[1.5] animate-bounce" />
@@ -496,7 +536,8 @@ export default function OperatorStationView({
               return (
                 <div
                   key={op.id}
-                  className={`p-6 rounded-3xl border-2 transition shadow-xl ${
+                  id={`station-op-${op.id}`}
+                  className={`p-6 rounded-3xl border-2 transition shadow-xl ${scannedOpId === op.id ? "ring-4 ring-sky-400 " : ""}${
                     isRunning
                       ? "bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/30 border-amber-500 shadow-amber-950/30"
                       : "bg-slate-900/95 border-slate-800 hover:border-slate-700"

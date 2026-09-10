@@ -204,6 +204,12 @@ export default function WoodTekERP() {
     window.close();
   };
 
+  // QR deep link: /?order=<id> opens that order directly (used by the printed order stickers).
+  useEffect(() => {
+    const o = new URLSearchParams(window.location.search).get("order");
+    if (o && /^\d+$/.test(o)) setActiveTab(`order-${Number(o)}`);
+  }, []);
+
   const handleSelectOrder = (orderId: number) => {
     setActiveTab(`order-${orderId}`);
     setSidebarOpen(false);
