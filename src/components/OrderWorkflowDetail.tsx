@@ -22,7 +22,10 @@ import {
   ChevronRight,
   Boxes,
   DollarSign,
+  FileText,
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { can } from "@/lib/permissions";
 
 interface OrderWorkflowDetailProps {
@@ -204,6 +207,154 @@ export default function OrderWorkflowDetail({
     }
   };
 
+  // Branded client-facing quotation PDF built from the order, its BOM and its routing.
+  const generateQuotation = () => {
+    if (!order) return;
+    const doc = new jsPDF();
+    const amber: [number, number, number] = [245, 158, 11];
+    const dark: [number, number, number] = [15, 23, 42];
+    const grey: [number, number, number] = [100, 116, 139];
+
+    doc.setFillColor(...dark);
+    doc.rect(0, 0, 210, 30, "F");
+    doc.setTextColor(...amber);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.text("WOODTEK", 14, 14);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(203, 213, 225);
+    doc.text("Custom Woodworking · Production & Fit-out", 14, 20);
+    doc.setTextColor(...amber);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("QUOTATION", 196, 14, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(203, 213, 225);
+    doc.text(`QT-${order.orderNumber}`, 196, 21, { align: "right" });
+
+    const y = 42;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(...grey);
+    doc.text("BILL TO", 14, y);
+    doc.text("QUOTE DETAILS", 118, y);
+    doc.setFontSize(11);
+    doc.setTextColor(...dark);
+    doc.text(String(order.customerCompany || order.customerName || "—"), 14, y + 6);
+    if (order.customerName && order.customerCompany) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Attn: ${order.customerName}`, 14, y + 11);
+    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const meta: Array<[string, string]> = [
+      ["Date", new Date().toLocaleDateString()],
+      ["Target due", order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"],
+      ["Project category", String(order.projectType || "—")],
+      ["Reference", String(order.orderNumber)],
+    ];
+    meta.forEach((m, i) => {
+      doc.setTextColor(...grey);
+      doc.text(`${m[0]}:`, 118, y + 6 + i * 5);
+      doc.setTextColor(...dark);
+      doc.text(m[1], 152, y + 6 + i * 5);
+    });
+
+    let cursor = y + 26;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(...dark);
+    doc.text(String(order.title || ""), 14, cursor, { maxWidth: 182 });
+    cursor += 8;
+
+    const materials: any[] = order.materials ?? [];
+    const costed = materials.filter((m) => m.costPerUnit != null);
+    let materialsTotal = 0;
+    if (costed.length > 0) {
+      autoTable(doc, {
+        startY: cursor,
+        head: [["Material", "Qty", "Unit", "Unit Cost", "Amount"]],
+        body: costed.map((m) => {
+          const amount = (m.quantityUsed || 0) * parseFloat(m.costPerUnit || "0");
+          materialsTotal += amount;
+          return [
+            String(m.itemName ?? "Item"),
+            String(m.quantityUsed ?? 0),
+            String(m.itemUnit ?? ""),
+            `$${parseFloat(m.costPerUnit || "0").toFixed(2)}`,
+            `$${amount.toFixed(2)}`,
+          ];
+        }),
+        theme: "grid",
+        headStyles: { fillColor: amber, textColor: dark, fontStyle: "bold" },
+        styles: { fontSize: 9 },
+      });
+      cursor = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    const ops: any[] = order.operations ?? [];
+    if (ops.length > 0) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(...dark);
+      doc.text("Production & finishing steps", 14, cursor);
+      cursor += 3;
+      autoTable(doc, {
+        startY: cursor,
+        head: [["#", "Operation", "Station", "Est. hours"]],
+        body: ops.map((o: any, i: number) => [
+          String(o.stepOrder ?? i + 1),
+          String(o.operationName ?? ""),
+          String(o.machineName || o.machineCode || "—"),
+          ((o.estimatedMinutes || 0) / 60).toFixed(1),
+        ]),
+        theme: "grid",
+        headStyles: { fillColor: dark, textColor: [255, 255, 255], fontStyle: "bold" },
+        styles: { fontSize: 9 },
+      });
+      cursor = (doc as any).lastAutoTable.finalY + 10;
+    }
+
+    const quoted = Number(order.totalValue || 0);
+    const productionValue = Math.max(0, quoted - materialsTotal);
+    const boxHeight = costed.length > 0 ? 30 : 18;
+    doc.setFillColor(248, 250, 252);
+    doc.rect(110, cursor, 86, boxHeight, "F");
+    let ty = cursor + 6;
+    if (costed.length > 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(...grey);
+      doc.text("Materials", 114, ty);
+      doc.setTextColor(...dark);
+      doc.text(`$${materialsTotal.toFixed(2)}`, 192, ty, { align: "right" });
+      ty += 6;
+      doc.setTextColor(...grey);
+      doc.text("Production, finishing & installation", 114, ty);
+      doc.setTextColor(...dark);
+      doc.text(`$${productionValue.toFixed(2)}`, 192, ty, { align: "right" });
+      ty += 6;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...dark);
+    doc.text("TOTAL QUOTED", 114, ty);
+    doc.setTextColor(...amber);
+    doc.text(`$${quoted.toFixed(2)}`, 192, ty, { align: "right" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(...grey);
+    doc.text("Terms: 50% deposit on acceptance, balance on delivery. Quote valid for 30 days unless stated otherwise.", 14, cursor + boxHeight + 8, { maxWidth: 182 });
+    doc.text(`Generated ${new Date().toLocaleString()} · WoodTek production system`, 14, 287);
+
+    doc.save(`Quotation-${order.orderNumber}.pdf`);
+  };
+
   const handleOrderStatusChange = async (newStatus: string) => {
     if (!newStatus || newStatus === order.status) return;
     setActionError("");
@@ -364,6 +515,13 @@ export default function OrderWorkflowDetail({
               </option>
             ))}
           </select>
+          <button
+            onClick={generateQuotation}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 hover:border-amber-500/50 hover:text-amber-200 transition"
+            title="Download a branded quotation PDF for this client"
+          >
+            <FileText className="w-4 h-4" /> Quotation PDF
+          </button>
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
               onClick={() => setActiveTab("workflow")}

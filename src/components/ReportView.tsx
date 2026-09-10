@@ -43,6 +43,7 @@ const reportTypes = [
   { id: "Operator Performance", label: "Operator Performance", icon: TrendingUp },
   { id: "Downtime Analysis", label: "Downtime Analysis", icon: Timer },
   { id: "Scrap & Rework Analysis", label: "Scrap & Rework Analysis", icon: RefreshCcw },
+  { id: "Order Profitability", label: "Order Profitability", icon: DollarSign },
 ];
 
 export default function ReportView({ currentUser, searchQuery = "" }: ReportViewProps) {
@@ -221,6 +222,33 @@ export default function ReportView({ currentUser, searchQuery = "" }: ReportView
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
       });
+    } else if (reportType === "Order Profitability") {
+      doc.setFontSize(14);
+      doc.text("Order Profitability", 14, startY);
+      startY += 8;
+      const pt = data.totals ?? {};
+      doc.setFontSize(10);
+      doc.text(
+        `Quoted $${Number(pt.quoted ?? 0).toLocaleString()}    Cost $${Number(pt.totalCost ?? 0).toLocaleString()}    Profit $${Number(pt.profit ?? 0).toLocaleString()}`,
+        14,
+        startY,
+      );
+      startY += 6;
+      autoTable(doc, {
+        startY,
+        head: [["Order #", "Client", "Quoted", "Materials", "Labor", "Profit", "Margin"]],
+        body: (data.orders ?? []).slice(0, 40).map((o: any) => [
+          o.orderNumber,
+          String(o.customer).substring(0, 22),
+          `$${o.quoted}`,
+          `$${o.materialCost}`,
+          `$${o.laborCost}`,
+          `$${o.profit}`,
+          `${o.marginPercent}%`,
+        ]),
+        theme: "grid",
+        headStyles: { fillColor: [245, 158, 11] },
+      });
     } else if (reportType === "Inventory Status") {
       doc.setFontSize(14);
       doc.text("Inventory Status", 14, startY);
@@ -393,6 +421,11 @@ export default function ReportView({ currentUser, searchQuery = "" }: ReportView
       csv = toCSV(
         ["Order #", "Title", "Status", "Progress", "Value"],
         data.orders.map((o: any) => [o.orderNumber, o.title, o.status, `${o.progressPercent}%`, o.totalValue]),
+      );
+    } else if (reportType === "Order Profitability") {
+      csv = toCSV(
+        ["Order #", "Client", "Status", "Quoted", "Materials", "Labor", "Labor Hours", "Total Cost", "Profit", "Margin %"],
+        (data.orders ?? []).map((o: any) => [o.orderNumber, o.customer, o.status, o.quoted, o.materialCost, o.laborCost, o.laborHours, o.totalCost, o.profit, o.marginPercent]),
       );
     } else if (reportType === "Inventory Status") {
       csv = toCSV(
@@ -958,6 +991,87 @@ function ReportContent({ data, type }: { data: any; type: string }) {
             </table>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (type === "Order Profitability") {
+    const t = data.totals ?? {};
+    const quotedTotal = Number(t.quoted ?? 0);
+    const avgMargin = quotedTotal > 0 ? Math.round((Number(t.profit ?? 0) / quotedTotal) * 100) : 0;
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <StatCard label="Quoted" value={`$${quotedTotal.toLocaleString()}`} icon={DollarSign} />
+          <StatCard label="Materials Cost" value={`$${Number(t.materialCost ?? 0).toLocaleString()}`} color="text-rose-600" icon={Package} />
+          <StatCard label="Labor Cost" value={`$${Number(t.laborCost ?? 0).toLocaleString()}`} color="text-amber-600" icon={Cpu} />
+          <StatCard label="Gross Profit" value={`$${Number(t.profit ?? 0).toLocaleString()}`} color="text-emerald-600" icon={TrendingUp} />
+          <StatCard label="Avg Margin" value={`${avgMargin}%`} color={avgMargin >= 20 ? "text-emerald-600" : "text-rose-600"} icon={TrendingUp} />
+        </div>
+
+        <div>
+          <h3 className="text-lg font-bold text-slate-900 mb-4">Profit per Order</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                  <th className="py-2 px-3">Order #</th>
+                  <th className="py-2 px-3">Client</th>
+                  <th className="py-2 px-3">Status</th>
+                  <th className="py-2 px-3 text-right">Quoted</th>
+                  <th className="py-2 px-3 text-right">Materials</th>
+                  <th className="py-2 px-3 text-right">Labor</th>
+                  <th className="py-2 px-3 text-right">Total Cost</th>
+                  <th className="py-2 px-3 text-right">Profit</th>
+                  <th className="py-2 px-3 text-right">Margin</th>
+                </tr>
+              </thead>
+              <tbody className="text-sm">
+                {(data.orders ?? []).map((o: any, idx: number) => (
+                  <tr key={idx} className="border-b border-slate-100">
+                    <td className="py-2 px-3 font-mono text-xs font-bold">{o.orderNumber}</td>
+                    <td className="py-2 px-3">{o.customer}</td>
+                    <td className="py-2 px-3"><span className="text-xs font-bold px-2 py-1 rounded bg-slate-100">{o.status}</span></td>
+                    <td className="py-2 px-3 text-right font-mono">${Number(o.quoted).toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-mono text-rose-600">${Number(o.materialCost).toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-mono text-amber-600">${Number(o.laborCost).toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-mono">${Number(o.totalCost).toLocaleString()}</td>
+                    <td className={`py-2 px-3 text-right font-mono font-bold ${o.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${Number(o.profit).toLocaleString()}</td>
+                    <td className={`py-2 px-3 text-right font-mono font-bold ${o.marginPercent >= 20 ? "text-emerald-600" : o.marginPercent >= 0 ? "text-amber-600" : "text-rose-600"}`}>{o.marginPercent}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-lg font-bold text-slate-900 mb-4">By Client</h3>
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                <th className="py-2 px-3">Client</th>
+                <th className="py-2 px-3 text-center">Orders</th>
+                <th className="py-2 px-3 text-right">Quoted</th>
+                <th className="py-2 px-3 text-right">Cost</th>
+                <th className="py-2 px-3 text-right">Profit</th>
+                <th className="py-2 px-3 text-right">Margin</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm">
+              {(data.byClient ?? []).map((c: any, idx: number) => (
+                <tr key={idx} className="border-b border-slate-100">
+                  <td className="py-2 px-3 font-bold">{c.customer}</td>
+                  <td className="py-2 px-3 text-center">{c.orders}</td>
+                  <td className="py-2 px-3 text-right font-mono">${Number(c.quoted).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">${Number(c.cost).toLocaleString()}</td>
+                  <td className={`py-2 px-3 text-right font-mono font-bold ${c.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${Number(c.profit).toLocaleString()}</td>
+                  <td className={`py-2 px-3 text-right font-mono font-bold ${c.marginPercent >= 20 ? "text-emerald-600" : c.marginPercent >= 0 ? "text-amber-600" : "text-rose-600"}`}>{c.marginPercent}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }

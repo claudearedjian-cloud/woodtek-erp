@@ -4,6 +4,7 @@ import {
   reports,
   orders,
   machines,
+  orderMaterials,
   orderOperations,
   customers,
   inventoryItems,
@@ -240,6 +241,81 @@ export async function POST(request: Request) {
         byReason,
         machines: machineRows,
         timeline,
+      };
+    } else if (type === "Order Profitability") {
+      const allOrders = await db.select().from(orders);
+      const allMats = await db.select().from(orderMaterials);
+      const allOps = await db.select().from(orderOperations);
+      const allMachines = await db.select().from(machines);
+      const allCustomers = await db.select().from(customers);
+      const dateFromObj = new Date(dateFrom);
+      const dateToObj = new Date(dateTo);
+      const rate = new Map(allMachines.map(m => [m.id, parseFloat(m.hourlyCost || "0") || 0]));
+      const custName = new Map(allCustomers.map(c => [c.id, c.company]));
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+
+      const inRange = allOrders.filter(o =>
+        o.status !== "Cancelled" &&
+        new Date(o.createdAt) >= dateFromObj &&
+        new Date(o.createdAt) <= dateToObj,
+      );
+
+      const rows = inRange.map(o => {
+        const materialCost = allMats
+          .filter(m => m.orderId === o.id)
+          .reduce((s, m) => s + m.quantityUsed * (parseFloat(m.costPerUnit || "0") || 0), 0);
+        const ops = allOps.filter(p => p.orderId === o.id);
+        const laborMinutes = ops.reduce((s, p) => s + (p.actualMinutes || p.estimatedMinutes || 0), 0);
+        const laborCost = ops.reduce(
+          (s, p) => s + ((p.actualMinutes || p.estimatedMinutes || 0) / 60) * (p.machineId ? rate.get(p.machineId) ?? 0 : 0),
+          0,
+        );
+        const quoted = parseFloat(o.totalValue || "0") || 0;
+        const totalCost = materialCost + laborCost;
+        const profit = quoted - totalCost;
+        return {
+          orderNumber: o.orderNumber,
+          title: o.title,
+          status: o.status,
+          customer: custName.get(o.customerId) ?? "—",
+          quoted: round2(quoted),
+          materialCost: round2(materialCost),
+          laborCost: round2(laborCost),
+          laborHours: Math.round((laborMinutes / 60) * 10) / 10,
+          totalCost: round2(totalCost),
+          profit: round2(profit),
+          marginPercent: quoted > 0 ? Math.round((profit / quoted) * 100) : 0,
+        };
+      }).sort((a, b) => b.profit - a.profit);
+
+      const clientMap: Record<string, { customer: string; orders: number; quoted: number; cost: number; profit: number }> = {};
+      rows.forEach(r => {
+        if (!clientMap[r.customer]) clientMap[r.customer] = { customer: r.customer, orders: 0, quoted: 0, cost: 0, profit: 0 };
+        clientMap[r.customer].orders += 1;
+        clientMap[r.customer].quoted += r.quoted;
+        clientMap[r.customer].cost += r.totalCost;
+        clientMap[r.customer].profit += r.profit;
+      });
+      const byClient = Object.values(clientMap)
+        .map(c => ({
+          ...c,
+          quoted: round2(c.quoted),
+          cost: round2(c.cost),
+          profit: round2(c.profit),
+          marginPercent: c.quoted > 0 ? Math.round((c.profit / c.quoted) * 100) : 0,
+        }))
+        .sort((a, b) => b.profit - a.profit);
+
+      reportData = {
+        orders: rows,
+        byClient,
+        totals: {
+          quoted: round2(rows.reduce((s, r) => s + r.quoted, 0)),
+          materialCost: round2(rows.reduce((s, r) => s + r.materialCost, 0)),
+          laborCost: round2(rows.reduce((s, r) => s + r.laborCost, 0)),
+          totalCost: round2(rows.reduce((s, r) => s + r.totalCost, 0)),
+          profit: round2(rows.reduce((s, r) => s + r.profit, 0)),
+        },
       };
     } else if (type === "Scrap & Rework Analysis") {
       const dateFromObj = new Date(dateFrom);

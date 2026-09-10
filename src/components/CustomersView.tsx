@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Users,
   Plus,
@@ -16,6 +16,7 @@ import {
   Wallet,
   ClipboardList,
   ChevronRight,
+  Receipt,
 } from "lucide-react";
 
 interface CustomersViewProps {
@@ -63,12 +64,70 @@ export default function CustomersView({
 
   // ---- client detail modal -------------------------------------------------
   const [detail, setDetail] = useState<any>(null);
-  const [detailTab, setDetailTab] = useState<"profile" | "orders">("profile");
+  const [detailTab, setDetailTab] = useState<"profile" | "orders" | "ledger">("profile");
   const [detailLoading, setDetailLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
   const [detailMsg, setDetailMsg] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // ---- client ledger (invoices vs payments) ----
+  const [ledger, setLedger] = useState<any>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerForm, setLedgerForm] = useState({ type: "invoice", amount: "", reference: "", notes: "" });
+  const [ledgerMsg, setLedgerMsg] = useState("");
+
+  const loadLedger = async (customerId: number) => {
+    setLedgerLoading(true);
+    try {
+      const res = await fetch(`/api/customers/${customerId}/ledger`, { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setLedger(data);
+    } catch {
+      /* ignore */
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (detail && detailTab === "ledger") loadLedger(detail.id);
+  }, [detail?.id, detailTab]);
+
+  const addLedgerEntry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!detail) return;
+    setLedgerMsg("");
+    try {
+      const res = await fetch(`/api/customers/${detail.id}/ledger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ledgerForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to record entry");
+      setLedger(data);
+      setLedgerForm({ type: ledgerForm.type, amount: "", reference: "", notes: "" });
+      onRefresh();
+    } catch (err) {
+      setLedgerMsg(err instanceof Error ? err.message : "Failed to record entry");
+    }
+  };
+
+  const deleteLedgerEntry = async (entryId: number) => {
+    if (!detail) return;
+    if (!confirm("Delete this ledger entry?")) return;
+    setLedgerMsg("");
+    try {
+      const res = await fetch(`/api/customers/${detail.id}/ledger?entryId=${entryId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete entry");
+      setLedger(data);
+      onRefresh();
+    } catch (err) {
+      setLedgerMsg(err instanceof Error ? err.message : "Failed to delete entry");
+    }
+  };
 
   const openDetail = async (c: any) => {
     setDetailTab("profile");
@@ -325,6 +384,12 @@ export default function CustomersView({
               >
                 Orders ({(detail.orders ?? []).length})
               </button>
+              <button
+                onClick={() => setDetailTab("ledger")}
+                className={`rounded-t-xl px-4 py-2 text-xs font-black uppercase tracking-wider transition ${detailTab === "ledger" ? "bg-slate-800 text-amber-400" : "text-slate-400 hover:text-white"}`}
+              >
+                Ledger
+              </button>
             </div>
 
             {detailMsg && (
@@ -410,6 +475,101 @@ export default function CustomersView({
                         <Pencil className="h-3.5 w-3.5" /> Edit Information
                       </button>
                     </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ---- LEDGER TAB ---- */}
+            {detailTab === "ledger" && (
+              <div className="p-5 space-y-4">
+                {ledgerLoading && !ledger ? (
+                  <div className="py-10 text-center text-xs text-slate-500 animate-pulse">Loading ledger…</div>
+                ) : (
+                  <>
+                    {(() => {
+                      const limit = Number(detail.creditLimit || 0);
+                      const balance = Number(ledger?.balance ?? 0);
+                      const available = limit - balance;
+                      const usedPct = limit > 0 ? Math.min(100, Math.round((balance / limit) * 100)) : 0;
+                      return (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Invoiced</div>
+                            <div className="mt-0.5 font-mono text-lg font-black text-white">${Number(ledger?.invoiced ?? 0).toLocaleString()}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Paid</div>
+                            <div className="mt-0.5 font-mono text-lg font-black text-emerald-400">${Number(ledger?.paid ?? 0).toLocaleString()}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Outstanding</div>
+                            <div className={`mt-0.5 font-mono text-lg font-black ${balance > 0 ? "text-rose-400" : "text-emerald-400"}`}>${balance.toLocaleString()}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Available Credit</div>
+                            <div className={`mt-0.5 font-mono text-lg font-black ${available < 0 ? "text-rose-400" : "text-blue-300"}`}>${available.toLocaleString()}</div>
+                            {limit > 0 && (
+                              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                                <div className={`h-full rounded-full ${usedPct >= 90 ? "bg-rose-500" : usedPct >= 70 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${usedPct}%` }} />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <form onSubmit={addLedgerEntry} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Type</label>
+                          <div className="flex gap-1 rounded-xl border border-slate-700 bg-slate-950 p-1">
+                            <button type="button" onClick={() => setLedgerForm({ ...ledgerForm, type: "invoice" })} className={`rounded-lg px-3 py-1.5 text-[11px] font-black transition ${ledgerForm.type === "invoice" ? "bg-rose-500/20 text-rose-300" : "text-slate-400 hover:text-white"}`}>Invoice</button>
+                            <button type="button" onClick={() => setLedgerForm({ ...ledgerForm, type: "payment" })} className={`rounded-lg px-3 py-1.5 text-[11px] font-black transition ${ledgerForm.type === "payment" ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400 hover:text-white"}`}>Payment</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Amount ($) *</label>
+                          <input required type="number" step="0.01" min="0.01" value={ledgerForm.amount} onChange={e => setLedgerForm({ ...ledgerForm, amount: e.target.value })} className="w-28 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-white" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">Reference</label>
+                          <input value={ledgerForm.reference} onChange={e => setLedgerForm({ ...ledgerForm, reference: e.target.value })} placeholder="INV-2026-014 / check #…" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white" />
+                        </div>
+                        <button type="submit" className="flex items-center gap-1 rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-slate-950 hover:bg-amber-400">
+                          <Plus className="h-3.5 w-3.5" /> Record
+                        </button>
+                      </div>
+                      {ledgerMsg && <div className="text-[11px] font-bold text-rose-300">{ledgerMsg}</div>}
+                    </form>
+
+                    {(ledger?.entries ?? []).length === 0 ? (
+                      <div className="py-8 text-center">
+                        <Receipt className="mx-auto mb-2 h-8 w-8 text-slate-600" />
+                        <p className="text-xs text-slate-500">No invoices or payments recorded yet.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[36vh] overflow-y-auto pr-1">
+                        {[...(ledger?.entries ?? [])].reverse().map((e: any) => (
+                          <div key={e.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${e.type === "invoice" ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"}`}>
+                                {e.type}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="font-mono text-sm font-black text-white">${Number(e.amount).toLocaleString()}</div>
+                                <div className="text-[10px] text-slate-500 truncate">
+                                  {new Date(e.at).toLocaleString()}{e.reference ? ` · ${e.reference}` : ""}{e.notes ? ` · ${e.notes}` : ""}
+                                </div>
+                              </div>
+                            </div>
+                            <button onClick={() => deleteLedgerEntry(e.id)} className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete entry">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
