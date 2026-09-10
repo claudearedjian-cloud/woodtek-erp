@@ -108,6 +108,9 @@ export default function OrdersView({
   const [bom, setBom] = useState<{ itemId: string; qty: string }[]>([]);
   const [recipeId, setRecipeId] = useState<string>("");
   const [recipeName, setRecipeName] = useState("");
+  // New-order modal wizard tab: details -> routing -> materials.
+  const [orderTab, setOrderTab] = useState<"details" | "routing" | "materials">("details");
+  useEffect(() => { if (showNewModal) setOrderTab("details"); }, [showNewModal]);
 
   // Machine categories: managed list (data file) merged with machine-derived ones.
   const [categoryList, setCategoryList] = useState<string[]>([]);
@@ -660,7 +663,14 @@ export default function OrdersView({
               </button>
             </div>
 
-            <form onSubmit={handleCreateOrder} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto custom-scrollbar">
+            <form
+              onSubmit={(e) => {
+                if (!customerId || !title.trim()) { e.preventDefault(); setOrderTab("details"); handleCreateOrder(e); return; }
+                if (steps.filter(s => s.operationName.trim()).length === 0) { e.preventDefault(); setOrderTab("routing"); handleCreateOrder(e); return; }
+                handleCreateOrder(e);
+              }}
+              className="p-6 space-y-5 max-h-[75vh] overflow-y-auto custom-scrollbar"
+            >
               {errorMsg && (
                 <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-xl text-xs font-semibold flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -668,6 +678,21 @@ export default function OrdersView({
                 </div>
               )}
 
+              {/* Modal tabs */}
+              <div className="flex gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+                <button type="button" onClick={() => setOrderTab("details")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "details" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                  1 · Order Details
+                </button>
+                <button type="button" onClick={() => setOrderTab("routing")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "routing" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                  2 · Machine Routing
+                </button>
+                <button type="button" onClick={() => setOrderTab("materials")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "materials" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                  3 · Materials ({bom.length})
+                </button>
+              </div>
+
+              {orderTab === "details" && (
+                <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Customer Select */}
                 <div>
@@ -809,8 +834,12 @@ export default function OrdersView({
                 </div>
               </div>
 
+                </>
+              )}
+
               {/* MACHINE ROUTING: RECIPES + STEP CHAIN */}
-              <div className="pt-4 border-t border-slate-800">
+              {orderTab === "routing" && (
+              <div>
                 <div className="mb-3">
                   <label className="block text-sm font-black text-white flex items-center gap-2">
                     <Layers className="w-4 h-4 text-amber-500" />
@@ -983,8 +1012,12 @@ export default function OrdersView({
                   )}
                 </div>
 
-                {/* BOM — materials the warehouse must prepare for this order */}
-                <div className="mt-3 space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              </div>
+              )}
+
+              {/* BOM — materials the warehouse must prepare for this order */}
+              {orderTab === "materials" && (
+                <div className="space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] font-medium text-slate-400">
                       Materials / BOM ({bom.length}) — the warehouse prepares these once the order is issued
@@ -1031,10 +1064,31 @@ export default function OrdersView({
                     ))
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Submit Buttons */}
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-end gap-3">
+              {/* Tab navigation + submit */}
+              <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+                <div className="flex gap-2">
+                  {orderTab !== "details" && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderTab(orderTab === "materials" ? "routing" : "details")}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                    >
+                      ← Back
+                    </button>
+                  )}
+                  {orderTab !== "materials" && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderTab(orderTab === "details" ? "routing" : "materials")}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition"
+                    >
+                      Next →
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={() => setShowNewModal(false)}
@@ -1049,6 +1103,7 @@ export default function OrdersView({
                 >
                   {isSubmitting ? "Generating Schedule..." : "Schedule & Route Order"}
                 </button>
+                </div>
               </div>
             </form>
           </div>
