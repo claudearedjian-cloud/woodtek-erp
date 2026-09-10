@@ -26,6 +26,10 @@ if errorlevel 1 (
 )
 
 echo.
+echo [update] Installing any new components (takes a few seconds if nothing changed)...
+call npm install --no-audit --no-fund
+
+echo.
 echo [update] Stopping the WoodTek server...
 schtasks /End /TN "\WoodTek ERP"
 
