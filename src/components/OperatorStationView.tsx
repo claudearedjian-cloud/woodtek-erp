@@ -642,7 +642,7 @@ export default function OperatorStationView({
                               </div>
                             ))}
                           </div>
-                          {canApproveReception ? (
+                          {canApproveReception && receivedByOrder[op.orderId] !== true ? (
                             <>
                             <div className="mt-3 grid grid-cols-3 gap-2">
                               <button

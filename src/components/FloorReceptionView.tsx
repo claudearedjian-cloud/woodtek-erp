@@ -351,8 +351,8 @@ export default function FloorReceptionView({
                   </div>
                 )}
 
-                {/* decisions */}
-                {canApprove && lines.length > 0 && (
+                {/* decisions — hidden once a reception is approved */}
+                {canApprove && lines.length > 0 && o.received !== true && (
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
