@@ -38,6 +38,7 @@ exports.MODULES_BY_ROLE = {
         "designer",
         "warehouse",
         "plant",
+        "reception",
     ],
     "Sales Coordinator": [
         "dashboard",
@@ -59,6 +60,7 @@ exports.MODULES_BY_ROLE = {
     // Floor Supervisor patrols the shop: stations, WIP, warehouse/reception,
     // quality and downtime — but no commercial screens.
     "Floor Supervisor": [
+        "reception",
         "dashboard",
         "orders",
         "operator",
@@ -116,6 +118,7 @@ exports.MODULE_LABELS = {
     warehouse: "Warehouse & BOM",
     designer: "Menu Designer",
     plant: "Plant Performance",
+    reception: "Material Reception",
 };
 /**
  * Resolves a role's module visibility. A custom role with an explicit

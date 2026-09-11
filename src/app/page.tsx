@@ -13,6 +13,7 @@ import OperatorStationView from "@/components/OperatorStationView";
 import CustomersView from "@/components/CustomersView";
 import InventoryView from "@/components/InventoryView";
 import WarehouseView from "@/components/WarehouseView";
+import FloorReceptionView from "@/components/FloorReceptionView";
 import ScheduleView from "@/components/ScheduleView";
 import GanttView from "@/components/GanttView";
 import CmmsView from "@/components/CmmsView";
@@ -163,7 +164,8 @@ export default function WoodTekERP() {
     setCurrentUser(user);
     setAuthOpen(false);
     setAuthCandidate(null);
-    if (user.role === "Machine Operator" || user.role === "Floor Supervisor") setActiveTab("station");
+    if (user.role === "Machine Operator") setActiveTab("station");
+    if (user.role === "Floor Supervisor") setActiveTab("reception");
     // Show the fullscreen welcome splash for this user
     setShowSplash(true);
     setHasShownSplash(true);
@@ -304,6 +306,7 @@ export default function WoodTekERP() {
           {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={fetchAllData} />}
           {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
+          {activeTab === "reception" && <FloorReceptionView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "gantt" && (
             <GanttView machines={machines} onSelectOrder={handleSelectOrder} searchQuery={searchQuery} />
           )}

@@ -114,7 +114,7 @@ function can(role, action) {
 const KNOWN_MODULE_IDS = [
     "dashboard", "orders", "machines", "operator", "customers", "inventory",
     "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip",
-    "quality", "downtime", "recipes", "pims", "warehouse", "plant",
+    "quality", "downtime", "recipes", "pims", "warehouse", "plant", "reception",
 ];
 let CUSTOM_ROLES = [];
 /** Accepts unknown input (API body / fetched JSON) and stores a validated list. */

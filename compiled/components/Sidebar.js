@@ -30,6 +30,7 @@ const ICONS = {
     settings: lucide_react_1.Settings,
     designer: lucide_react_1.SlidersHorizontal,
     warehouse: lucide_react_1.Warehouse,
+    reception: lucide_react_1.PackageCheck,
     plant: lucide_react_1.Gauge,
 };
 function Sidebar({ activeTab, setActiveTab, currentUser, allUsers, onSwitchUser, onRequestSwitch, menuConfig, isOpen, onClose, }) {

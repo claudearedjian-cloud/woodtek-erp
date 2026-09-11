@@ -27,6 +27,7 @@ import {
   SlidersHorizontal,
   Warehouse as WarehouseIcon,
   Gauge,
+  PackageCheck,
 } from "lucide-react";
 import { resolveMenu, type MenuConfig } from "@/lib/menuConfig";
 import BrandMark from "@/components/BrandMark";
@@ -51,6 +52,7 @@ const ICONS: Record<string, any> = {
   settings: SettingsIcon,
   designer: SlidersHorizontal,
   warehouse: WarehouseIcon,
+  reception: PackageCheck,
   plant: Gauge,
 };
 
