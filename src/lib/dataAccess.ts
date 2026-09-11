@@ -77,7 +77,8 @@ export function isFloorRole(user: SessionUser | { role: string } | null | undefi
   return (
     user.role === "Machine Operator" ||
     user.role === "QA & Dispatch" ||
-    user.role === "Technician"
+    user.role === "Technician" ||
+    user.role === "Floor Supervisor"
   );
 }
 
@@ -89,6 +90,10 @@ export { isManager };
  */
 async function allowedOrderIdsSubquery(user: SessionUser) {
   if (isManager(user)) return undefined; // Manager: no extra WHERE clause
+
+  // Floor Supervisor patrols the whole shop: full order/operation visibility
+  // (financial fields stay redacted via isFloorRole below).
+  if (user.role === "Floor Supervisor") return undefined;
 
   if (user.role === "Sales Coordinator") {
     // Sales sees only orders they created OR that are assigned to them
