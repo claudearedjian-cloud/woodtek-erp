@@ -206,12 +206,19 @@ export default function OperatorStationView({
   };
 
   const confirmReceived = async (orderId: number, state: "Received" | "Not Received" | "Declined") => {
+    setActionError("");
     try {
-      await fetch("/api/bom", {
+      const res = await fetch("/api/bom", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId, state }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || "Reception update failed.");
+        setTimeout(() => setActionError(""), 6000);
+        return;
+      }
       await fetchBomBoard();
     } catch {
       /* ignore */
@@ -636,11 +643,14 @@ export default function OperatorStationView({
                             ))}
                           </div>
                           {canApproveReception ? (
+                            <>
                             <div className="mt-3 grid grid-cols-3 gap-2">
                               <button
                                 type="button"
+                                disabled={(bomByOrder[op.orderId] ?? []).some((m: any) => m.status !== "Delivered")}
+                                title="Unlocks when the warehouse has delivered every requested line"
                                 onClick={() => confirmReceived(op.orderId, "Received")}
-                                className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-2 py-2.5 text-[11px] font-black text-emerald-300 hover:bg-emerald-600/40"
+                                className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-2 py-2.5 text-[11px] font-black text-emerald-300 hover:bg-emerald-600/40 disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 ✓ APPROVE RECEPTION
                               </button>
@@ -659,6 +669,12 @@ export default function OperatorStationView({
                                 ⛔ DECLINE
                               </button>
                             </div>
+                            {(bomByOrder[op.orderId] ?? []).some((m: any) => m.status !== "Delivered") && (
+                              <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[11px] font-black text-sky-300">
+                                🚚 APPROVE unlocks once the warehouse has DELIVERED every requested line.
+                              </div>
+                            )}
+                            </>
                           ) : receivedByOrder[op.orderId] !== true ? (
                             <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] font-black text-amber-300">
                               ⏳ Materials not approved yet — the Floor Supervisor must approve reception before this job can start.

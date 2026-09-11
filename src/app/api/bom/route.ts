@@ -151,6 +151,21 @@ export async function PUT(request: Request) {
         body.state === "Received" || body.state === "Not Received" || body.state === "Declined"
           ? body.state
           : body.received === true ? "Received" : "Not Received";
+      if (state === "Received") {
+        // Approval requires the warehouse to have prepared AND sent every
+        // requested line (Requested -> Prepared -> Delivered).
+        const lines = await db
+          .select({ id: orderMaterials.id })
+          .from(orderMaterials)
+          .where(eq(orderMaterials.orderId, orderId));
+        const entries = readBomStatus().entries;
+        const pending = lines.filter((l) => (entries[String(l.id)]?.status ?? "Requested") !== "Delivered");
+        if (pending.length > 0) {
+          return NextResponse.json({
+            error: `Warehouse has not sent all requested materials yet — ${pending.length} line(s) still not Delivered. Reception can only be approved after the warehouse prepares and sends everything.`,
+          }, { status: 409 });
+        }
+      }
       setOrderReceived(orderId, state === "Received", state);
       return NextResponse.json({ ok: true, orderId, received: state === "Received", state });
     }
