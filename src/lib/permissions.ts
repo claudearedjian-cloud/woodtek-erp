@@ -9,6 +9,7 @@ export type Action =
   | "orders:edit"  // edit metadata (title, value, dates, etc.) - new
   | "operations:write"  // full operations management (manager only)
   | "operations:update-status"  // mark own operations ready/in-progress/completed - new
+  | "operations:assign-machine"  // Floor Supervisor picks which equivalent machine runs a step
   | "operations:create"  // add new operation steps - new (manager only)
   | "operations:delete"  // remove operation steps - new (manager only)
   | "machines:read"
@@ -60,6 +61,7 @@ const MATRIX: Record<string, Action[]> = {
     "reports:read",
     "orders:write", "orders:delete", "orders:edit",
     "operations:write", "operations:update-status", "operations:create", "operations:delete",
+    "operations:assign-machine",
     "machines:write",
     "customers:write", "customers:delete",
     "inventory:write", "materials:write",
@@ -97,6 +99,7 @@ const MATRIX: Record<string, Action[]> = {
   "Floor Supervisor": [
     ...BASE_READ,
     "operations:update-status",  // can unblock/update steps at the stations
+    "operations:assign-machine", // picks BEAM-01 vs BEAM-02 etc.
     "bom:receive",               // SOLE owner of material reception approval
     "inventory:write",
     "shifts:read", "attendance:read", "attendance:write",
@@ -236,6 +239,7 @@ const LABELS: Record<Action, string> = {
   "orders:delete": "delete production orders",
   "orders:edit": "edit production order details",
   "operations:write": "fully manage workflow operations",
+  "operations:assign-machine": "choose which equivalent machine runs an operation step",
   "operations:update-status": "update the status of operations you are working on",
   "operations:create": "add new operation steps to orders",
   "operations:delete": "remove operation steps from orders",

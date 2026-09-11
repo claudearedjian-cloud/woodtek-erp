@@ -52,7 +52,7 @@ export async function GET() {
     const ids = openOrders.map((o) => o.id);
     if (ids.length === 0) return NextResponse.json({ orders: [] });
 
-    const [mats, ops] = await Promise.all([
+    const [mats, ops, machinesAll] = await Promise.all([
       db
         .select({
           id: orderMaterials.id,
@@ -72,7 +72,11 @@ export async function GET() {
         .where(inArray(orderMaterials.orderId, ids)),
       db
         .select({
+          id: orderOperations.id,
           orderId: orderOperations.orderId,
+          stepOrder: orderOperations.stepOrder,
+          operationName: orderOperations.operationName,
+          status: orderOperations.status,
           machineId: orderOperations.machineId,
           machineCode: machines.code,
           machineName: machines.name,
@@ -80,6 +84,15 @@ export async function GET() {
         .from(orderOperations)
         .leftJoin(machines, eq(orderOperations.machineId, machines.id))
         .where(inArray(orderOperations.orderId, ids)),
+      db
+        .select({
+          id: machines.id,
+          code: machines.code,
+          name: machines.name,
+          category: machines.category,
+          status: machines.status,
+        })
+        .from(machines),
     ]);
 
     const overlay = readBomStatus().entries;
@@ -94,6 +107,7 @@ export async function GET() {
         machines: [],
         received: recEntry?.received ?? null,
         receivedState: recEntry?.state ?? (recEntry?.received === true ? "Received" : recEntry?.received === false ? "Not Received" : null),
+        operations: [],
       });
     }
     for (const m of mats) {
@@ -106,6 +120,30 @@ export async function GET() {
         machineId: entry?.machineId ?? null,
       });
     }
+    const machineById = new Map<number, (typeof machinesAll)[number]>(machinesAll.map((m) => [m.id, m]));
+    for (const op of ops) {
+      const order = byOrder.get(op.orderId);
+      if (!order) continue;
+      const current = op.machineId != null ? machineById.get(op.machineId) : undefined;
+      const candidates = current
+        ? machinesAll
+            .filter((m) => m.category === current.category && (m.status === "Active" || m.status === "In-Use"))
+            .map((m) => ({ id: m.id, code: m.code, name: m.name, status: m.status }))
+        : [];
+      order.operations.push({
+        id: op.id,
+        stepOrder: op.stepOrder,
+        operationName: op.operationName,
+        status: op.status,
+        machineId: op.machineId,
+        machineCode: op.machineCode,
+        candidates,
+      });
+    }
+    for (const o of byOrder.values()) {
+      o.operations.sort((a: any, b: any) => a.stepOrder - b.stepOrder);
+    }
+
     const seenMachine = new Map<number, Set<number>>();
     for (const op of ops) {
       if (op.machineId == null) continue;

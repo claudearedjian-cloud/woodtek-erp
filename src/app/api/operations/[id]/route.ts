@@ -5,6 +5,7 @@ import { readReceived } from "@/lib/bomStatus.server";
 import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
+import { can } from "@/lib/permissions";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -23,7 +24,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     // Per-record check: non-Managers may only update operations they are
     // assigned to (as operator, or via the operation's machine assignment).
-    const check = await canUserUpdateOperation(user, operationId);
+    // A machine-assignment-only PATCH from a role holding
+    // operations:assign-machine (Floor Supervisor) skips the per-operator
+    // check; any other field combination still requires it.
+    const machineOnlyRequest = Object.keys(body).every((k) => k === "machineId");
+    let check: { allowed: boolean; reason?: string } = { allowed: true };
+    if (!(machineOnlyRequest && can(user.role, "operations:assign-machine"))) {
+      check = await canUserUpdateOperation(user, operationId);
+    }
     if (!check.allowed) {
       return NextResponse.json({ error: check.reason || "Not authorized for this operation." }, { status: 403 });
     }
@@ -35,7 +43,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     // their station). Reassigning to someone else stays Manager-only.
     if (user.role !== "Manager") {
       const restricted: string[] = [];
-      if (body.machineId !== undefined) restricted.push("machineId");
+      // Floor Supervisors may move a step between equivalent machines (same
+      // category) — validated further inside the transaction below.
+      if (body.machineId !== undefined && !can(user.role, "operations:assign-machine")) restricted.push("machineId");
       if (body.scheduledStart !== undefined) restricted.push("scheduledStart");
       if (body.scheduledEnd !== undefined) restricted.push("scheduledEnd");
       if (body.operatorId !== undefined && Number(body.operatorId) !== Number(user.id)) restricted.push("operatorId");
@@ -55,6 +65,37 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
         throw new WorkflowError("Unsupported operation status.", 400);
+      }
+
+      // Floor Supervisor machine choice: same-category equivalent machines,
+      // only before work starts, only after reception approval.
+      if (body.machineId !== undefined && user.role !== "Manager" && can(user.role, "operations:assign-machine")) {
+        const chosenMachineId = body.machineId ? Number(body.machineId) : null;
+        if (!chosenMachineId) {
+          throw new WorkflowError("A machine id is required.", 400);
+        }
+        if (currentOp.status === "In Progress" || currentOp.status === "Completed") {
+          throw new WorkflowError("The machine can no longer be changed once work has started.", 409);
+        }
+        if (!currentOp.machineId) {
+          throw new WorkflowError("This step has no machine yet — a Manager must assign the first one.", 409);
+        }
+        const [currentMachine] = await tx.select().from(machines).where(eq(machines.id, currentOp.machineId));
+        const [targetMachine] = await tx.select().from(machines).where(eq(machines.id, chosenMachineId));
+        if (!targetMachine) throw new WorkflowError("The selected machine no longer exists.", 404);
+        if (targetMachine.status === "Maintenance" || targetMachine.status === "Offline") {
+          throw new WorkflowError(`${targetMachine.code} is ${targetMachine.status.toLowerCase()} and cannot accept work.`, 409);
+        }
+        if (!currentMachine || targetMachine.category !== currentMachine.category) {
+          throw new WorkflowError("Only equivalent machines of the same category can be chosen.", 409);
+        }
+        const assignBom = await tx
+          .select({ id: orderMaterials.id })
+          .from(orderMaterials)
+          .where(eq(orderMaterials.orderId, currentOp.orderId));
+        if (assignBom.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+          throw new WorkflowError("Machines can be chosen only after the Floor Supervisor approves reception.", 409);
+        }
       }
 
       const targetMachineId = body.machineId !== undefined

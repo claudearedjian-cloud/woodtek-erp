@@ -28,6 +28,17 @@ type RxOrder = {
   materials: Line[];
   received: boolean | null;
   receivedState?: string | null;
+  operations?: OpInfo[];
+};
+
+type OpInfo = {
+  id: number;
+  stepOrder: number;
+  operationName: string;
+  status: string;
+  machineId: number | null;
+  machineCode?: string | null;
+  candidates: { id: number; code: string; name: string; status: string }[];
 };
 
 export default function FloorReceptionView({
@@ -86,6 +97,28 @@ export default function FloorReceptionView({
             ? "Reception DECLINED."
             : "Marked as NOT RECEIVED.",
       );
+      setTimeout(() => setNotice(""), 4000);
+      await load();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const assignMachine = async (opId: number, machineId: number) => {
+    setError("");
+    try {
+      const res = await fetch(`/api/operations/${opId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Machine assignment failed.");
+        setTimeout(() => setError(""), 6000);
+        return;
+      }
+      setNotice("Machine assigned.");
       setTimeout(() => setNotice(""), 4000);
       await load();
     } catch {
@@ -275,6 +308,48 @@ export default function FloorReceptionView({
                     </div>
                   )}
                 </div>
+
+                {/* machine assignment — Floor Supervisor's call, after approval */}
+                {canApprove && (o.operations ?? []).some((op) => (op.candidates ?? []).length > 1 && (op.status === "Pending" || op.status === "Ready")) && (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                    <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-slate-400">
+                      <span>Machine assignment — your decision</span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {(o.operations ?? [])
+                        .filter((op) => (op.candidates ?? []).length > 1 && (op.status === "Pending" || op.status === "Ready"))
+                        .map((op) => (
+                          <div key={op.id} className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-slate-200 truncate">
+                              #{op.stepOrder} {op.operationName}
+                              <span className="text-slate-500"> · now: {op.machineCode || "—"}</span>
+                            </span>
+                            {o.received === true ? (
+                              <span className="flex flex-wrap gap-1.5">
+                                {op.candidates.map((c) => (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    disabled={c.id === op.machineId}
+                                    onClick={() => assignMachine(op.id, c.id)}
+                                    className={`rounded-lg border px-2 py-1 text-[10px] font-black ${
+                                      c.id === op.machineId
+                                        ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
+                                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 hover:text-amber-300"
+                                    }`}
+                                  >
+                                    {c.code}
+                                  </button>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-black text-sky-300">🔒 after approval</span>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* decisions */}
                 {canApprove && lines.length > 0 && (
