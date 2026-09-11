@@ -10,16 +10,19 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { authorize } from "@/lib/auth";
+import { allRoles } from "@/lib/permissions";
 import {
   ensureRolesRegistered,
   readRolesConfig,
+  sanitizeOverrides,
   sanitizeRoles,
   writeRolesConfig,
 } from "@/lib/rolesConfig.server";
 
 export async function GET() {
   ensureRolesRegistered();
-  return NextResponse.json({ roles: readRolesConfig().roles });
+  const cfg = readRolesConfig();
+  return NextResponse.json({ roles: cfg.roles, overrides: cfg.overrides });
 }
 
 export async function PUT(request: Request) {
@@ -47,8 +50,19 @@ export async function PUT(request: Request) {
       }
     }
 
-    writeRolesConfig(next);
-    return NextResponse.json({ roles: next });
+    // Screen overrides: keep only entries for roles that will still exist
+    // after this save; Manager can never be limited (lock-out protection).
+    const requestedOverrides = body?.overrides !== undefined ? body.overrides : readRolesConfig().overrides;
+    const cleanOverrides = sanitizeOverrides(requestedOverrides);
+    const allowedNames = new Set(allRoles());
+    const nextOverrides: Record<string, string[]> = {};
+    for (const [name, mods] of Object.entries(cleanOverrides)) {
+      if (name === "Manager") continue;
+      if (allowedNames.has(name) && mods.length > 0) nextOverrides[name] = mods;
+    }
+
+    writeRolesConfig(next, nextOverrides);
+    return NextResponse.json({ roles: next, overrides: nextOverrides });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to save roles";
     return NextResponse.json({ error: message }, { status: 500 });

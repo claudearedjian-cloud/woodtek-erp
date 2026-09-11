@@ -128,7 +128,15 @@ function canAccessModule(role, module) {
     const custom = (0, permissions_1.getCustomRoles)().find((r) => r.name === role);
     if (custom?.modules && custom.modules.length > 0)
         return custom.modules.includes(module);
+    // Manager-saved screen override for this exact role name wins over defaults.
+    const overrides = (0, permissions_1.getModuleOverrides)();
+    const own = overrides[role];
+    if (own && own.length > 0)
+        return own.includes(module);
     const key = custom ? custom.base : role;
+    const baseOwn = custom ? overrides[custom.base] : undefined;
+    if (baseOwn && baseOwn.length > 0)
+        return baseOwn.includes(module);
     return (exports.MODULES_BY_ROLE[key] ?? []).includes(module);
 }
 function listModulesForRole(role) {
@@ -137,6 +145,13 @@ function listModulesForRole(role) {
     const custom = (0, permissions_1.getCustomRoles)().find((r) => r.name === role);
     if (custom?.modules && custom.modules.length > 0)
         return custom.modules;
+    const overrides = (0, permissions_1.getModuleOverrides)();
+    const own = overrides[role];
+    if (own && own.length > 0)
+        return own;
     const key = custom ? custom.base : role;
+    const baseOwn = custom ? overrides[custom.base] : undefined;
+    if (baseOwn && baseOwn.length > 0)
+        return baseOwn;
     return exports.MODULES_BY_ROLE[key] ?? [];
 }

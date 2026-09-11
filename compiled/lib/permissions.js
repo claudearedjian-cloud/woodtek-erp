@@ -9,6 +9,8 @@ exports.registerCustomRoles = registerCustomRoles;
 exports.getCustomRoles = getCustomRoles;
 exports.allRoles = allRoles;
 exports.baseRoleOf = baseRoleOf;
+exports.registerModuleOverrides = registerModuleOverrides;
+exports.getModuleOverrides = getModuleOverrides;
 exports.deniedMessage = deniedMessage;
 exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"];
 /** Everything a signed-in user may do regardless of role. */
@@ -158,6 +160,32 @@ function baseRoleOf(role) {
         return "";
     const hit = CUSTOM_ROLES.find((r) => r.name === role);
     return hit ? hit.base : role;
+}
+// ------------------------------------------------------- module overrides
+// Managers can re-pick the screens ANY role sees (Settings > Manage roles).
+// Overrides are keyed by role name (built-in or custom) and stored in
+// data/roles-config.json; an empty/absent entry means "use the defaults".
+let MODULE_OVERRIDES = {};
+/** Accepts untrusted input (API body / fetched JSON) and stores a validated map. */
+function registerModuleOverrides(input) {
+    const out = {};
+    if (input && typeof input === "object" && !Array.isArray(input)) {
+        for (const [rawName, rawMods] of Object.entries(input)) {
+            const name = String(rawName ?? "").trim();
+            if (!name || name.length > 30 || !Array.isArray(rawMods))
+                continue;
+            const mods = rawMods
+                .map((m) => String(m))
+                .filter((m) => KNOWN_MODULE_IDS.includes(m))
+                .slice(0, KNOWN_MODULE_IDS.length);
+            if (mods.length > 0)
+                out[name] = mods;
+        }
+    }
+    MODULE_OVERRIDES = out;
+}
+function getModuleOverrides() {
+    return MODULE_OVERRIDES;
 }
 const LABELS = {
     "orders:read": "view production orders",

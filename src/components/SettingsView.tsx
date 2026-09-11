@@ -20,8 +20,8 @@ import {
   Phone,
   MapPin
 } from "lucide-react";
-import { ROLES, registerCustomRoles } from "@/lib/permissions";
-import { MODULE_LABELS, type ModuleId } from "@/lib/moduleAccess";
+import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
+import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -56,6 +56,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
 
   // ---- custom roles (Manager can add/remove named roles) ----
   const [customRoles, setCustomRoles] = useState<{ name: string; base: string; modules?: string[] }[]>([]);
+  const [overrides, setOverrides] = useState<Record<string, string[]>>({});
   const [addScreens, setAddScreens] = useState<string[]>([]);
   const [screensRole, setScreensRole] = useState<string | null>(null);
   const [screenSel, setScreenSel] = useState<string[]>([]);
@@ -72,6 +73,9 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         const rs = Array.isArray(d.roles) ? d.roles : [];
         setCustomRoles(rs);
         registerCustomRoles(rs);
+        const ov = d.overrides && typeof d.overrides === "object" ? d.overrides : {};
+        setOverrides(ov);
+        registerModuleOverrides(ov);
       })
       .catch(() => {});
   }, []);
@@ -98,6 +102,28 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     }
   };
 
+  const saveOverrides = async (next: Record<string, string[]>) => {
+    setRoleMsg("");
+    try {
+      const res = await fetch("/api/roles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: customRoles, overrides: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRoleMsg(data.error || "Failed to save role screens.");
+        return;
+      }
+      const ov = data.overrides && typeof data.overrides === "object" ? data.overrides : {};
+      setOverrides(ov);
+      registerModuleOverrides(ov);
+      setRoleMsg("Role screens updated.");
+    } catch {
+      setRoleMsg("Network error — role screens not saved.");
+    }
+  };
+
   const roleManagerPanel = (
     <>
                   <div className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
@@ -107,9 +133,77 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         {showRoleMgr && (
           <div className="mt-3 space-y-2">
             {ROLES.map((r) => (
-              <div key={r} className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
-                <span>{r}</span>
-                <span className="text-[10px] text-slate-500">built-in</span>
+              <div key={r}>
+                <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
+                  <span>
+                    {r}{" "}
+                    <span className="text-[10px] text-slate-500">
+                      built-in{r !== "Manager" && overrides[r] ? ` · modified (${overrides[r].length} screen(s))` : ""}
+                    </span>
+                  </span>
+                  {r === "Manager" ? (
+                    <span className="text-[10px] text-slate-600">always full access</span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      {overrides[r] && (
+                        <button
+                          type="button"
+                          title="Restore the default screens for this role"
+                          onClick={() => saveOverrides(Object.fromEntries(Object.entries(overrides).filter(([k]) => k !== r)))}
+                          className="text-[10px] font-bold text-amber-400 hover:text-amber-300"
+                        >
+                          reset
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        title="Choose which screens this role sees"
+                        onClick={() => {
+                          if (screensRole === r) { setScreensRole(null); return; }
+                          setScreensRole(r);
+                          setScreenSel(overrides[r] ?? ((MODULES_BY_ROLE as Record<string, string[]>)[r] ?? []));
+                        }}
+                        className="text-slate-400 hover:text-teal-300"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  )}
+                </div>
+                {screensRole === r && r !== "Manager" && (
+                  <div className="mt-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5">
+                    <div className="text-[10px] font-bold uppercase text-slate-500">
+                      Screens {r} sees — keep at least one selected
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {SCREEN_CHOICES.map((m) => (
+                        <label
+                          key={m}
+                          className={`flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold ${screenSel.includes(m) ? "border-teal-500 bg-teal-500/10 text-teal-200" : "border-slate-800 bg-slate-950 text-slate-500"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={screenSel.includes(m)}
+                            onChange={() => setScreenSel((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))}
+                          />
+                          {MODULE_LABELS[m]}
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (screenSel.length === 0) { setRoleMsg("Select at least one screen."); return; }
+                        saveOverrides({ ...overrides, [r]: screenSel });
+                        setScreensRole(null);
+                      }}
+                      className="mt-2 rounded-lg bg-teal-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-teal-500"
+                    >
+                      Save screens
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {customRoles.map((r) => (

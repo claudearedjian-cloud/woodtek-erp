@@ -8,7 +8,7 @@
 // ============================================================================
 
 import type { Role } from "@/lib/dataAccess";
-import { getCustomRoles } from "@/lib/permissions";
+import { getCustomRoles, getModuleOverrides } from "@/lib/permissions";
 
 export type ModuleId =
   | "dashboard"
@@ -148,7 +148,13 @@ export function canAccessModule(role: Role | string | null | undefined, module: 
   if (!role) return false;
   const custom = getCustomRoles().find((r) => r.name === role);
   if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
+  // Manager-saved screen override for this exact role name wins over defaults.
+  const overrides = getModuleOverrides();
+  const own = overrides[role as string];
+  if (own && own.length > 0) return own.includes(module);
   const key = custom ? custom.base : (role as string);
+  const baseOwn = custom ? overrides[custom.base] : undefined;
+  if (baseOwn && baseOwn.length > 0) return baseOwn.includes(module);
   return ((MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? []).includes(module);
 }
 
@@ -156,6 +162,11 @@ export function listModulesForRole(role: Role | string | null | undefined): Modu
   if (!role) return [];
   const custom = getCustomRoles().find((r) => r.name === role);
   if (custom?.modules && custom.modules.length > 0) return custom.modules as ModuleId[];
+  const overrides = getModuleOverrides();
+  const own = overrides[role as string];
+  if (own && own.length > 0) return own as ModuleId[];
   const key = custom ? custom.base : (role as string);
+  const baseOwn = custom ? overrides[custom.base] : undefined;
+  if (baseOwn && baseOwn.length > 0) return baseOwn as ModuleId[];
   return (MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? [];
 }

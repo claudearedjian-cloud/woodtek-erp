@@ -203,6 +203,33 @@ export function baseRoleOf(role: string | null | undefined): string {
   return hit ? hit.base : role;
 }
 
+// ------------------------------------------------------- module overrides
+// Managers can re-pick the screens ANY role sees (Settings > Manage roles).
+// Overrides are keyed by role name (built-in or custom) and stored in
+// data/roles-config.json; an empty/absent entry means "use the defaults".
+let MODULE_OVERRIDES: Record<string, string[]> = {};
+
+/** Accepts untrusted input (API body / fetched JSON) and stores a validated map. */
+export function registerModuleOverrides(input: unknown): void {
+  const out: Record<string, string[]> = {};
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    for (const [rawName, rawMods] of Object.entries(input as Record<string, unknown>)) {
+      const name = String(rawName ?? "").trim();
+      if (!name || name.length > 30 || !Array.isArray(rawMods)) continue;
+      const mods = rawMods
+        .map((m: unknown) => String(m))
+        .filter((m: string) => KNOWN_MODULE_IDS.includes(m))
+        .slice(0, KNOWN_MODULE_IDS.length);
+      if (mods.length > 0) out[name] = mods;
+    }
+  }
+  MODULE_OVERRIDES = out;
+}
+
+export function getModuleOverrides(): Record<string, string[]> {
+  return MODULE_OVERRIDES;
+}
+
 const LABELS: Record<Action, string> = {
   "orders:read": "view production orders",
   "orders:write": "create new production orders",

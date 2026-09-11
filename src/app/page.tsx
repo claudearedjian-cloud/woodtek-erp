@@ -28,7 +28,7 @@ import FullscreenSplash from "@/components/FullscreenSplash";
 import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import type { MenuConfig } from "@/lib/menuConfig";
-import { registerCustomRoles } from "@/lib/permissions";
+import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -122,6 +122,7 @@ export default function WoodTekERP() {
           if (rolesRes.ok) {
             const rd = await rolesRes.json();
             registerCustomRoles(Array.isArray(rd.roles) ? rd.roles : []);
+            registerModuleOverrides(rd.overrides && typeof rd.overrides === "object" ? rd.overrides : {});
           }
         } catch {
           /* custom roles are optional */
