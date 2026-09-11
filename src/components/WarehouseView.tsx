@@ -35,6 +35,7 @@ interface BoardOrder {
   materials: Line[];
   machines: { id: number; code: string | null; name: string | null }[];
   received: boolean | null;
+  receivedState?: string | null;
 }
 
 const STATUS_STYLE: Record<Line["status"], string> = {
@@ -169,10 +170,13 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                     Due {order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"}
                   </span>
                   {order.received === true && (
-                    <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">✓ Operator received</span>
+                    <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">✓ Reception approved</span>
                   )}
-                  {order.received === false && (
-                    <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-300">✗ Operator: NOT received</span>
+                  {order.received === false && order.receivedState === "Declined" && (
+                    <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-300">✗ Reception DECLINED</span>
+                  )}
+                  {order.received === false && order.receivedState !== "Declined" && (
+                    <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-300">✗ NOT received</span>
                   )}
                 </div>
               </div>

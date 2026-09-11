@@ -19,6 +19,7 @@ export type Action =
   | "inventory:read"
   | "inventory:write"
   | "materials:write"  // allocate/consume materials on orders - new
+  | "bom:receive"  // approve/decline material reception at the station (Floor Supervisor, Manager)
   | "cmms:read"
   | "cmms:write"
   | "cmms:configure"
@@ -41,7 +42,7 @@ export type Action =
   | "users:manage"
   | "admin:seed";
 
-export const ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "QA & Dispatch", "Technician"] as const;
+export const ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Everything a signed-in user may do regardless of role. */
@@ -62,6 +63,7 @@ const MATRIX: Record<string, Action[]> = {
     "machines:write",
     "customers:write", "customers:delete",
     "inventory:write", "materials:write",
+    "bom:receive",
     "cmms:write", "cmms:configure",
     "reports:write",
     "shifts:read", "shifts:write",
@@ -90,6 +92,16 @@ const MATRIX: Record<string, Action[]> = {
     "shifts:read", "attendance:read", "attendance:write",  // see own shift plan + clock in/out
     "quality:read", "quality:write",  // log scrap & rework at the station
     "downtime:read", "downtime:write",  // report a machine down / running again
+    "wip:read",
+  ],
+  "Floor Supervisor": [
+    ...BASE_READ,
+    "operations:update-status",  // can unblock/update steps at the stations
+    "bom:receive",               // SOLE owner of material reception approval
+    "inventory:write",
+    "shifts:read", "attendance:read", "attendance:write",
+    "quality:read", "quality:write",
+    "downtime:read", "downtime:write",
     "wip:read",
   ],
   "QA & Dispatch": [
@@ -207,6 +219,7 @@ const LABELS: Record<Action, string> = {
   "customers:delete": "delete client accounts",
   "inventory:read": "view stock",
   "inventory:write": "adjust material stock",
+  "bom:receive": "approve or decline material reception at the station",
   "materials:write": "allocate or remove materials on orders",
   "cmms:read": "view plant assets",
   "cmms:write": "record maintenance",

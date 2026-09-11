@@ -76,6 +76,20 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "workforce",
     "quality",
   ],
+  // Floor Supervisor patrols the shop: stations, WIP, warehouse/reception,
+  // quality and downtime — but no commercial screens.
+  "Floor Supervisor": [
+    "dashboard",
+    "orders",
+    "operator",
+    "wip",
+    "warehouse",
+    "inventory",
+    "quality",
+    "downtime",
+    "workforce",
+    "plant",
+  ],
   "QA & Dispatch": [
     "dashboard",
     "orders",

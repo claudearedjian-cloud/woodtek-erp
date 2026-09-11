@@ -10,7 +10,7 @@ exports.getCustomRoles = getCustomRoles;
 exports.allRoles = allRoles;
 exports.baseRoleOf = baseRoleOf;
 exports.deniedMessage = deniedMessage;
-exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "QA & Dispatch", "Technician"];
+exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"];
 /** Everything a signed-in user may do regardless of role. */
 const BASE_READ = [
     "orders:read",
@@ -28,6 +28,7 @@ const MATRIX = {
         "machines:write",
         "customers:write", "customers:delete",
         "inventory:write", "materials:write",
+        "bom:receive",
         "cmms:write", "cmms:configure",
         "reports:write",
         "shifts:read", "shifts:write",
@@ -56,6 +57,16 @@ const MATRIX = {
         "shifts:read", "attendance:read", "attendance:write", // see own shift plan + clock in/out
         "quality:read", "quality:write", // log scrap & rework at the station
         "downtime:read", "downtime:write", // report a machine down / running again
+        "wip:read",
+    ],
+    "Floor Supervisor": [
+        ...BASE_READ,
+        "operations:update-status", // can unblock/update steps at the stations
+        "bom:receive", // SOLE owner of material reception approval
+        "inventory:write",
+        "shifts:read", "attendance:read", "attendance:write",
+        "quality:read", "quality:write",
+        "downtime:read", "downtime:write",
         "wip:read",
     ],
     "QA & Dispatch": [
@@ -164,6 +175,7 @@ const LABELS = {
     "customers:delete": "delete client accounts",
     "inventory:read": "view stock",
     "inventory:write": "adjust material stock",
+    "bom:receive": "approve or decline material reception at the station",
     "materials:write": "allocate or remove materials on orders",
     "cmms:read": "view plant assets",
     "cmms:write": "record maintenance",

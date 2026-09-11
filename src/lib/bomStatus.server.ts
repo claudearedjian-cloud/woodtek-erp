@@ -17,8 +17,12 @@ export interface BomStatusEntry {
   updatedAt?: string;
 }
 
+export type ReceptionState = "Received" | "Not Received" | "Declined";
+
 export interface BomReceivedEntry {
   received: boolean;
+  /** Three-state reception decision by the Floor Supervisor (newer entries). */
+  state?: ReceptionState;
   at?: string;
 }
 
@@ -75,8 +79,8 @@ export function setBomStatus(
   writeRaw(data);
 }
 
-export function setOrderReceived(orderId: number, received: boolean): void {
+export function setOrderReceived(orderId: number, received: boolean, state?: ReceptionState): void {
   const data = readRaw();
-  data.received[String(orderId)] = { received, at: new Date().toISOString() };
+  data.received[String(orderId)] = { received, ...(state ? { state } : {}), at: new Date().toISOString() };
   writeRaw(data);
 }

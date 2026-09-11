@@ -19,7 +19,7 @@ import {
 } from "@/db/schema";
 import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus } from "@/lib/bomStatus.server";
+import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus, type ReceptionState } from "@/lib/bomStatus.server";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -87,7 +87,14 @@ export async function GET() {
 
     const byOrder = new Map<number, any>();
     for (const o of openOrders) {
-      byOrder.set(o.id, { ...o, materials: [], machines: [], received: receivedMap[String(o.id)]?.received ?? null });
+      const recEntry = receivedMap[String(o.id)];
+      byOrder.set(o.id, {
+        ...o,
+        materials: [],
+        machines: [],
+        received: recEntry?.received ?? null,
+        receivedState: recEntry?.state ?? (recEntry?.received === true ? "Received" : recEntry?.received === false ? "Not Received" : null),
+      });
     }
     for (const m of mats) {
       const order = byOrder.get(m.orderId);
@@ -129,14 +136,23 @@ export async function PUT(request: Request) {
   try {
     const body = await request.json();
 
-    // Order-level confirmation from the operator station: received yes/no.
-    if (body.orderId != null && typeof body.received === "boolean") {
+    // Order-level reception decision — Floor Supervisor (or Manager) only.
+    // Operators see the BOM read-only; starting work is gated on "Received".
+    if (body.orderId != null && (typeof body.received === "boolean" || typeof body.state === "string")) {
+      const isReceiver = can(user.role, "bom:receive") || user.displayRole === "Floor Supervisor";
+      if (!isReceiver) {
+        return NextResponse.json({ error: "Only the Floor Supervisor can approve or decline material reception." }, { status: 403 });
+      }
       const orderId = Number(body.orderId);
       if (!Number.isInteger(orderId) || orderId <= 0) {
         return NextResponse.json({ error: "A valid orderId is required." }, { status: 400 });
       }
-      setOrderReceived(orderId, body.received);
-      return NextResponse.json({ ok: true, orderId, received: body.received });
+      const state: ReceptionState =
+        body.state === "Received" || body.state === "Not Received" || body.state === "Declined"
+          ? body.state
+          : body.received === true ? "Received" : "Not Received";
+      setOrderReceived(orderId, state === "Received", state);
+      return NextResponse.json({ ok: true, orderId, received: state === "Received", state });
     }
 
     const allocationId = Number(body.allocationId);

@@ -82,6 +82,8 @@ export default function OperatorStationView({
   const [operations, setOperations] = useState<any[]>([]);
   const [bomByOrder, setBomByOrder] = useState<Record<number, any[]>>({});
   const [receivedByOrder, setReceivedByOrder] = useState<Record<number, boolean | null>>({});
+  const [receptionStateByOrder, setReceptionStateByOrder] = useState<Record<number, string | null>>({});
+  const canApproveReception = !!currentUser && (currentUser.role === "Manager" || currentUser.role === "Floor Supervisor" || currentUser.displayRole === "Floor Supervisor");
   const [loadingOps, setLoadingOps] = useState(false);
   const [actionSuccess, setActionSuccess] = useState("");
   const [actionError, setActionError] = useState("");
@@ -189,23 +191,26 @@ export default function OperatorStationView({
       const d = await r.json();
       const byOrder: Record<number, any[]> = {};
       const rec: Record<number, boolean | null> = {};
+      const recState: Record<number, string | null> = {};
       for (const o of d.orders ?? []) {
         byOrder[o.id] = o.materials ?? [];
         rec[o.id] = o.received ?? null;
+        recState[o.id] = o.receivedState ?? null;
       }
       setBomByOrder(byOrder);
       setReceivedByOrder(rec);
+      setReceptionStateByOrder(recState);
     } catch {
       /* board is best-effort */
     }
   };
 
-  const confirmReceived = async (orderId: number, received: boolean) => {
+  const confirmReceived = async (orderId: number, state: "Received" | "Not Received" | "Declined") => {
     try {
       await fetch("/api/bom", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, received }),
+        body: JSON.stringify({ orderId, state }),
       });
       await fetchBomBoard();
     } catch {
@@ -611,8 +616,11 @@ export default function OperatorStationView({
                             {receivedByOrder[op.orderId] === true && (
                               <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-black text-emerald-300">RECEIVED ✓</span>
                             )}
-                            {receivedByOrder[op.orderId] === false && (
-                              <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-black text-rose-300">NOT RECEIVED ✗</span>
+                            {receivedByOrder[op.orderId] === false && receptionStateByOrder[op.orderId] === "Declined" && (
+                              <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-black text-rose-300">RECEPTION DECLINED ✗</span>
+                            )}
+                            {receivedByOrder[op.orderId] === false && receptionStateByOrder[op.orderId] !== "Declined" && (
+                              <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black text-amber-300">NOT RECEIVED ✗</span>
                             )}
                           </div>
                           <div className="mt-2 space-y-1">
@@ -627,22 +635,35 @@ export default function OperatorStationView({
                               </div>
                             ))}
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => confirmReceived(op.orderId, true)}
-                              className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-3 py-2.5 text-xs font-black text-emerald-300 hover:bg-emerald-600/40"
-                            >
-                              MATERIALS RECEIVED
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => confirmReceived(op.orderId, false)}
-                              className="rounded-xl border-2 border-rose-600 bg-rose-600/10 px-3 py-2.5 text-xs font-black text-rose-300 hover:bg-rose-600/30"
-                            >
-                              NOT RECEIVED
-                            </button>
-                          </div>
+                          {canApproveReception ? (
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => confirmReceived(op.orderId, "Received")}
+                                className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-2 py-2.5 text-[11px] font-black text-emerald-300 hover:bg-emerald-600/40"
+                              >
+                                ✓ APPROVE RECEPTION
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => confirmReceived(op.orderId, "Not Received")}
+                                className="rounded-xl border-2 border-amber-600 bg-amber-600/10 px-2 py-2.5 text-[11px] font-black text-amber-300 hover:bg-amber-600/30"
+                              >
+                                ✗ NOT RECEIVED
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => confirmReceived(op.orderId, "Declined")}
+                                className="rounded-xl border-2 border-rose-600 bg-rose-600/10 px-2 py-2.5 text-[11px] font-black text-rose-300 hover:bg-rose-600/30"
+                              >
+                                ⛔ DECLINE
+                              </button>
+                            </div>
+                          ) : receivedByOrder[op.orderId] !== true ? (
+                            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] font-black text-amber-300">
+                              ⏳ Materials not approved yet — the Floor Supervisor must approve reception before this job can start.
+                            </div>
+                          ) : null}
                         </div>
                       )}
                     </div>

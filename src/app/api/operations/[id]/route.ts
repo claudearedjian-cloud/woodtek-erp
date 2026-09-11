@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orderOperations, orders, machines, qualityEvents } from "@/db/schema";
+import { orderOperations, orders, machines, qualityEvents, orderMaterials } from "@/db/schema";
+import { readReceived } from "@/lib/bomStatus.server";
 import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
@@ -83,6 +84,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           ));
         if (incompletePredecessors.length > 0) {
           throw new WorkflowError("A previous operation is incomplete. Finish the sequence before starting this station.", 409);
+        }
+
+        // Material gate: an order with a BOM cannot enter production until the
+        // Floor Supervisor has approved reception at the station.
+        const bomLines = await tx
+          .select({ id: orderMaterials.id })
+          .from(orderMaterials)
+          .where(eq(orderMaterials.orderId, currentOp.orderId));
+        if (bomLines.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+          throw new WorkflowError("Material reception for this order has NOT been approved. Ask the Floor Supervisor to approve the BOM reception before starting.", 409);
         }
 
         const [station] = await tx.select().from(machines).where(eq(machines.id, targetMachineId));
