@@ -14,9 +14,15 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 
 function dumpsDir(): string {
-  const dir =
-    process.env.WOODTEK_DB_BACKUP_DIR ||
-    path.join(process.cwd(), "backup", "db-dumps");
+  // NEVER under the project/.next tree — rebuilds would wipe the dumps.
+  // Windows default reuses the existing backup root (C:\WoodTekBackups).
+  let dir = process.env.WOODTEK_DB_BACKUP_DIR || "";
+  if (!dir) {
+    dir =
+      process.platform === "win32"
+        ? "C:\\WoodTekBackups\\db-dumps"
+        : path.join(process.cwd(), "backup", "db-dumps");
+  }
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -87,7 +93,7 @@ export async function POST(request: Request) {
   if (action === "backup") {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const file = path.join(dumpsDir(), `woodtek-db-${stamp}.sql`);
-    const res = await run(findPgTool("pg_dump"), ["--format=plain", "--no-owner", "--no-privileges", "-f", file, url], 300000);
+    const res = await run(findPgTool("pg_dump"), ["--format=plain", "--clean", "--if-exists", "--no-owner", "--no-privileges", "-f", file, url], 300000);
     if (!res.ok || !fs.existsSync(file)) {
       return NextResponse.json({ error: `Backup failed: ${String(res.output).slice(0, 400)}` }, { status: 500 });
     }
