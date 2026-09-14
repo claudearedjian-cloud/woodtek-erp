@@ -4,6 +4,7 @@ import { machines, users, orderOperations, orders } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { listMachinesForUser, listOperationsForUser, isManager as userIsManager } from "@/lib/dataAccess";
+import { effectiveOperatorIds, setMachineOperators } from "@/lib/machineOperators.server";
 
 export async function GET() {
   const { user, error: authError } = await authorize("machines:read");
@@ -32,6 +33,7 @@ export async function GET() {
       return {
         ...m,
         hourlyCost,
+        assignedOperatorIds: effectiveOperatorIds(m.id, m.assignedOperatorId),
         status: displayStatus,
         activeJob,
         queueCount: machineOps.length,
@@ -71,6 +73,13 @@ export async function POST(request: Request) {
       notes: notes || null,
       maintenanceDue: maintenanceDue ? new Date(maintenanceDue) : null
     }).returning();
+
+    // Multi-operator crew (Manager UI) — sync overlay + keep primary column.
+    if (Array.isArray(body.assignedOperatorIds)) {
+      setMachineOperators(newMachine.id, body.assignedOperatorIds);
+    } else if (newMachine.assignedOperatorId != null) {
+      setMachineOperators(newMachine.id, [newMachine.assignedOperatorId]);
+    }
 
     return NextResponse.json(newMachine, { status: 201 });
   } catch (error: any) {

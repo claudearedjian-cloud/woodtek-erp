@@ -39,6 +39,12 @@ export default function MachinesView({
 }: MachinesViewProps) {
   // Full add/edit/delete is a Manager power on the Shop Floor Monitor.
   const canManage = currentUser?.role === "Manager";
+  const opIdsOf = (m: any): number[] =>
+    Array.isArray(m.assignedOperatorIds)
+      ? m.assignedOperatorIds.map(Number)
+      : m.assignedOperatorId != null
+        ? [Number(m.assignedOperatorId)]
+        : [];
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editMachineId, setEditMachineId] = useState<number | null>(null);
@@ -49,7 +55,7 @@ export default function MachinesView({
   const [category, setCategory] = useState("CNC Router");
   const [hourlyCost, setHourlyCost] = useState("75.00");
   const [location, setLocation] = useState("Bay A - Milling Cell");
-  const [assignedOperatorId, setAssignedOperatorId] = useState(users[0]?.id || "");
+  const [formOperatorIds, setFormOperatorIds] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
 
   const [categoryList, setCategoryList] = useState<string[]>(["Beam Saw", "Edge Bander", "CNC Router", "Press", "Panel Saw", "Drill Press", "Spray & Finish", "Assembly Table"]);
@@ -79,12 +85,12 @@ export default function MachinesView({
     }
   };
 
-  const handleAssignOperator = async (machineId: number, operatorId: string) => {
+  const handleSetOperators = async (machineId: number, ids: number[]) => {
     try {
       const res = await fetch(`/api/machines/${machineId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignedOperatorId: operatorId ? Number(operatorId) : null }),
+        body: JSON.stringify({ assignedOperatorIds: ids }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -104,7 +110,7 @@ export default function MachinesView({
     setCategory(categoryList[0] || "CNC Router");
     setHourlyCost("75.00");
     setLocation("Bay A - Milling Cell");
-    setAssignedOperatorId(users[0]?.id || "");
+    setFormOperatorIds(users[0]?.id ? [Number(users[0].id)] : []);
     setNotes("");
     setShowAddModal(true);
   };
@@ -116,7 +122,7 @@ export default function MachinesView({
     setCategory(m.category || "CNC Router");
     setHourlyCost(m.hourlyCost != null ? String(m.hourlyCost) : "75.00");
     setLocation(m.location || "");
-    setAssignedOperatorId(m.assignedOperatorId ?? "");
+    setFormOperatorIds(Array.isArray(m.assignedOperatorIds) ? m.assignedOperatorIds.map(Number) : m.assignedOperatorId != null ? [Number(m.assignedOperatorId)] : []);
     setNotes(m.notes || "");
     setShowAddModal(true);
   };
@@ -135,7 +141,7 @@ export default function MachinesView({
       category,
       hourlyCost,
       location,
-      assignedOperatorId: assignedOperatorId ? Number(assignedOperatorId) : null,
+      assignedOperatorIds: formOperatorIds,
       notes,
     };
     try {
@@ -319,27 +325,44 @@ export default function MachinesView({
 
               {/* Card Footer */}
               <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5 min-w-0 text-slate-300 flex-1">
+                <div className="flex items-center gap-1.5 min-w-0 text-slate-300 flex-1 flex-wrap">
                   <User className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                  <select
-                    value={m.assignedOperatorId ?? ""}
-                    onChange={(e) => handleAssignOperator(m.id, e.target.value)}
-                    className={`bg-transparent border-0 text-xs font-semibold truncate focus:outline-none cursor-pointer min-w-0 max-w-[160px] ${
-                      m.assignedOperatorId
-                        ? "text-slate-200"
-                        : "text-slate-500 italic"
-                    }`}
-                    title="Click to assign an operator to this machine"
-                  >
-                    <option value="" className="bg-slate-900 text-slate-400 italic">Unassigned</option>
-                    {users
-                      .filter(u => ["Machine Operator", "Technician", "Manager"].includes(baseRoleOf(u.role)))
-                      .map(u => (
-                        <option key={u.id} value={u.id} className="bg-slate-900 text-white">
-                          {u.name} ({u.role})
-                        </option>
-                      ))}
-                  </select>
+                  {opIdsOf(m).length === 0 && <span className="text-xs text-slate-500 italic">Unassigned</span>}
+                  {opIdsOf(m).map((oid) => {
+                    const u = users.find((x: any) => Number(x.id) === oid);
+                    return (
+                      <span key={oid} className="flex items-center gap-1 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-200">
+                        {u?.name || `#${oid}`}
+                        {canManage && (
+                          <button
+                            type="button"
+                            title="Remove from this machine"
+                            onClick={() => handleSetOperators(m.id, opIdsOf(m).filter((x) => x !== oid))}
+                            className="text-slate-500 hover:text-rose-400"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
+                  {canManage && (
+                    <select
+                      value=""
+                      onChange={(e) => { const v = Number(e.target.value); if (v && !opIdsOf(m).includes(v)) handleSetOperators(m.id, [...opIdsOf(m), v]); }}
+                      className="bg-transparent border-0 text-xs font-semibold text-slate-500 italic cursor-pointer focus:outline-none max-w-[140px]"
+                      title="Assign another operator to this machine"
+                    >
+                      <option value="" className="bg-slate-900 text-slate-400 italic">+ assign operator</option>
+                      {users
+                        .filter((u: any) => ["Machine Operator", "Technician", "Manager"].includes(baseRoleOf(u.role)) && !opIdsOf(m).includes(Number(u.id)))
+                        .map((u: any) => (
+                          <option key={u.id} value={u.id} className="bg-slate-900 text-white">
+                            {u.name}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                 </div>
 
                 {canManage && (
@@ -442,17 +465,37 @@ export default function MachinesView({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Assigned Primary Operator</label>
-                <select
-                  value={assignedOperatorId}
-                  onChange={(e) => setAssignedOperatorId(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
-                >
-                  <option value="">No dedicated operator</option>
-                  {users.map(u => (
-                    <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Assigned Operators (first = primary)</label>
+                <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-2 py-2">
+                  {formOperatorIds.length === 0 && <span className="text-xs text-slate-500 italic px-1">No dedicated operators</span>}
+                  {formOperatorIds.map((oid) => {
+                    const u = users.find((x: any) => Number(x.id) === oid);
+                    return (
+                      <span key={oid} className="flex items-center gap-1 rounded-lg bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-200">
+                        {u?.name || `#${oid}`}
+                        <button
+                          type="button"
+                          onClick={() => setFormOperatorIds(formOperatorIds.filter((x) => x !== oid))}
+                          className="text-slate-500 hover:text-rose-400"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                  <select
+                    value=""
+                    onChange={(e) => { const v = Number(e.target.value); if (v && !formOperatorIds.includes(v)) setFormOperatorIds([...formOperatorIds, v]); }}
+                    className="bg-transparent border-0 text-xs font-semibold text-slate-500 italic cursor-pointer focus:outline-none"
+                  >
+                    <option value="">+ add operator</option>
+                    {users
+                      .filter((u: any) => !formOperatorIds.includes(Number(u.id)))
+                      .map((u: any) => (
+                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                      ))}
+                  </select>
+                </div>
               </div>
 
               <div>

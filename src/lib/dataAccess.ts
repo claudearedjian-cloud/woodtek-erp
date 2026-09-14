@@ -29,6 +29,7 @@ import {
   downtimeEvents,
 } from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { readMachineOperators } from "@/lib/machineOperators.server";
 import type { SessionUser } from "@/lib/auth";
 
 // -------------------------------------------------------------------- types
@@ -131,11 +132,21 @@ async function allowedOrderIdsSubquery(user: SessionUser) {
       .from(orderOperations)
       .where(eq(orderOperations.operatorId, user.id));
 
+    // Multi-operator: a crew member sees orders routed to any machine they
+    // belong to (overlay crew list), not only their primary machine.
+    const crewMachineIds = Object.entries(readMachineOperators())
+      .filter(([, ids]) => (ids || []).includes(user.id))
+      .map(([mid]) => Number(mid))
+      .filter((n) => Number.isInteger(n) && n > 0);
     const machineOps = db
       .select({ id: orderOperations.orderId })
       .from(orderOperations)
       .innerJoin(machines, eq(orderOperations.machineId, machines.id))
-      .where(eq(machines.assignedOperatorId, user.id));
+      .where(
+        crewMachineIds.length > 0
+          ? or(eq(machines.assignedOperatorId, user.id), inArray(machines.id, crewMachineIds))
+          : eq(machines.assignedOperatorId, user.id),
+      );
 
     const directIds = await directOps;
     const machineIds = await machineOps;
@@ -642,10 +653,13 @@ export async function canUserUpdateOperation(
   // The operator is the assigned operator for this step
   if (op.operatorId === user.id) return { allowed: true, operation: op };
 
-  // Or the operator is assigned to the machine this step is on
+  // Or the operator is on the crew of the machine this step is on
   if (op.machineId) {
     const [machine] = await db.select().from(machines).where(eq(machines.id, op.machineId));
     if (machine && machine.assignedOperatorId === user.id) {
+      return { allowed: true, operation: op };
+    }
+    if (machine && (readMachineOperators()[String(machine.id)] ?? []).includes(user.id)) {
       return { allowed: true, operation: op };
     }
   }

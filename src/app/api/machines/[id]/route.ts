@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { machines, orderOperations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { removeMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("machines:read");
@@ -34,6 +35,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const body = await request.json();
 
     const updateFields: any = {};
+    let pendingCrew: number[] | null = null;
     if (body.name !== undefined) updateFields.name = body.name;
     if (body.code !== undefined) updateFields.code = body.code.toUpperCase();
     if (body.category !== undefined) updateFields.category = body.category;
@@ -41,7 +43,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.hourlyCost !== undefined) updateFields.hourlyCost = String(body.hourlyCost);
     if (body.location !== undefined) updateFields.location = body.location;
     if (body.notes !== undefined) updateFields.notes = body.notes;
-    if (body.assignedOperatorId !== undefined) updateFields.assignedOperatorId = body.assignedOperatorId ? Number(body.assignedOperatorId) : null;
+    if (body.assignedOperatorIds !== undefined) {
+      // Crew list wins; the primary column mirrors the first crew member so
+      // legacy single-operator logic keeps working.
+      const crew = Array.isArray(body.assignedOperatorIds)
+        ? body.assignedOperatorIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n > 0)
+        : [];
+      updateFields.assignedOperatorId = crew.length > 0 ? crew[0] : null;
+      pendingCrew = crew;
+    } else if (body.assignedOperatorId !== undefined) {
+      updateFields.assignedOperatorId = body.assignedOperatorId ? Number(body.assignedOperatorId) : null;
+      pendingCrew = body.assignedOperatorId ? [Number(body.assignedOperatorId)] : [];
+    }
     if (body.maintenanceDue !== undefined) updateFields.maintenanceDue = body.maintenanceDue ? new Date(body.maintenanceDue) : null;
 
     const [updatedMachine] = await db
@@ -49,6 +62,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       .set(updateFields)
       .where(eq(machines.id, machineId))
       .returning();
+
+    if (pendingCrew !== null) setMachineOperators(machineId, pendingCrew);
 
     return NextResponse.json(updatedMachine);
   } catch (error: any) {
@@ -68,6 +83,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     // Unassign operations before deleting machine
     await db.update(orderOperations).set({ machineId: null }).where(eq(orderOperations.machineId, machineId));
     await db.delete(machines).where(eq(machines.id, machineId));
+    removeMachineOperators(machineId);
 
     return NextResponse.json({ success: true, message: "Machine deleted and scheduled operations unassigned." });
   } catch (error: any) {

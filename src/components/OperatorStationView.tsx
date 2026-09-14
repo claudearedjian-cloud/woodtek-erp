@@ -136,8 +136,15 @@ export default function OperatorStationView({
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
+  const opIdsOf = (m: any): number[] =>
+    Array.isArray(m.assignedOperatorIds)
+      ? m.assignedOperatorIds.map(Number)
+      : m.assignedOperatorId != null
+        ? [Number(m.assignedOperatorId)]
+        : [];
+
   const myMachineId = currentUser
-    ? machines.find((m: any) => Number(m.assignedOperatorId) === Number(currentUser.id))?.id ?? null
+    ? machines.find((m: any) => opIdsOf(m).includes(Number(currentUser.id)))?.id ?? null
     : null;
 
   // C2 (option A) — auto-select the operator's assigned machine on open,
@@ -145,7 +152,7 @@ export default function OperatorStationView({
   useEffect(() => {
     if (selectedMachineId) return; // keep the operator's manual choice
     if (machines.length === 0) return;
-    const mine = machines.find((m: any) => Number(m.assignedOperatorId) === Number(currentUser?.id));
+    const mine = machines.find((m: any) => opIdsOf(m).includes(Number(currentUser?.id)));
     setSelectedMachineId(mine ? mine.id : machines[0].id);
   }, [machines, currentUser, selectedMachineId]);
 
@@ -423,7 +430,7 @@ export default function OperatorStationView({
           {machines.map((m: any) => {
             const isSelected = m.id === selectedMachineId;
             const unavailable = m.status === "Maintenance" || m.status === "Offline";
-            const isMine = Number(m.assignedOperatorId) === Number(currentUser?.id);
+            const isMine = opIdsOf(m).includes(Number(currentUser?.id));
             return (
               <button
                 key={m.id}
