@@ -225,7 +225,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -235,7 +235,10 @@ export default function WoodTekERP() {
     if (!currentUser) return;
     const m = tabToModule(activeTab);
     const guardRole = currentUser.displayRole || currentUser.role;
-    if (m && !canAccessModule(guardRole, m)) {
+    // Bounce when the tab is inaccessible OR unknown (e.g. left over from the
+    // previous profile after a user switch — "reception" stuck on a warehouse
+    // user would otherwise render a screen that is not theirs).
+    if (!m || !canAccessModule(guardRole, m)) {
       // Bounce to the first module this role may actually see — never to a
       // module they cannot access (the old hardcoded "dashboard" would stall
       // roles that no longer have dashboard access, e.g. Machine Operator).
