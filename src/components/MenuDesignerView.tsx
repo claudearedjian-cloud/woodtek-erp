@@ -1,10 +1,23 @@
 "use client";
 
 import React, { useState } from "react";
-import { ArrowDown, ArrowUp, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Globe,
+  Plus,
+  RotateCcw,
+  Save,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
+import {
+  BADGE_MAX,
+  GROUP_MAX,
+  LABEL_MAX,
   MENU_REGISTRY,
   defaultVisibleFor,
+  isCustomId,
   type MenuConfig,
   type MenuConfigItem,
 } from "@/lib/menuConfig";
@@ -20,34 +33,45 @@ interface Row {
   id: string;
   label: string;
   badge: string;
-  group: "top" | "settings";
+  group: string; // "top" | "settings" | custom section name
   roles: Record<string, boolean>;
+  custom?: boolean;
+  kind?: "tab" | "link";
+  target?: string;
 }
 
 function buildRows(cfg: MenuConfig | null): Row[] {
   const byId = new Map((cfg?.items ?? []).map((i) => [i.id, i]));
+  const known = (id: string) =>
+    MENU_REGISTRY.some((r) => r.id === id) || isCustomId(id);
   const ordered = [
-    ...(cfg?.items ?? []).map((i) => i.id).filter((id) => MENU_REGISTRY.some((r) => r.id === id)),
+    ...(cfg?.items ?? []).map((i) => i.id).filter(known),
     ...MENU_REGISTRY.map((r) => r.id).filter((id) => !byId.has(id)),
   ];
   return ordered
     .filter((id) => id !== "designer")
     .map((id) => {
-      const reg = MENU_REGISTRY.find((r) => r.id === id)!;
+      const reg = MENU_REGISTRY.find((r) => r.id === id);
       const c = byId.get(id);
+      const custom = isCustomId(id);
       const roles: Record<string, boolean> = {};
       for (const r of allRoles()) {
         roles[r] = typeof c?.roles?.[r] === "boolean" ? c.roles[r]! : defaultVisibleFor(r, id);
       }
       return {
         id,
-        label: c?.label ?? reg.label,
-        badge: c?.badge ?? reg.badge,
-        group: c?.group ?? reg.group,
+        label: c?.label ?? reg?.label ?? "New menu item",
+        badge: c?.badge ?? reg?.badge ?? "",
+        group: c?.group ?? reg?.group ?? "top",
         roles,
+        custom,
+        kind: c?.kind === "link" ? "link" : "tab",
+        target: c?.target ?? "dashboard",
       };
     });
 }
+
+const NEW_GROUP = "__new-section__";
 
 export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
   const [rows, setRows] = useState<Row[]>(() => buildRows(menuConfig));
@@ -78,16 +102,72 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
   const patch = (i: number, p: Partial<Row>) =>
     setRows((rs) => rs.map((r, k) => (k === i ? { ...r, ...p } : r)));
 
+  const removeRow = (i: number) =>
+    setRows((rs) => rs.filter((_, k) => k !== i));
+
+  const addItem = () => {
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    setRows((rs) => [
+      {
+        id,
+        label: "New menu item",
+        badge: "",
+        group: "top",
+        roles: Object.fromEntries(allRoles().map((r) => [r, r === "Manager"])),
+        custom: true,
+        kind: "tab",
+        target: "dashboard",
+      },
+      ...rs,
+    ]);
+    setStatus("New item added at the top — give it a name, pick where it points and who sees it, then Save.");
+  };
+
+  // Custom section names currently in use (drives the group dropdown).
+  const sectionNames = Array.from(
+    new Set(
+      rows
+        .map((r) => (r.group !== "top" && r.group !== "settings" ? r.group : ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const chooseGroup = (i: number, value: string) => {
+    if (value !== NEW_GROUP) {
+      patch(i, { group: value });
+      return;
+    }
+    const raw = window.prompt(
+      "Name of the new section — it will show as a header in the sidebar (max " + GROUP_MAX + " characters):",
+    );
+    const name = (raw || "").trim().slice(0, GROUP_MAX);
+    if (!name) return; // cancelled or empty -> keep current group
+    const existing = sectionNames.find((g) => g.toLowerCase() === name.toLowerCase());
+    patch(i, { group: existing || name });
+    setStatus(
+      existing
+        ? `Item moved into the existing section “${existing}”.`
+        : `New section “${name}” created — move more items into it, then Save.`,
+    );
+  };
+
   const save = async () => {
     setBusy(true);
     setStatus("");
     try {
       const items: MenuConfigItem[] = rows.map((r) => ({
         id: r.id,
-        label: r.label,
+        label: r.custom ? r.label.trim() || "New menu item" : r.label,
         badge: r.badge,
         group: r.group,
         roles: r.roles,
+        ...(r.custom
+          ? {
+              custom: true as const,
+              kind: r.kind === "link" ? ("link" as const) : ("tab" as const),
+              target: r.target || "dashboard",
+            }
+          : {}),
       }));
       const res = await fetch("/api/menu-config", {
         method: "PUT",
@@ -97,6 +177,7 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
       onSaved(data.config);
+      setRows(buildRows(data.config));
       setStatus("Saved — the sidebar updates immediately on every device.");
     } catch (e: any) {
       setStatus("Error: " + (e?.message || e));
@@ -130,9 +211,17 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
             <h2 className="text-lg font-extrabold text-white tracking-tight">Menu Designer</h2>
             <p className="text-xs text-slate-400">
               Rename, reorder, regroup and control per-role visibility of every sidebar item.
+              Create your own sections and new menu entries, and give names up to {LABEL_MAX} characters.
               Changes apply to all devices on the network after Save.
             </p>
           </div>
+          <button
+            onClick={addItem}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 text-xs font-bold border border-sky-500/40 transition disabled:opacity-50"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add menu item
+          </button>
           <button
             onClick={reset}
             disabled={busy}
@@ -157,7 +246,14 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
 
       <div className="space-y-2">
         {rows.map((row, i) => (
-          <div key={row.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+          <div
+            key={row.id}
+            className={`rounded-xl border p-3 ${
+              row.custom
+                ? "border-sky-500/40 bg-sky-950/20"
+                : "border-slate-800 bg-slate-900/60"
+            }`}
+          >
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex flex-col gap-0.5">
                 <button onClick={() => move(i, -1)} disabled={i === 0} className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30" aria-label="Move up">
@@ -169,26 +265,84 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
               </div>
               <input
                 value={row.label}
-                maxLength={40}
+                maxLength={LABEL_MAX}
                 onChange={(e) => patch(i, { label: e.target.value })}
-                className="flex-1 min-w-[180px] rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-white focus:border-amber-500/60 outline-none"
+                className="flex-1 min-w-[260px] rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-white focus:border-amber-500/60 outline-none"
               />
               <input
                 value={row.badge}
-                maxLength={10}
-                placeholder="badge"
+                maxLength={BADGE_MAX}
+                placeholder={`badge (${BADGE_MAX})`}
                 onChange={(e) => patch(i, { badge: e.target.value })}
-                className="w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[11px] font-bold uppercase text-amber-400 focus:border-amber-500/60 outline-none"
+                className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[11px] font-bold uppercase text-amber-400 focus:border-amber-500/60 outline-none"
               />
               <select
                 value={row.group}
-                onChange={(e) => patch(i, { group: e.target.value as "top" | "settings" })}
-                className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
+                onChange={(e) => chooseGroup(i, e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none max-w-[220px]"
               >
                 <option value="top">Top level</option>
                 <option value="settings">Under General Settings</option>
+                {sectionNames.map((g) => (
+                  <option key={g} value={g}>
+                    Section: {g}
+                  </option>
+                ))}
+                <option value={NEW_GROUP}>➕ New section…</option>
               </select>
+              {row.custom && (
+                <button
+                  onClick={() => removeRow(i)}
+                  disabled={busy}
+                  className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 border border-rose-500/40 transition disabled:opacity-50"
+                  aria-label="Remove this menu item"
+                  title="Remove this menu item"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
+            {row.custom && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 pl-9">
+                <span className="rounded-full border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300">
+                  Custom
+                </span>
+                <select
+                  value={row.kind === "link" ? "link" : "tab"}
+                  onChange={(e) =>
+                    patch(i, {
+                      kind: e.target.value === "link" ? "link" : "tab",
+                      target: e.target.value === "link" ? "" : "dashboard",
+                    })
+                  }
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
+                >
+                  <option value="tab">Opens a screen</option>
+                  <option value="link">Opens a website (new tab)</option>
+                </select>
+                {row.kind === "link" ? (
+                  <input
+                    value={row.target}
+                    maxLength={500}
+                    placeholder="https://example.com"
+                    onChange={(e) => patch(i, { target: e.target.value })}
+                    className="flex-1 min-w-[220px] rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-sky-500/60 outline-none"
+                  />
+                ) : (
+                  <select
+                    value={MENU_REGISTRY.some((r) => r.id === row.target) ? row.target : "dashboard"}
+                    onChange={(e) => patch(i, { target: e.target.value })}
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none max-w-[260px]"
+                  >
+                    {MENU_REGISTRY.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-3 pl-9">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Visible for:</span>
               {allRoles().map((r) => (
@@ -205,6 +359,17 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-[11px] text-slate-400">
+        <Globe className="w-4 h-4 shrink-0 text-sky-400 mt-0.5" />
+        <p>
+          <span className="font-bold text-slate-300">Tips:</span> pick <b>➕ New section…</b> in the
+          placement dropdown to create your own sidebar section, then move more items into it.
+          Blue rows are entries you created yourself — they can open any screen or any website
+          (https) in a new tab, and can be deleted with the trash button. A section header only
+          appears for people who can see at least one item inside it.
+        </p>
       </div>
     </div>
   );

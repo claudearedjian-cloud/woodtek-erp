@@ -28,8 +28,9 @@ import {
   Warehouse as WarehouseIcon,
   Gauge,
   PackageCheck,
+  ExternalLink,
 } from "lucide-react";
-import { resolveMenu, type MenuConfig } from "@/lib/menuConfig";
+import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuConfig";
 import BrandMark from "@/components/BrandMark";
 
 const ICONS: Record<string, any> = {
@@ -89,13 +90,18 @@ export default function Sidebar({
   const isOperator = currentUser?.role === "Machine Operator";
 
   const renderItem = (
-    item: { id: string; label: string; badge: string },
+    item: ResolvedMenuItem,
     sub: boolean,
   ) => {
-    const Icon = ICONS[item.id] ?? Layers;
+    const isLink = item.kind === "link";
+    const navId = isLink ? "" : item.target || item.id; // custom entries navigate to their target tab
+    const Icon = isLink
+      ? ExternalLink
+      : ICONS[navId] ?? ICONS[item.id] ?? Layers;
     const isActive =
       activeTab === item.id ||
-      (activeTab.startsWith("order-") && item.id === "orders") ||
+      (!isLink && !!item.target && item.target !== item.id && activeTab === item.target) ||
+      (activeTab.startsWith("order-") && (item.id === "orders" || item.target === "orders")) ||
       (item.id === "settings" && resolved.settings.some((s) => s.id === activeTab));
     const cls = sub
       ? `relative w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] transition-all duration-150 ${
@@ -108,8 +114,42 @@ export default function Sidebar({
             ? "bg-gradient-to-r from-amber-500 to-amber-600 font-bold text-slate-950 shadow-lg shadow-amber-950/40"
             : "text-slate-300 hover:bg-slate-800/70 hover:text-white"
         }`;
-    return (
-      <button key={item.id} onClick={() => { setActiveTab(item.id); onClose(); }} className={cls}>
+    return isLink ? (
+      <a
+        key={item.id}
+        href={item.target || "#"}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onClose}
+        className={cls}
+      >
+        {!sub && isActive && (
+          <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-amber-400" />
+        )}
+        <div className={`flex min-w-0 flex-1 items-center ${sub ? "gap-2" : "gap-2.5"}`}>
+          <Icon
+            className={`${sub ? "h-4 w-4" : "h-5 w-5"} shrink-0 transition-transform group-hover:scale-110 ${
+              isActive ? (sub ? "text-amber-400" : "text-slate-950") : "text-slate-400 group-hover:text-amber-400"
+            }`}
+          />
+          <span className="truncate">{item.label}</span>
+        </div>
+        {item.badge && (
+          <span
+            className={`shrink-0 rounded-full font-bold uppercase ${
+              sub
+                ? "border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[9px] text-amber-400"
+                : isActive
+                  ? "bg-slate-950/25 px-2 py-0.5 text-[10px] text-slate-950"
+                  : "border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] text-amber-400"
+            }`}
+          >
+            {item.badge}
+          </span>
+        )}
+      </a>
+    ) : (
+      <button key={item.id} onClick={() => { setActiveTab(navId); onClose(); }} className={cls}>
         {!sub && isActive && (
           <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-amber-400" />
         )}
@@ -138,7 +178,10 @@ export default function Sidebar({
     );
   };
 
-  const empty = resolved.top.length === 0 && resolved.settings.length === 0;
+  const empty =
+    resolved.top.length === 0 &&
+    resolved.settings.length === 0 &&
+    resolved.sections.every((s) => s.items.length === 0);
 
   return (
     <aside className={`fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:relative md:translate-x-0 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
@@ -185,6 +228,19 @@ export default function Sidebar({
               )}
             </React.Fragment>
           ))
+        )}
+
+        {/* Menu Designer custom sections */}
+        {resolved.sections.map((sec) =>
+          sec.items.length > 0 ? (
+            <React.Fragment key={`sec-${sec.name}`}>
+              <div className="mx-1 mt-4 border-t border-slate-800/60 pt-3" />
+              <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-amber-500/80 truncate">
+                {sec.name}
+              </div>
+              {sec.items.map((item) => renderItem(item, false))}
+            </React.Fragment>
+          ) : null,
         )}
 
         <div className="mx-3 mt-5 border-t border-slate-800/80 pt-4" />

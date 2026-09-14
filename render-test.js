@@ -155,6 +155,46 @@ const foreman = renderToString(React.createElement(Sidebar, props("Foreman")));
 check(foreman.includes("Operator Station Mode"), "Sidebar renders for custom role");
 check(!foreman.includes("Orders &amp; Routing"), "Sidebar hides base-denied modules for custom role");
 
+// ---- Menu Designer capacity upgrade: 60-char labels, 20-char badges, custom sections + custom entries ----
+const LONG = "A".repeat(61);
+const cfgCap = {
+  version: 1,
+  items: [
+    { id: "custom-abc123", label: LONG, badge: "B".repeat(25), group: "Planning", custom: true, kind: "tab", target: "orders" },
+    { id: "reports", group: "Planning" },
+    { id: "schedule", group: "Planning" },
+    { id: "custom-link1", label: "Open PIMS Portal", custom: true, kind: "link", target: "https://pims.example.com" },
+    { id: "custom-bad1", label: "Evil", custom: true, kind: "link", target: "javascript:alert(1)" },
+  ],
+};
+const capMenu = menuCfg.resolveMenu("Manager", cfgCap);
+check(capMenu.sections.length === 1 && capMenu.sections[0].name === "Planning", "capacity: custom section resolved");
+check(capMenu.sections[0].items.map((i) => i.id).join("|") === "custom-abc123|reports|schedule", "capacity: section keeps configured order");
+check(capMenu.sections[0].items[0].label.length === 60, "capacity: label clamped to 60 chars");
+check(capMenu.sections[0].items[0].badge.length === 20, "capacity: badge clamped to 20 chars");
+check(capMenu.top.some((i) => i.id === "custom-link1" && i.kind === "link" && i.target === "https://pims.example.com"), "capacity: link entry resolves at top level");
+check(capMenu.top.some((i) => i.id === "custom-bad1" && i.kind === "tab" && i.target === "dashboard"), "capacity: javascript: URL forced to safe dashboard tab");
+
+const opCap = menuCfg.resolveMenu("Machine Operator", cfgCap);
+check(!opCap.sections.some((s) => s.items.some((i) => i.id === "custom-abc123")), "capacity: custom entry hidden from operator by default");
+check(!opCap.top.some((i) => i.id === "custom-link1"), "capacity: link entry hidden from operator by default");
+
+const ss = menuCfg.sanitizeMenuConfig({ items: [
+  { id: "custom-UPPER", label: "x" },
+  { id: "orders", label: "   " + "P".repeat(65) + "   ", group: "  Planning  " },
+  { id: "custom-ok1", label: "", custom: true, kind: "link", target: "http://ok.example.com/a" },
+]});
+check(!ss.items.some((i) => i.id === "custom-UPPER"), "capacity sanitize: invalid custom id dropped");
+const sOrd = ss.items.find((i) => i.id === "orders");
+check(!!sOrd && sOrd.label.length === 60 && sOrd.group === "Planning", "capacity sanitize: label trimmed+clamped, group trimmed");
+const sOk = ss.items.find((i) => i.id === "custom-ok1");
+check(!!sOk && sOk.label === "New menu item" && sOk.custom === true && sOk.kind === "link" && sOk.target === "http://ok.example.com/a", "capacity sanitize: blank custom label defaults, http link kept");
+
+const mgrCapSsr = renderToString(React.createElement(Sidebar, props("Manager", cfgCap)));
+check(mgrCapSsr.includes(">Planning<"), "capacity SSR: sidebar renders custom section header");
+check(mgrCapSsr.includes("A".repeat(60)), "capacity SSR: 60-char label shown");
+check(mgrCapSsr.includes("https://pims.example.com") && mgrCapSsr.includes('target="_blank"'), "capacity SSR: link entry renders as new-tab anchor");
+
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");
 const cats = mc.sanitizeCategories(["  Beam Saw ", "beam saw", "CNC", "", null, 42, "x".repeat(60)]);
