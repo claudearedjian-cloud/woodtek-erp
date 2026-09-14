@@ -72,6 +72,12 @@ exports.MODULES_BY_ROLE = {
         "workforce",
         "plant",
     ],
+    // Warehouse Supervisor lives in the warehouse: fulfilment board + stock.
+    "Warehouse Supervisor": [
+        "warehouse",
+        "inventory",
+        "workforce",
+    ],
     "QA & Dispatch": [
         "dashboard",
         "orders",

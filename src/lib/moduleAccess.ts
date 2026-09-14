@@ -93,6 +93,12 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "workforce",
     "plant",
   ],
+  // Warehouse Supervisor lives in the warehouse: fulfilment board + stock.
+  "Warehouse Supervisor": [
+    "warehouse",
+    "inventory",
+    "workforce",
+  ],
   "QA & Dispatch": [
     "dashboard",
     "orders",

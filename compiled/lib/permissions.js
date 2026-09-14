@@ -12,7 +12,7 @@ exports.baseRoleOf = baseRoleOf;
 exports.registerModuleOverrides = registerModuleOverrides;
 exports.getModuleOverrides = getModuleOverrides;
 exports.deniedMessage = deniedMessage;
-exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"];
+exports.ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "Warehouse Supervisor", "QA & Dispatch", "Technician"];
 /** Everything a signed-in user may do regardless of role. */
 const BASE_READ = [
     "orders:read",
@@ -71,6 +71,12 @@ const MATRIX = {
         "shifts:read", "attendance:read", "attendance:write",
         "quality:read", "quality:write",
         "downtime:read", "downtime:write",
+        "wip:read",
+    ],
+    "Warehouse Supervisor": [
+        ...BASE_READ,
+        "inventory:write", // prepare & send BOM lines, adjust stock
+        "shifts:read", "attendance:read", "attendance:write",
         "wip:read",
     ],
     "QA & Dispatch": [

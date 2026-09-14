@@ -43,7 +43,7 @@ export type Action =
   | "users:manage"
   | "admin:seed";
 
-export const ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"] as const;
+export const ROLES = ["Manager", "Sales Coordinator", "Machine Operator", "Floor Supervisor", "Warehouse Supervisor", "QA & Dispatch", "Technician"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Everything a signed-in user may do regardless of role. */
@@ -105,6 +105,12 @@ const MATRIX: Record<string, Action[]> = {
     "shifts:read", "attendance:read", "attendance:write",
     "quality:read", "quality:write",
     "downtime:read", "downtime:write",
+    "wip:read",
+  ],
+  "Warehouse Supervisor": [
+    ...BASE_READ,
+    "inventory:write",  // prepare & send BOM lines, adjust stock
+    "shifts:read", "attendance:read", "attendance:write",
     "wip:read",
   ],
   "QA & Dispatch": [

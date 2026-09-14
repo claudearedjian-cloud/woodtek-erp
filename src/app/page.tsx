@@ -166,6 +166,7 @@ export default function WoodTekERP() {
     setAuthCandidate(null);
     if (user.role === "Machine Operator") setActiveTab("station");
     if (user.role === "Floor Supervisor") setActiveTab("reception");
+    if (user.role === "Warehouse Supervisor") setActiveTab("warehouse");
     // Show the fullscreen welcome splash for this user
     setShowSplash(true);
     setHasShownSplash(true);
