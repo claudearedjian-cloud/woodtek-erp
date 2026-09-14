@@ -294,6 +294,11 @@ export default function WoodTekERP() {
           }}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
+          orders={orders}
+          customers={customers}
+          machinesList={machines}
+          onOpenOrder={handleSelectOrder}
+          onNavigate={(t: string) => setActiveTab(t)}
           currentUser={currentUser}
           bottleneckCount={dashboardData?.primaryBottleneck?.queueLength > 1 ? 1 : 0}
           lowStockCount={dashboardData?.lowStockItems?.length || 0}

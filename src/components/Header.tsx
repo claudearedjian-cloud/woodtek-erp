@@ -16,6 +16,11 @@ interface HeaderProps {
   onLock: () => void;
   onExit: () => void;
   canCreateOrder: boolean;
+  orders?: any[];
+  customers?: any[];
+  machinesList?: any[];
+  onOpenOrder?: (orderId: number) => void;
+  onNavigate?: (tab: string) => void;
 }
 
 export default function Header({
@@ -31,8 +36,44 @@ export default function Header({
   onLock,
   onExit,
   canCreateOrder,
+  orders = [],
+  customers = [],
+  machinesList = [],
+  onOpenOrder,
+  onNavigate,
 }: HeaderProps) {
   const [timeStr, setTimeStr] = useState("");
+  const [searchFocus, setSearchFocus] = useState(false);
+  const q = searchQuery.trim().toLowerCase();
+  const searchActive = q.length >= 2;
+  const orderHits = searchActive
+    ? orders
+        .filter((o: any) =>
+          [o.orderNumber, o.title, o.customerCompany, o.customerName].some((v) =>
+            String(v ?? "").toLowerCase().includes(q),
+          ),
+        )
+        .slice(0, 6)
+    : [];
+  const clientHits = searchActive
+    ? customers
+        .filter((c: any) => [c.name, c.company].some((v) => String(v ?? "").toLowerCase().includes(q)))
+        .slice(0, 4)
+    : [];
+  const machineHits = searchActive
+    ? machinesList
+        .filter((m: any) => [m.code, m.name, m.category].some((v) => String(v ?? "").toLowerCase().includes(q)))
+        .slice(0, 4)
+    : [];
+  const showSearchPanel =
+    searchActive && searchFocus && orderHits.length + clientHits.length + machineHits.length > 0;
+
+  const pickResult = (fn: () => void) => {
+    fn();
+    setSearchQuery("");
+    setSearchFocus(false);
+  };
+
   const [dbBusy, setDbBusy] = useState(false);
   const [dbModal, setDbModal] = useState<null | { kind: "backup" } | { kind: "restore"; file: string }>(null);
   const [dbPhase, setDbPhase] = useState<"confirm" | "working" | "done" | "error">("confirm");
@@ -178,11 +219,69 @@ export default function Header({
             placeholder="Search orders, clients, machines…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setSearchFocus(true)}
+            onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
             className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-1.5 pl-9 pr-12 text-xs text-white placeholder-slate-500 transition focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
           />
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400">
             /
           </kbd>
+          {showSearchPanel && (
+            <div className="absolute left-0 right-0 top-10 z-[90] max-h-96 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-2xl shadow-black/60">
+              {orderHits.length > 0 && (
+                <div className="px-2 pb-1 pt-1.5 text-[9px] font-black uppercase tracking-wider text-slate-500">Orders</div>
+              )}
+              {orderHits.map((o: any) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickResult(() => onOpenOrder?.(o.id))}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-800"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-[11px] font-black text-amber-400">{o.orderNumber}</span>
+                    <span className="block truncate text-[10px] font-semibold text-slate-300">
+                      {o.title} · {o.customerCompany || o.customerName || ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-black uppercase text-slate-400">{o.status}</span>
+                </button>
+              ))}
+              {clientHits.length > 0 && (
+                <div className="px-2 pb-1 pt-1.5 text-[9px] font-black uppercase tracking-wider text-slate-500">Clients</div>
+              )}
+              {clientHits.map((c: any) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickResult(() => onNavigate?.("customers"))}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-800"
+                >
+                  <span className="truncate text-[11px] font-bold text-white">{c.company || c.name}</span>
+                  <span className="shrink-0 text-[9px] font-black uppercase text-slate-500">client</span>
+                </button>
+              ))}
+              {machineHits.length > 0 && (
+                <div className="px-2 pb-1 pt-1.5 text-[9px] font-black uppercase tracking-wider text-slate-500">Machines</div>
+              )}
+              {machineHits.map((m: any) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickResult(() => onNavigate?.("machines"))}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-slate-800"
+                >
+                  <span className="truncate text-[11px] font-bold text-white">
+                    <span className="font-mono font-black text-sky-300">{m.code}</span> · {m.name}
+                  </span>
+                  <span className="shrink-0 text-[9px] font-black uppercase text-slate-500">{m.category}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Alert pill */}
