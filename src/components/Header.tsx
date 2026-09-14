@@ -34,18 +34,21 @@ export default function Header({
 }: HeaderProps) {
   const [timeStr, setTimeStr] = useState("");
   const [dbBusy, setDbBusy] = useState(false);
-  const [dbMsg, setDbMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [dbModal, setDbModal] = useState<null | { kind: "backup" } | { kind: "restore"; file: string }>(null);
+  const [dbPhase, setDbPhase] = useState<"confirm" | "working" | "done" | "error">("confirm");
+  const [dbResult, setDbResult] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [dumps, setDumps] = useState<{ file: string; sizeKb: number; at: number }[]>([]);
 
-  const flash = (kind: "ok" | "err", text: string) => {
-    setDbMsg({ kind, text });
-    setTimeout(() => setDbMsg(null), 6000);
+  const closeDbModal = () => {
+    if (dbPhase === "working") return; // never dismissible while running
+    setDbModal(null);
+    setDbPhase("confirm");
+    setDbResult("");
   };
 
-  const doBackup = async () => {
-    if (dbBusy) return;
-    if (!confirm("Create a database backup now?")) return;
+  const startBackup = async () => {
+    setDbPhase("working");
     setDbBusy(true);
     try {
       const res = await fetch("/api/admin/dbtools", {
@@ -55,9 +58,12 @@ export default function Header({
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || "Backup failed");
-      flash("ok", `Backup saved: ${d.file} (${d.sizeKb} KB)`);
+      setDbResult(`Backup saved: ${d.file} (${d.sizeKb} KB)`);
+      setDbPhase("done");
+      setTimeout(() => { setDbModal(null); setDbPhase("confirm"); setDbResult(""); }, 2600);
     } catch (e: any) {
-      flash("err", e?.message || "Backup failed");
+      setDbResult(e?.message || "Backup failed");
+      setDbPhase("error");
     }
     setDbBusy(false);
   };
@@ -75,13 +81,16 @@ export default function Header({
     }
   };
 
-  const doRestore = async (file: string) => {
-    if (dbBusy) return;
-    if (!confirm(`RESTORE ${file}?
-
-All current data will be REPLACED by this backup. The app reloads afterwards.`)) return;
-    setDbBusy(true);
+  const askRestore = (file: string) => {
     setShowRestore(false);
+    setDbPhase("confirm");
+    setDbResult("");
+    setDbModal({ kind: "restore", file });
+  };
+
+  const startRestore = async (file: string) => {
+    setDbPhase("working");
+    setDbBusy(true);
     try {
       const res = await fetch("/api/admin/dbtools", {
         method: "POST",
@@ -90,10 +99,12 @@ All current data will be REPLACED by this backup. The app reloads afterwards.`))
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || "Restore failed");
-      flash("ok", `Restored ${file} — reloading…`);
-      setTimeout(() => window.location.reload(), 1500);
+      setDbResult(`Database restored from ${file} — reloading…`);
+      setDbPhase("done");
+      setTimeout(() => window.location.reload(), 1800);
     } catch (e: any) {
-      flash("err", e?.message || "Restore failed");
+      setDbResult(e?.message || "Restore failed");
+      setDbPhase("error");
       setDbBusy(false);
     }
   };
@@ -189,7 +200,7 @@ All current data will be REPLACED by this backup. The app reloads afterwards.`))
         {currentUser?.role === "Manager" && (
           <div className="relative flex items-center gap-1.5">
             <button
-              onClick={doBackup}
+              onClick={() => { setDbPhase("confirm"); setDbResult(""); setDbModal({ kind: "backup" }); }}
               disabled={dbBusy}
               className={`${iconBtn} hover:border-emerald-500/50 hover:text-emerald-300 disabled:opacity-50`}
               title="Backup database"
@@ -222,7 +233,7 @@ All current data will be REPLACED by this backup. The app reloads afterwards.`))
                         </div>
                       </div>
                       <button
-                        onClick={() => doRestore(d.file)}
+                        onClick={() => askRestore(d.file)}
                         className="shrink-0 rounded-lg bg-amber-600 px-2 py-1 text-[10px] font-black text-white hover:bg-amber-500"
                       >
                         RESTORE
@@ -234,15 +245,99 @@ All current data will be REPLACED by this backup. The app reloads afterwards.`))
             )}
           </div>
         )}
-        {dbMsg && (
-          <div
-            className={`fixed left-1/2 top-16 z-[120] -translate-x-1/2 rounded-xl border px-4 py-2 text-xs font-black shadow-2xl ${
-              dbMsg.kind === "ok"
-                ? "border-emerald-500/50 bg-emerald-950 text-emerald-300"
-                : "border-rose-500/50 bg-rose-950 text-rose-300"
-            }`}
-          >
-            {dbMsg.text}
+        {dbModal && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+            <style>{`
+              @keyframes dbpop { 0% { transform: scale(.85); opacity: 0; } 60% { transform: scale(1.04); } 100% { transform: scale(1); opacity: 1; } }
+              @keyframes dbstripe { 0% { background-position: 0 0; } 100% { background-position: 28px 0; } }
+              @keyframes dbpulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+            `}</style>
+            <div
+              className="w-full max-w-md overflow-hidden rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/60"
+              style={{ animation: "dbpop .35s ease-out" }}
+            >
+              {dbPhase === "working" ? (
+                <div className="p-8 text-center">
+                  <div className="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-slate-700 border-t-amber-400" />
+                  <h3 className="mt-4 text-lg font-black text-white">
+                    {dbModal.kind === "backup" ? "Backing up database…" : "Restoring database…"}
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-400" style={{ animation: "dbpulse 1.4s ease-in-out infinite" }}>
+                    Please keep this window open — do not switch off the server.
+                  </p>
+                  <div
+                    className="mt-5 h-2.5 w-full rounded-full"
+                    style={{
+                      backgroundImage:
+                        "repeating-linear-gradient(45deg, rgba(251,191,36,.9) 0 10px, rgba(251,191,36,.35) 10px 20px)",
+                      backgroundSize: "28px 100%",
+                      animation: "dbstripe .8s linear infinite",
+                    }}
+                  />
+                </div>
+              ) : dbPhase === "done" ? (
+                <div className="p-8 text-center" style={{ animation: "dbpop .35s ease-out" }}>
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-4 border-emerald-500 bg-emerald-500/10">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  </div>
+                  <h3 className="mt-4 text-lg font-black text-emerald-300">Finished</h3>
+                  <p className="mt-1 break-all text-xs font-bold text-slate-300">{dbResult}</p>
+                </div>
+              ) : dbPhase === "error" ? (
+                <div className="p-8 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-4 border-rose-500 bg-rose-500/10">
+                    <svg viewBox="0 0 24 24" className="h-7 w-7 text-rose-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                  </div>
+                  <h3 className="mt-4 text-lg font-black text-rose-300">Failed</h3>
+                  <p className="mt-1 break-all text-xs font-bold text-slate-300">{dbResult}</p>
+                  <button
+                    onClick={closeDbModal}
+                    className="mt-5 rounded-xl bg-slate-800 px-5 py-2 text-xs font-black text-slate-200 hover:bg-slate-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <div className="p-7">
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border ${dbModal.kind === "backup" ? "border-emerald-500/40 bg-emerald-500/10" : "border-amber-500/40 bg-amber-500/10"}`}>
+                      {dbModal.kind === "backup" ? <DatabaseBackup className="h-5 w-5 text-emerald-300" /> : <ArchiveRestore className="h-5 w-5 text-amber-300" />}
+                    </div>
+                    <h3 className="text-base font-black text-white">
+                      {dbModal.kind === "backup" ? "Backup Database" : "Restore Database"}
+                    </h3>
+                  </div>
+                  <p className="mt-4 text-sm font-semibold text-slate-300">
+                    {dbModal.kind === "backup"
+                      ? "Are you sure you want to backup the database? A full snapshot will be saved on the server."
+                      : `Are you sure you want to restore the database from ${dbModal.file}? ALL current data will be replaced by this backup.`}
+                  </p>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      onClick={closeDbModal}
+                      className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-black text-slate-300 hover:bg-slate-700"
+                    >
+                      Cancel
+                    </button>
+                    {dbModal.kind === "backup" ? (
+                      <button
+                        onClick={startBackup}
+                        className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-black text-white shadow-lg shadow-emerald-950/50 hover:bg-emerald-500"
+                      >
+                        Yes, Backup
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => startRestore(dbModal.file)}
+                        className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-black text-white shadow-lg shadow-amber-950/50 hover:bg-amber-500"
+                      >
+                        Yes, Restore
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
