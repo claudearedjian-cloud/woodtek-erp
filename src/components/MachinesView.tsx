@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { baseRoleOf } from "@/lib/permissions";
+import { baseRoleOf, can } from "@/lib/permissions";
 import { 
   Cpu, 
   Plus, 
@@ -16,7 +16,8 @@ import {
   Trash2,
   X,
   Filter,
-  Activity
+  Activity,
+  Pencil
 } from "lucide-react";
 
 interface MachinesViewProps {
@@ -25,6 +26,7 @@ interface MachinesViewProps {
   onRefresh: () => void;
   users: any[];
   onSelectOrder: (orderId: number) => void;
+  currentUser?: any;
 }
 
 export default function MachinesView({
@@ -33,9 +35,13 @@ export default function MachinesView({
   onRefresh,
   users = [],
   onSelectOrder,
+  currentUser,
 }: MachinesViewProps) {
+  // Full add/edit/delete is a Manager power on the Shop Floor Monitor.
+  const canManage = currentUser?.role === "Manager";
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editMachineId, setEditMachineId] = useState<number | null>(null);
   
   // New machine state
   const [name, setName] = useState("");
@@ -91,33 +97,68 @@ export default function MachinesView({
     }
   };
 
+  const openAddModal = () => {
+    setEditMachineId(null);
+    setName("");
+    setCode("");
+    setCategory(categoryList[0] || "CNC Router");
+    setHourlyCost("75.00");
+    setLocation("Bay A - Milling Cell");
+    setAssignedOperatorId(users[0]?.id || "");
+    setNotes("");
+    setShowAddModal(true);
+  };
+
+  const openEditModal = (m: any) => {
+    setEditMachineId(m.id);
+    setName(m.name || "");
+    setCode(m.code || "");
+    setCategory(m.category || "CNC Router");
+    setHourlyCost(m.hourlyCost != null ? String(m.hourlyCost) : "75.00");
+    setLocation(m.location || "");
+    setAssignedOperatorId(m.assignedOperatorId ?? "");
+    setNotes(m.notes || "");
+    setShowAddModal(true);
+  };
+
+  const closeModal = () => {
+    setShowAddModal(false);
+    setEditMachineId(null);
+  };
+
   const handleCreateMachine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !code) return;
+    const payload = {
+      name,
+      code,
+      category,
+      hourlyCost,
+      location,
+      assignedOperatorId: assignedOperatorId ? Number(assignedOperatorId) : null,
+      notes,
+    };
     try {
-      const res = await fetch("/api/machines", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          code,
-          category,
-          hourlyCost,
-          location,
-          assignedOperatorId: assignedOperatorId ? Number(assignedOperatorId) : null,
-          notes,
-          status: "Active"
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to add machine");
-      setShowAddModal(false);
+      const res = editMachineId != null
+        ? await fetch(`/api/machines/${editMachineId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch("/api/machines", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, status: "Active" }),
+          });
+      if (!res.ok) throw new Error(editMachineId != null ? "Failed to update machine" : "Failed to add machine");
+      closeModal();
       setName("");
       setCode("");
       setNotes("");
       onRefresh();
     } catch (err) {
-      console.error("Failed to create machine", err);
-      alert("Error registering machine. Code must be unique.");
+      console.error("Failed to save machine", err);
+      alert(editMachineId != null ? "Error updating machine. Code must be unique." : "Error registering machine. Code must be unique.");
     }
   };
 
@@ -171,13 +212,15 @@ export default function MachinesView({
           ))}
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2 rounded-xl shadow-lg shadow-blue-600/20 transition text-xs whitespace-nowrap"
-        >
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>Register Machine</span>
-        </button>
+        {canManage && (
+          <button
+            onClick={openAddModal}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2 rounded-xl shadow-lg shadow-blue-600/20 transition text-xs whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>Register Machine</span>
+          </button>
+        )}
       </div>
 
       {/* Machine Cards Grid */}
@@ -299,13 +342,24 @@ export default function MachinesView({
                   </select>
                 </div>
 
-                <button
-                  onClick={() => handleDeleteMachine(m.id, m.name)}
-                  className="p-1.5 hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 rounded-lg transition"
-                  title="Remove Equipment"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {canManage && (
+                  <button
+                    onClick={() => openEditModal(m)}
+                    className="p-1.5 hover:bg-blue-500/20 text-slate-600 hover:text-blue-400 rounded-lg transition"
+                    title="Edit Machine"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+                {canManage && (
+                  <button
+                    onClick={() => handleDeleteMachine(m.id, m.name)}
+                    className="p-1.5 hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 rounded-lg transition"
+                    title="Remove Equipment"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -319,9 +373,9 @@ export default function MachinesView({
             <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Cpu className="w-5 h-5 text-blue-400" />
-                <span>Register Shop Floor Machine</span>
+                <span>{editMachineId != null ? "Edit Shop Floor Machine" : "Register Shop Floor Machine"}</span>
               </h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={closeModal} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -414,7 +468,7 @@ export default function MachinesView({
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={closeModal}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition"
                 >
                   Cancel
@@ -423,7 +477,7 @@ export default function MachinesView({
                   type="submit"
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition"
                 >
-                  Register Station
+                  {editMachineId != null ? "Save Changes" : "Register Station"}
                 </button>
               </div>
             </form>

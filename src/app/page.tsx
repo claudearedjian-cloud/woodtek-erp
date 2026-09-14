@@ -320,7 +320,7 @@ export default function WoodTekERP() {
             <OrderWorkflowDetail orderId={Number(activeTab.split("-")[1])} onBack={() => setActiveTab("orders")}
               onRefresh={fetchAllData} currentUser={currentUser} machines={machines} inventoryItems={inventory} />
           )}
-          {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={fetchAllData} users={users} onSelectOrder={handleSelectOrder} />}
+          {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={fetchAllData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={fetchAllData} />}
