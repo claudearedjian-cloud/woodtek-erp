@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power } from "lucide-react";
+import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore } from "lucide-react";
 
 interface HeaderProps {
   activeTab: string;
@@ -33,6 +33,70 @@ export default function Header({
   canCreateOrder,
 }: HeaderProps) {
   const [timeStr, setTimeStr] = useState("");
+  const [dbBusy, setDbBusy] = useState(false);
+  const [dbMsg, setDbMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [showRestore, setShowRestore] = useState(false);
+  const [dumps, setDumps] = useState<{ file: string; sizeKb: number; at: number }[]>([]);
+
+  const flash = (kind: "ok" | "err", text: string) => {
+    setDbMsg({ kind, text });
+    setTimeout(() => setDbMsg(null), 6000);
+  };
+
+  const doBackup = async () => {
+    if (dbBusy) return;
+    if (!confirm("Create a database backup now?")) return;
+    setDbBusy(true);
+    try {
+      const res = await fetch("/api/admin/dbtools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "backup" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Backup failed");
+      flash("ok", `Backup saved: ${d.file} (${d.sizeKb} KB)`);
+    } catch (e: any) {
+      flash("err", e?.message || "Backup failed");
+    }
+    setDbBusy(false);
+  };
+
+  const openRestore = async () => {
+    const next = !showRestore;
+    setShowRestore(next);
+    if (!next) return;
+    try {
+      const r = await fetch("/api/admin/dbtools", { cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      setDumps(Array.isArray(d.dumps) ? d.dumps : []);
+    } catch {
+      setDumps([]);
+    }
+  };
+
+  const doRestore = async (file: string) => {
+    if (dbBusy) return;
+    if (!confirm(`RESTORE ${file}?
+
+All current data will be REPLACED by this backup. The app reloads afterwards.`)) return;
+    setDbBusy(true);
+    setShowRestore(false);
+    try {
+      const res = await fetch("/api/admin/dbtools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore", file }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Restore failed");
+      flash("ok", `Restored ${file} — reloading…`);
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e: any) {
+      flash("err", e?.message || "Restore failed");
+      setDbBusy(false);
+    }
+  };
 
   useEffect(() => {
     const updateTime = () => {
@@ -119,6 +183,66 @@ export default function Header({
               {bottleneckCount > 0 && lowStockCount > 0 ? " · " : ""}
               {lowStockCount > 0 ? `${lowStockCount} low stock` : ""}
             </span>
+          </div>
+        )}
+
+        {currentUser?.role === "Manager" && (
+          <div className="relative flex items-center gap-1.5">
+            <button
+              onClick={doBackup}
+              disabled={dbBusy}
+              className={`${iconBtn} hover:border-emerald-500/50 hover:text-emerald-300 disabled:opacity-50`}
+              title="Backup database"
+            >
+              <DatabaseBackup className="h-4 w-4" />
+            </button>
+            <button
+              onClick={openRestore}
+              disabled={dbBusy}
+              className={`${iconBtn} hover:border-amber-500/50 hover:text-amber-300 disabled:opacity-50`}
+              title="Restore database"
+            >
+              <ArchiveRestore className="h-4 w-4" />
+            </button>
+            {showRestore && (
+              <div className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
+                <div className="px-1 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Restore database from backup
+                </div>
+                {dumps.length === 0 && (
+                  <div className="px-1 pb-1 text-xs text-slate-500 italic">No database backups yet — use the backup button first.</div>
+                )}
+                <div className="max-h-64 overflow-y-auto space-y-0.5">
+                  {dumps.map((d) => (
+                    <div key={d.file} className="flex items-center justify-between gap-2 rounded-lg px-1.5 py-1 hover:bg-slate-800">
+                      <div className="min-w-0">
+                        <div className="truncate text-[11px] font-bold text-slate-200">{d.file}</div>
+                        <div className="text-[9px] text-slate-500">
+                          {d.sizeKb} KB · {new Date(d.at).toLocaleString()}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => doRestore(d.file)}
+                        className="shrink-0 rounded-lg bg-amber-600 px-2 py-1 text-[10px] font-black text-white hover:bg-amber-500"
+                      >
+                        RESTORE
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {dbMsg && (
+          <div
+            className={`fixed left-1/2 top-16 z-[120] -translate-x-1/2 rounded-xl border px-4 py-2 text-xs font-black shadow-2xl ${
+              dbMsg.kind === "ok"
+                ? "border-emerald-500/50 bg-emerald-950 text-emerald-300"
+                : "border-rose-500/50 bg-rose-950 text-rose-300"
+            }`}
+          >
+            {dbMsg.text}
           </div>
         )}
 
