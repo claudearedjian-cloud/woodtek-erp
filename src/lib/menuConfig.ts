@@ -15,6 +15,28 @@ export const LABEL_MAX = 60;
 export const BADGE_MAX = 20;
 export const GROUP_MAX = 30;
 
+// Allowlist of icon keys a menu item / section header may use. The visual
+// (lucide component) for each key lives in src/lib/menuIcons.ts — kept apart
+// so this file stays import-safe from server routes. "" = automatic icon
+// (the target screen's own icon). Keys are validated at the edges.
+export const MENU_ICON_KEYS: string[] = [
+  // built-in screens (keep today's automatic look available explicitly)
+  "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "machines",
+  "cmms", "downtime", "quality", "workforce", "station", "customers",
+  "inventory", "pims", "reports", "settings", "designer", "warehouse",
+  "reception", "plant",
+  // generic factory/office icons for custom entries
+  "box", "boxes", "hammer", "wrench", "truck", "hard-hat", "clipboard-check",
+  "archive", "banknote", "receipt", "bar-chart", "line-chart", "pie-chart",
+  "target", "timer", "clock", "shield", "star", "home", "building", "factory",
+  "globe", "link", "tag", "ruler", "scissors", "armchair", "sofa", "drill",
+  "paint-roller", "paintbrush", "door-open", "lamp", "forklift", "pen-tool",
+  "sparkle",
+];
+
+const isIconKey = (v: unknown): v is string =>
+  typeof v === "string" && MENU_ICON_KEYS.includes(v);
+
 export interface MenuRegistryItem {
   id: string; // tab id used by page.tsx
   label: string; // default label
@@ -53,6 +75,7 @@ export interface MenuConfigItem {
   label?: string;
   badge?: string;
   group?: string; // "top" | "settings" | a custom section name
+  icon?: string; // MENU_ICON_KEYS entry; ""/absent = automatic
   roles?: Record<string, boolean>; // per-role visibility overrides
   // Designer-created entries only (id starts with "custom-"):
   custom?: true;
@@ -62,18 +85,22 @@ export interface MenuConfigItem {
 export interface MenuConfig {
   version: 1;
   items: MenuConfigItem[];
+  landing?: Record<string, string>; // role -> first screen after login (tab id)
+  sectionIcons?: Record<string, string>; // custom section name -> icon key
 }
 
 export interface ResolvedMenuItem {
   id: string;
   label: string;
   badge: string;
+  icon?: string; // set when the config pins a specific icon
   kind?: "tab" | "link"; // present on designer-created entries
   target?: string; // where the entry navigates
 }
 
 export interface ResolvedSection {
   name: string;
+  icon?: string;
   items: ResolvedMenuItem[];
 }
 
@@ -139,6 +166,7 @@ export function resolveMenu(
     ...MENU_REGISTRY.map((r) => r.id).filter((id) => !byId.has(id)),
   ];
   const canSeeSettings = canAccessModule(role, "settings");
+  const sectionIconsRaw = config?.sectionIcons ?? {};
   const top: ResolvedMenuItem[] = [];
   const settings: ResolvedMenuItem[] = [];
   const sections: ResolvedSection[] = [];
@@ -155,6 +183,7 @@ export function resolveMenu(
       label: (cfg?.label ?? reg?.label ?? "New menu item").slice(0, LABEL_MAX),
       badge: (cfg?.badge ?? reg?.badge ?? "").slice(0, BADGE_MAX),
     };
+    if (isIconKey(cfg?.icon)) item.icon = cfg.icon;
     if (isCustomId(id)) {
       const nav = safeCustomNav(cfg);
       item.kind = nav.kind;
@@ -172,7 +201,9 @@ export function resolveMenu(
       // Custom named section, created by the Menu Designer.
       let sec = sectionByName.get(group);
       if (!sec) {
+        const secIcon = sectionIconsRaw[group];
         sec = { name: group, items: [] };
+        if (isIconKey(secIcon)) sec.icon = secIcon;
         sectionByName.set(group, sec);
         sections.push(sec);
       }
@@ -182,12 +213,25 @@ export function resolveMenu(
   return { top, settings, sections };
 }
 
+// Landing tab per role: returns the configured screen only when the role may
+// actually open it (double-check at read time — the JSON file is editable by
+// hand). Null = use the built-in factory behaviour.
+export function getLandingTab(
+  role: string | null | undefined,
+  config: MenuConfig | null | undefined,
+): string | null {
+  if (!role) return null;
+  const tab = config?.landing?.[role];
+  if (!tab || !MENU_REGISTRY.some((r) => r.id === tab)) return null;
+  return canAccessModule(role, moduleFor(tab)) ? tab : null;
+}
+
 // Server-side sanitisation for PUT bodies: drop unknown ids, clamp strings,
 // validate roles/groups/targets, keep the given order.
 const CUSTOM_ID_RE = /^custom-[a-z0-9-]{1,40}$/;
 
 export function sanitizeMenuConfig(body: unknown): MenuConfig {
-  const raw = body as { items?: unknown } | null;
+  const raw = body as { items?: unknown; landing?: unknown; sectionIcons?: unknown } | null;
   const src = Array.isArray(raw?.items) ? (raw!.items as unknown[]) : [];
   const seen = new Set<string>();
   const items: MenuConfigItem[] = [];
@@ -206,6 +250,7 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
       item.label = "New menu item";
     }
     if (typeof e.badge === "string") item.badge = e.badge.trim().slice(0, BADGE_MAX);
+    if (isIconKey(e.icon)) item.icon = e.icon;
     if (typeof e.group === "string" && e.group.trim()) {
       item.group = e.group.trim().slice(0, GROUP_MAX);
     }
@@ -233,5 +278,28 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
     }
     items.push(item);
   }
-  return { version: 1, items };
+  const config: MenuConfig = { version: 1, items };
+  // Per-role landing screens: only roles that exist and tabs they may open.
+  if (raw?.landing && typeof raw.landing === "object") {
+    const landing: Record<string, string> = {};
+    for (const r of allRoles()) {
+      const v = (raw.landing as Record<string, unknown>)[r];
+      if (typeof v === "string" && MENU_REGISTRY.some((x) => x.id === v)) {
+        if (canAccessModule(r, moduleFor(v))) landing[r] = v;
+      }
+    }
+    if (Object.keys(landing).length) config.landing = landing;
+  }
+  // Custom section header icons.
+  if (raw?.sectionIcons && typeof raw.sectionIcons === "object") {
+    const sectionIcons: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw.sectionIcons as Record<string, unknown>)) {
+      const name = k.trim().slice(0, GROUP_MAX);
+      if (!name || name === "top" || name === "settings") continue;
+      if (isIconKey(v)) sectionIcons[name] = v;
+      if (Object.keys(sectionIcons).length >= 20) break;
+    }
+    if (Object.keys(sectionIcons).length) config.sectionIcons = sectionIcons;
+  }
+  return config;
 }

@@ -28,7 +28,7 @@ import PimsImportView from "@/components/PimsImportView";
 import FullscreenSplash from "@/components/FullscreenSplash";
 import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
-import type { MenuConfig } from "@/lib/menuConfig";
+import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 
 export default function WoodTekERP() {
@@ -169,7 +169,12 @@ export default function WoodTekERP() {
       "Floor Supervisor": "reception",
       "Warehouse Supervisor": "warehouse",
     };
-    const landing = LANDING_TAB[user.role];
+    // Menu Designer override wins (checked for the display role, then the
+    // base role); built-in factory behaviour is the fallback.
+    const landing =
+      getLandingTab(user.displayRole || user.role, menuConfig) ??
+      getLandingTab(user.role, menuConfig) ??
+      LANDING_TAB[user.role];
     if (landing) {
       setActiveTab(landing);
     } else if (activeTab === "station" || activeTab === "reception") {
@@ -223,6 +228,32 @@ export default function WoodTekERP() {
     if (o && /^\d+$/.test(o)) setActiveTab(`order-${Number(o)}`);
   }, []);
 
+  // Keyboard shortcuts: Ctrl+K (or Cmd+K) and "/" focus the global search;
+  // Escape while the search is focused dismisses it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.getElementById("woodtek-global-search") as HTMLInputElement | null;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      } else if (e.key === "/" && !(e.ctrlKey || e.metaKey || e.altKey)) {
+        const t = e.target as HTMLElement | null;
+        const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t?.isContentEditable;
+        if (!typing && el) {
+          e.preventDefault();
+          el.focus();
+        }
+      } else if (e.key === "Escape" && el && document.activeElement === el) {
+        el.blur();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const handleSelectOrder = (orderId: number) => {
     setActiveTab(`order-${orderId}`);
     setSidebarOpen(false);
@@ -257,10 +288,13 @@ export default function WoodTekERP() {
         "Warehouse Supervisor": "warehouse",
       };
       const first = listModulesForRole(guardRole)[0];
-      const fallback = LANDING[guardRole] ?? (first === "operator" ? "station" : first ?? "station");
+      const configured =
+        getLandingTab(guardRole, menuConfig) ?? getLandingTab(currentUser.role, menuConfig);
+      const fallback =
+        configured ?? LANDING[guardRole] ?? (first === "operator" ? "station" : first ?? "station");
       setActiveTab(fallback);
     }
-  }, [currentUser, activeTab]);
+  }, [currentUser, activeTab, menuConfig]);
 
   return (
     <div className="app-bg flex h-screen text-slate-100 font-sans overflow-hidden antialiased">

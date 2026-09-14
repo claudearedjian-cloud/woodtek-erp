@@ -216,15 +216,22 @@ export default function Header({
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
+            id="woodtek-global-search"
             placeholder="Search orders, clients, machines…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                if (searchQuery) setSearchQuery("");
+                else (e.target as HTMLInputElement).blur();
+              }
+            }}
             onFocus={() => setSearchFocus(true)}
             onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
             className="w-full rounded-lg border border-slate-700/80 bg-slate-950/70 py-1.5 pl-9 pr-12 text-xs text-white placeholder-slate-500 transition focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
           />
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400">
-            /
+            Ctrl K
           </kbd>
           {showSearchPanel && (
             <div className="absolute left-0 right-0 top-10 z-[90] max-h-96 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-2xl shadow-black/60">

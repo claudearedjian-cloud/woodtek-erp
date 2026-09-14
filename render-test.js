@@ -27,6 +27,7 @@ compile("src/lib/moduleAccess.ts", "lib/moduleAccess.js");
 compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
+compile("src/lib/menuIcons.ts", "lib/menuIcons.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -194,6 +195,51 @@ const mgrCapSsr = renderToString(React.createElement(Sidebar, props("Manager", c
 check(mgrCapSsr.includes(">Planning<"), "capacity SSR: sidebar renders custom section header");
 check(mgrCapSsr.includes("A".repeat(60)), "capacity SSR: 60-char label shown");
 check(mgrCapSsr.includes("https://pims.example.com") && mgrCapSsr.includes('target="_blank"'), "capacity SSR: link entry renders as new-tab anchor");
+
+// ---- Landing tabs, icon picker, section icons ----
+const iconsMod = require("./compiled/lib/menuIcons.js");
+const iconKeySet = new Set(menuCfg.MENU_ICON_KEYS);
+const choiceKeySet = new Set(iconsMod.MENU_ICON_CHOICES.map((c) => c.key));
+check(
+  iconKeySet.size === menuCfg.MENU_ICON_KEYS.length &&
+    [...iconKeySet].every((k) => choiceKeySet.has(k)) &&
+    choiceKeySet.size === iconsMod.MENU_ICON_CHOICES.length,
+  "icons: MENU_ICON_KEYS and MENU_ICON_CHOICES are in sync (no dupes)",
+);
+
+const cfgNav = {
+  version: 1,
+  items: [
+    { id: "quality", icon: "hammer", group: "Planning" },
+    { id: "reports", icon: "not-an-icon" },
+    { id: "custom-ico1", label: "Board", custom: true, kind: "tab", target: "wip", icon: "boxes" },
+  ],
+  landing: {
+    Manager: "reports",
+    "Machine Operator": "orders", // operator cannot open orders -> must drop
+    "Ghost Role": "dashboard",     // unknown role -> must drop
+  },
+  sectionIcons: { Planning: "target", top: "hammer" },
+};
+const sanNav = menuCfg.sanitizeMenuConfig(cfgNav);
+check(sanNav.items.find((i) => i.id === "quality").icon === "hammer", "icons sanitize: valid icon kept");
+check(!sanNav.items.find((i) => i.id === "reports").icon, "icons sanitize: unknown icon dropped");
+check(sanNav.items.find((i) => i.id === "custom-ico1").icon === "boxes", "icons sanitize: custom entry icon kept");
+check(sanNav.landing && sanNav.landing.Manager === "reports", "landing sanitize: allowed role+tab kept");
+check(!sanNav.landing || !sanNav.landing["Machine Operator"], "landing sanitize: tab the role cannot open dropped");
+check(!sanNav.landing || !sanNav.landing["Ghost Role"], "landing sanitize: unknown role dropped");
+check(sanNav.sectionIcons && sanNav.sectionIcons.Planning === "target", "sectionIcons sanitize: valid kept");
+check(!sanNav.sectionIcons || !sanNav.sectionIcons.top, "sectionIcons sanitize: reserved name dropped");
+
+check(menuCfg.getLandingTab("Manager", sanNav) === "reports", "landing: configured tab returned for manager");
+check(menuCfg.getLandingTab("Manager", null) === null, "landing: no config -> null (factory behaviour)");
+check(menuCfg.getLandingTab("Machine Operator", { version: 1, items: [], landing: { "Machine Operator": "orders" } }) === null, "landing: hand-edited forbidden tab refused at read time");
+
+const resNav = menuCfg.resolveMenu("Manager", sanNav);
+check(resNav.sections.length === 1 && resNav.sections[0].icon === "target", "icons: section header icon resolved");
+check(resNav.top.concat(...resNav.sections.map((s) => s.items)).find((i) => i.id === "quality").icon === "hammer", "icons: item icon resolved");
+const ssrNav = renderToString(React.createElement(Sidebar, props("Manager", sanNav)));
+check(ssrNav.includes("Board"), "icons SSR: sidebar renders with pinned icons (no crash)");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

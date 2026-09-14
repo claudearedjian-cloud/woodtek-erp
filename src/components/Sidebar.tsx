@@ -29,6 +29,41 @@ import {
   Gauge,
   PackageCheck,
   ExternalLink,
+  Box,
+  Boxes,
+  Hammer,
+  Wrench,
+  Drill,
+  Ruler,
+  Scissors,
+  PaintRoller,
+  Paintbrush,
+  Armchair,
+  Sofa,
+  Lamp,
+  DoorOpen,
+  Forklift,
+  Truck,
+  HardHat,
+  ClipboardCheck,
+  Archive,
+  Banknote,
+  Receipt,
+  BarChart3,
+  LineChart,
+  PieChart,
+  Target,
+  Timer,
+  Clock,
+  Star,
+  Home,
+  Building2,
+  Factory,
+  Globe,
+  Link as LinkIcon,
+  Tag,
+  PenTool,
+  Sparkle,
 } from "lucide-react";
 import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuConfig";
 import BrandMark from "@/components/BrandMark";
@@ -55,6 +90,45 @@ const ICONS: Record<string, any> = {
   warehouse: WarehouseIcon,
   reception: PackageCheck,
   plant: Gauge,
+  // Icon-picker palette (keys validated by MENU_ICON_KEYS in menuConfig.ts)
+  box: Box,
+  boxes: Boxes,
+  hammer: Hammer,
+  wrench: Wrench,
+  drill: Drill,
+  ruler: Ruler,
+  scissors: Scissors,
+  "paint-roller": PaintRoller,
+  paintbrush: Paintbrush,
+  armchair: Armchair,
+  sofa: Sofa,
+  lamp: Lamp,
+  "door-open": DoorOpen,
+  forklift: Forklift,
+  truck: Truck,
+  "hard-hat": HardHat,
+  "clipboard-check": ClipboardCheck,
+  archive: Archive,
+  banknote: Banknote,
+  receipt: Receipt,
+  "bar-chart": BarChart3,
+  "line-chart": LineChart,
+  "pie-chart": PieChart,
+  target: Target,
+  timer: Timer,
+  clock: Clock,
+  shield: ShieldCheck,
+  star: Star,
+  home: Home,
+  building: Building2,
+  factory: Factory,
+  globe: Globe,
+  link: LinkIcon,
+  tag: Tag,
+  "pen-tool": PenTool,
+  sparkle: Sparkle,
+  "external-link": ExternalLink,
+  layers: Layers,
 };
 
 interface SidebarProps {
@@ -96,8 +170,8 @@ export default function Sidebar({
     const isLink = item.kind === "link";
     const navId = isLink ? "" : item.target || item.id; // custom entries navigate to their target tab
     const Icon = isLink
-      ? ExternalLink
-      : ICONS[navId] ?? ICONS[item.id] ?? Layers;
+      ? ICONS[item.icon ?? ""] ?? ExternalLink
+      : ICONS[item.icon ?? ""] ?? ICONS[navId] ?? ICONS[item.id] ?? Layers;
     const isActive =
       activeTab === item.id ||
       (!isLink && !!item.target && item.target !== item.id && activeTab === item.target) ||
@@ -235,8 +309,12 @@ export default function Sidebar({
           sec.items.length > 0 ? (
             <React.Fragment key={`sec-${sec.name}`}>
               <div className="mx-1 mt-4 border-t border-slate-800/60 pt-3" />
-              <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-amber-500/80 truncate">
-                {sec.name}
+              <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-amber-500/80 truncate flex items-center gap-1.5">
+                {(() => {
+                  const SecIcon = ICONS[sec.icon ?? ""] ?? Layers;
+                  return <SecIcon className="h-3.5 w-3.5 shrink-0 text-amber-500/80" />;
+                })()}
+                <span className="truncate">{sec.name}</span>
               </div>
               {sec.items.map((item) => renderItem(item, false))}
             </React.Fragment>
