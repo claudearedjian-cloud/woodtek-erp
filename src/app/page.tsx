@@ -164,9 +164,18 @@ export default function WoodTekERP() {
     setCurrentUser(user);
     setAuthOpen(false);
     setAuthCandidate(null);
-    if (user.role === "Machine Operator") setActiveTab("station");
-    if (user.role === "Floor Supervisor") setActiveTab("reception");
-    if (user.role === "Warehouse Supervisor") setActiveTab("warehouse");
+    const LANDING_TAB: Record<string, string> = {
+      "Machine Operator": "station",
+      "Floor Supervisor": "reception",
+      "Warehouse Supervisor": "warehouse",
+    };
+    const landing = LANDING_TAB[user.role];
+    if (landing) {
+      setActiveTab(landing);
+    } else if (activeTab === "station" || activeTab === "reception") {
+      // Never strand a non-station role on the touchscreen / reception boards.
+      setActiveTab("dashboard");
+    }
     // Show the fullscreen welcome splash for this user
     setShowSplash(true);
     setHasShownSplash(true);
@@ -239,11 +248,17 @@ export default function WoodTekERP() {
     // previous profile after a user switch — "reception" stuck on a warehouse
     // user would otherwise render a screen that is not theirs).
     if (!m || !canAccessModule(guardRole, m)) {
-      // Bounce to the first module this role may actually see — never to a
-      // module they cannot access (the old hardcoded "dashboard" would stall
-      // roles that no longer have dashboard access, e.g. Machine Operator).
-      const fallback = listModulesForRole(guardRole)[0];
-      setActiveTab(fallback === "operator" ? "station" : fallback ?? "station");
+      // Bounce to the role's landing tab when it has one (operator -> station,
+      // warehouse supervisor -> warehouse, floor supervisor -> reception);
+      // otherwise the first module this role may actually see.
+      const LANDING: Record<string, string> = {
+        "Machine Operator": "station",
+        "Floor Supervisor": "reception",
+        "Warehouse Supervisor": "warehouse",
+      };
+      const first = listModulesForRole(guardRole)[0];
+      const fallback = LANDING[guardRole] ?? (first === "operator" ? "station" : first ?? "station");
+      setActiveTab(fallback);
     }
   }, [currentUser, activeTab]);
 
