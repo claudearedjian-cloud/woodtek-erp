@@ -34,6 +34,7 @@ compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
+compile("src/lib/idle.ts", "lib/idle.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -368,6 +369,27 @@ check(i18n.tt("ar", "Some random UI string") === "Some random UI string", "i18n:
 const ssrAr = renderToString(React.createElement(Sidebar, props("Manager", null, "ar")));
 check(ssrAr.includes("\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629"), "i18n SSR: Arabic sidebar menu labels");
 check(ssrAr.includes("\u0627\u0644\u0637\u0644\u0628\u0627\u062a \u0648\u0627\u0644\u062a\u0648\u062c\u064a\u0647"), "i18n SSR: Arabic Orders & Routing label");
+
+// ---- auto-lock on idle ----
+const idl = require("./compiled/lib/idle.js");
+check(idl.normalizeIdleMinutes("banana") === 15, "idle: garbage falls back to 15 min");
+check(idl.normalizeIdleMinutes(7) === 15, "idle: off-grid value falls back to default");
+check(idl.normalizeIdleMinutes("30") === 30, "idle: numeric string accepted");
+check(idl.normalizeIdleMinutes(0) === 0, "idle: 0 (never) is a legal choice");
+const base = Date.now();
+const s1 = idl.idleState(15, base - 13 * 60000, base);
+check(s1.enabled && !s1.warn && !s1.lock && s1.remainingSec === 120, "idle: 13 of 15 min -> quiet, 2 min left");
+const s2 = idl.idleState(15, base - 14 * 60000 - 15 * 1000, base);
+check(s2.warn && !s2.lock && s2.remainingSec === 45, "idle: inside the last minute -> warning, 45s left");
+const s3 = idl.idleState(15, base - 16 * 60000, base);
+check(s3.lock && !s3.warn && s3.remainingSec === 0, "idle: past the threshold -> lock");
+const s4 = idl.idleState(0, base - 9 * 3600 * 1000, base);
+check(!s4.enabled && !s4.lock, "idle: never-mode never locks");
+const s5 = idl.idleState(5, base, base);
+check(s5.remainingSec === 300 && !s5.warn, "idle: fresh activity -> full countdown, no warning");
+const fakeStorage = { getItem: (k) => (k === idl.IDLE_STORAGE_KEY ? "5" : null) };
+check(idl.loadIdleMinutes(fakeStorage) === 5, "idle: reads the per-device setting from storage");
+check(idl.loadIdleMinutes({ getItem: () => null }) === 15, "idle: missing setting -> default");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

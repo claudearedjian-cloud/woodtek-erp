@@ -85,6 +85,7 @@ const AR = {
     "Cancel": "إلغاء",
     "Select profile": "اختر الحساب",
     "PIN": "الرمز",
+    "Auto-lock soon — move the mouse to stay signed in": "قفل تلقائي قريباً — حرّك الفأرة للبقاء مسجلاً",
 };
 const FR = {
     // --- sidebar menu defaults ---
@@ -134,6 +135,7 @@ const FR = {
     "Cancel": "Annuler",
     "Select profile": "Choisir le profil",
     "PIN": "Code",
+    "Auto-lock soon — move the mouse to stay signed in": "Verrouillage bientôt — bougez la souris pour rester connecté",
 };
 const DICTS = { ar: AR, fr: FR };
 /**

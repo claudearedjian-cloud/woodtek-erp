@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore, Languages } from "lucide-react";
+import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore, Languages, HardDriveDownload } from "lucide-react";
 import { LANG_LABELS, tt, type Lang } from "@/lib/i18n";
 
 interface HeaderProps {
@@ -81,11 +81,12 @@ export default function Header({
   };
 
   const [dbBusy, setDbBusy] = useState(false);
-  const [dbModal, setDbModal] = useState<null | { kind: "backup" } | { kind: "restore"; file: string }>(null);
+  const [dbModal, setDbModal] = useState<null | { kind: "backup" | "full" | "restore" | "full-restore"; file?: string }>(null);
   const [dbPhase, setDbPhase] = useState<"confirm" | "working" | "done" | "error">("confirm");
   const [dbResult, setDbResult] = useState("");
   const [showRestore, setShowRestore] = useState(false);
   const [dumps, setDumps] = useState<{ file: string; sizeKb: number; at: number }[]>([]);
+  const [fulls, setFulls] = useState<{ dir: string; sizeKb: number; dataFiles: number; at: number }[]>([]);
 
   const closeDbModal = () => {
     if (dbPhase === "working") return; // never dismissible while running
@@ -115,6 +116,27 @@ export default function Header({
     setDbBusy(false);
   };
 
+  const startFullBackup = async () => {
+    setDbPhase("working");
+    setDbBusy(true);
+    try {
+      const res = await fetch("/api/admin/dbtools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "full-backup" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Full backup failed");
+      setDbResult(`FULL backup saved: ${d.dir} (DB + ${d.files} files, ${d.sizeKb} KB)`);
+      setDbPhase("done");
+      setTimeout(() => { setDbModal(null); setDbPhase("confirm"); setDbResult(""); }, 3200);
+    } catch (e: any) {
+      setDbResult(e?.message || "Full backup failed");
+      setDbPhase("error");
+    }
+    setDbBusy(false);
+  };
+
   const openRestore = async () => {
     const next = !showRestore;
     setShowRestore(next);
@@ -123,8 +145,10 @@ export default function Header({
       const r = await fetch("/api/admin/dbtools", { cache: "no-store" });
       const d = await r.json().catch(() => ({}));
       setDumps(Array.isArray(d.dumps) ? d.dumps : []);
+      setFulls(Array.isArray(d.fulls) ? d.fulls : []);
     } catch {
       setDumps([]);
+      setFulls([]);
     }
   };
 
@@ -133,6 +157,34 @@ export default function Header({
     setDbPhase("confirm");
     setDbResult("");
     setDbModal({ kind: "restore", file });
+  };
+
+  const askFullRestore = (dir: string) => {
+    setShowRestore(false);
+    setDbPhase("confirm");
+    setDbResult("");
+    setDbModal({ kind: "full-restore", file: dir });
+  };
+
+  const startFullRestore = async (dir: string) => {
+    setDbPhase("working");
+    setDbBusy(true);
+    try {
+      const res = await fetch("/api/admin/dbtools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "full-restore", dir }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Full restore failed");
+      setDbResult(`FULLY restored from ${dir} — reloading…`);
+      setDbPhase("done");
+      setTimeout(() => window.location.reload(), 1800);
+    } catch (e: any) {
+      setDbResult(e?.message || "Full restore failed");
+      setDbPhase("error");
+      setDbBusy(false);
+    }
   };
 
   const startRestore = async (file: string) => {
@@ -320,6 +372,14 @@ export default function Header({
               <DatabaseBackup className="h-4 w-4" />
             </button>
             <button
+              onClick={() => { setDbPhase("confirm"); setDbResult(""); setDbModal({ kind: "full" }); }}
+              disabled={dbBusy}
+              className={`${iconBtn} hover:border-sky-500/50 hover:text-sky-300 disabled:opacity-50`}
+              title="FULL system backup (database + settings files)"
+            >
+              <HardDriveDownload className="h-4 w-4" />
+            </button>
+            <button
               onClick={openRestore}
               disabled={dbBusy}
               className={`${iconBtn} hover:border-amber-500/50 hover:text-amber-300 disabled:opacity-50`}
@@ -330,7 +390,31 @@ export default function Header({
             {showRestore && (
               <div className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
                 <div className="px-1 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  Restore database from backup
+                  FULL system (database + settings files)
+                </div>
+                {fulls.length === 0 && (
+                  <div className="px-1 pb-1 text-xs text-slate-500 italic">No full backups yet — blue button.</div>
+                )}
+                <div className="max-h-40 overflow-y-auto space-y-0.5">
+                  {fulls.map((f) => (
+                    <div key={f.dir} className="flex items-center justify-between gap-2 rounded-lg px-1.5 py-1 hover:bg-slate-800">
+                      <div className="min-w-0">
+                        <div className="truncate text-[11px] font-bold text-sky-300">{f.dir}</div>
+                        <div className="text-[9px] text-slate-500">
+                          {f.sizeKb} KB · DB + {f.dataFiles} files · {new Date(f.at).toLocaleString()}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => askFullRestore(f.dir)}
+                        className="shrink-0 rounded-lg bg-sky-600 px-2 py-1 text-[10px] font-black text-white hover:bg-sky-500"
+                      >
+                        RESTORE ALL
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-1 pb-1 pt-2 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Database only
                 </div>
                 {dumps.length === 0 && (
                   <div className="px-1 pb-1 text-xs text-slate-500 italic">No database backups yet — use the backup button first.</div>
@@ -372,7 +456,13 @@ export default function Header({
                 <div className="p-8 text-center">
                   <div className="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-slate-700 border-t-amber-400" />
                   <h3 className="mt-4 text-lg font-black text-white">
-                    {dbModal.kind === "backup" ? "Backing up database…" : "Restoring database…"}
+                    {dbModal.kind === "backup"
+                      ? "Backing up database…"
+                      : dbModal.kind === "full"
+                        ? "Backing up EVERYTHING (database + files)…"
+                        : dbModal.kind === "full-restore"
+                          ? "Restoring EVERYTHING (database + files)…"
+                          : "Restoring database…"}
                   </h3>
                   <p className="mt-1 text-xs text-slate-400" style={{ animation: "dbpulse 1.4s ease-in-out infinite" }}>
                     Please keep this window open — do not switch off the server.
@@ -416,13 +506,23 @@ export default function Header({
                       {dbModal.kind === "backup" ? <DatabaseBackup className="h-5 w-5 text-emerald-300" /> : <ArchiveRestore className="h-5 w-5 text-amber-300" />}
                     </div>
                     <h3 className="text-base font-black text-white">
-                      {dbModal.kind === "backup" ? "Backup Database" : "Restore Database"}
+                      {dbModal.kind === "backup"
+                      ? "Backup Database"
+                      : dbModal.kind === "full"
+                        ? "FULL System Backup"
+                        : dbModal.kind === "full-restore"
+                          ? "FULL System Restore"
+                          : "Restore Database"}
                     </h3>
                   </div>
                   <p className="mt-4 text-sm font-semibold text-slate-300">
                     {dbModal.kind === "backup"
                       ? "Are you sure you want to backup the database? A full snapshot will be saved on the server."
-                      : `Are you sure you want to restore the database from ${dbModal.file}? ALL current data will be replaced by this backup.`}
+                      : dbModal.kind === "full"
+                        ? "FULL system backup: the database AND every settings file (client ledgers, receptions, dispatch stages, audit log, menu, roles…) will be saved together in C:\\WoodTekBackups\\full."
+                        : dbModal.kind === "full-restore"
+                          ? `Restore EVERYTHING (database + settings files) from ${dbModal.file}? ALL current data will be replaced by this backup.`
+                          : `Are you sure you want to restore the database from ${dbModal.file}? ALL current data will be replaced by this backup.`}
                   </p>
                   <div className="mt-6 flex justify-end gap-3">
                     <button
@@ -431,7 +531,21 @@ export default function Header({
                     >
                       Cancel
                     </button>
-                    {dbModal.kind === "backup" ? (
+                    {dbModal.kind === "full" ? (
+                      <button
+                        onClick={startFullBackup}
+                        className="rounded-xl bg-sky-600 px-5 py-2.5 text-xs font-black text-white transition hover:bg-sky-500"
+                      >
+                        Yes, backup everything
+                      </button>
+                    ) : dbModal.kind === "full-restore" ? (
+                      <button
+                        onClick={() => startFullRestore(dbModal.file || "")}
+                        className="rounded-xl bg-sky-600 px-5 py-2.5 text-xs font-black text-white transition hover:bg-sky-500"
+                      >
+                        Yes, restore everything
+                      </button>
+                    ) : dbModal.kind === "backup" ? (
                       <button
                         onClick={startBackup}
                         className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-black text-white shadow-lg shadow-emerald-950/50 hover:bg-emerald-500"
@@ -440,7 +554,7 @@ export default function Header({
                       </button>
                     ) : (
                       <button
-                        onClick={() => startRestore(dbModal.file)}
+                        onClick={() => startRestore(dbModal.file || "")}
                         className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-black text-white shadow-lg shadow-amber-950/50 hover:bg-amber-500"
                       >
                         Yes, Restore

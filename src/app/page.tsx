@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import AuthGate from "@/components/AuthGate";
@@ -30,6 +30,7 @@ import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
 import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
+import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 
 export default function WoodTekERP() {
@@ -71,6 +72,34 @@ export default function WoodTekERP() {
   const [lang, setLang] = useState<Lang>("en");
   useEffect(() => { setLang(loadSavedLang()); }, []);
   const changeLang = (l: Lang) => { setLang(l); saveLang(l); };
+
+  // ---- Auto-lock on idle (per-device minutes in localStorage) ----
+  // Any pointer/key activity refreshes the timestamp; a 5s timer checks
+  // whether to show the "locking soon" banner or lock the workspace.
+  const lastActivityRef = useRef<number>(Date.now());
+  const lockWorkspaceRef = useRef<(() => void) | null>(null);
+  const [idleWarnSec, setIdleWarnSec] = useState<number | null>(null);
+
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+    const bump = () => { lastActivityRef.current = Date.now(); };
+    const events: (keyof WindowEventMap)[] = ["pointerdown", "mousemove", "keydown", "wheel", "touchstart"];
+    for (const e of events) window.addEventListener(e, bump, { passive: true });
+    const timer = setInterval(() => {
+      if (!currentUser || authOpen) { setIdleWarnSec(null); return; }
+      const st = idleState(loadIdleMinutes(), lastActivityRef.current, Date.now());
+      if (st.lock) {
+        setIdleWarnSec(null);
+        lockWorkspaceRef.current?.();
+      } else {
+        setIdleWarnSec(st.warn ? st.remainingSec : null);
+      }
+    }, 5000);
+    return () => {
+      for (const e of events) window.removeEventListener(e, bump);
+      clearInterval(timer);
+    };
+  }, [currentUser, authOpen]);
   const [demoMode, setDemoMode] = useState(false);
   // Show the fullscreen welcome splash when a user signs in.
   // It closes once the dashboard finishes loading.
@@ -214,6 +243,7 @@ export default function WoodTekERP() {
     setHasShownSplash(false);
     await fetchRoster();
   };
+  lockWorkspaceRef.current = lockWorkspace;
 
   const exitApp = async () => {
     // Confirm first - signing out + closing the window is destructive
@@ -311,6 +341,15 @@ export default function WoodTekERP() {
 
   return (
     <div className="app-bg flex h-screen text-slate-100 font-sans overflow-hidden antialiased">
+      {idleWarnSec != null && (
+        <button
+          onClick={() => { lastActivityRef.current = Date.now(); setIdleWarnSec(null); }}
+          className="fixed left-1/2 top-3 z-[200] -translate-x-1/2 rounded-xl border border-amber-500/50 bg-slate-900/95 px-4 py-2 text-xs font-black text-amber-300 shadow-2xl backdrop-blur"
+          title="Tap to cancel the auto-lock now"
+        >
+          ⏳ {idleWarnSec <= IDLE_WARN_SEC ? Math.ceil(idleWarnSec) : IDLE_WARN_SEC}s — auto-lock soon. Move the mouse or tap here to stay signed in.
+        </button>
+      )}
       {showSplash && currentUser && (
         <FullscreenSplash
           user={currentUser}

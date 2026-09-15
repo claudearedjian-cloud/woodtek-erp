@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
+import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
+import { Timer } from "lucide-react";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -55,6 +57,18 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     address: "",
     creditLimit: "15000.00",
   });
+
+  // ---- auto-lock this device (everyone; stored per device) ----
+  const [idleMins, setIdleMins] = useState<number>(() => loadIdleMinutes());
+  const changeIdleMins = (v: number) => {
+    const mins = normalizeIdleMinutes(v);
+    setIdleMins(mins);
+    try {
+      localStorage.setItem(IDLE_STORAGE_KEY, String(mins));
+    } catch {
+      /* private mode */
+    }
+  };
 
   // ---- audit log (Manager-only trail of who did what) ----
   const isManager = currentUser?.role === "Manager";
@@ -650,6 +664,30 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       )}
 
       {/* Modal Form */}
+      {/* Auto-lock this device */}
+      <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-sm font-black text-white">
+            <Timer className="h-4 w-4 text-emerald-400" /> Auto-lock this device
+          </h3>
+          <select
+            value={idleMins}
+            onChange={(e) => changeIdleMins(Number(e.target.value))}
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white outline-none"
+          >
+            {IDLE_CHOICES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+          After that much time without mouse or keyboard activity, the app locks and asks for the PIN again —
+          a warning appears 60 seconds before. This setting applies to THIS computer only.
+        </p>
+      </div>
+
       {/* Audit log (Manager only) */}
       {isManager && (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
