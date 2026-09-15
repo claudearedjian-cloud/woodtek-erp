@@ -31,6 +31,7 @@ import {
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { readMachineOperators } from "@/lib/machineOperators.server";
 import type { SessionUser } from "@/lib/auth";
+import { baseRoleOf } from "@/lib/permissions";
 
 // -------------------------------------------------------------------- types
 
@@ -190,6 +191,11 @@ async function allowedMachineIdsSubquery(user: SessionUser) {
   }
   if (user.role === "Technician") {
     // Technicians see all machines (CMMS responsibility)
+    return undefined;
+  }
+  // Floor Supervisors (and custom roles based on them) assign machines to
+  // steps, so they need the full machine list like the Manager.
+  if (user.role === "Floor Supervisor" || baseRoleOf(user.role) === "Floor Supervisor") {
     return undefined;
   }
   // Sales, QA: no machine access
