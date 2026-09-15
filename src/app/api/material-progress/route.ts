@@ -10,7 +10,6 @@
 // ============================================================================
 
 import { NextResponse } from "next/server";
-import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
@@ -18,27 +17,8 @@ import { orderMaterials, orderOperations } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
-import { STAGE_DONE, allowedStages, sanitizeProgressMap, sanitizeStage } from "@/lib/materialProgress";
-
-function fileLocation(): string {
-  const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
-  return path.join(dir, "material-progress.json");
-}
-
-function readAll(): Record<string, { stage: string; at: string; by: string }> {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    return sanitizeProgressMap(parsed?.progress);
-  } catch {
-    return {};
-  }
-}
-
-function writeAll(progress: Record<string, { stage: string; at: string; by: string }>): void {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, progress }, null, 2), "utf8");
-}
+import { STAGE_DONE, allowedStages, sanitizeStage, stageLadder } from "@/lib/materialProgress";
+import { readAllProgress, writeAllProgress } from "@/lib/materialProgress.server";
 
 function canSetStage(role: string): boolean {
   return (
@@ -64,7 +44,7 @@ export async function GET(request: Request) {
       .select({ id: orderMaterials.id })
       .from(orderMaterials)
       .where(eq(orderMaterials.orderId, orderId));
-    const all = readAll();
+    const all = readAllProgress();
     const progress: Record<string, { stage: string; at: string; by: string }> = {};
     for (const line of lines) {
       const hit = all[String(line.id)];
@@ -85,7 +65,6 @@ export async function PUT(request: Request) {
   try {
     const body = await request.json();
     const materialId = Number(body?.orderMaterialsId);
-    const stage = sanitizeStage(body?.stage);
     if (!Number.isInteger(materialId) || materialId <= 0) {
       return NextResponse.json({ error: "A valid orderMaterialsId is required." }, { status: 400 });
     }
@@ -96,7 +75,25 @@ export async function PUT(request: Request) {
     if (!line) {
       return NextResponse.json({ error: "This material line no longer exists." }, { status: 404 });
     }
-    const all = readAll();
+    let stage: string;
+    if (body?.advance === true) {
+      // One-tap "finished here" from the operator station: the server picks
+      // the NEXT ladder position — the client cannot send a wrong stage.
+      const ops = await db
+        .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+        .from(orderOperations)
+        .where(eq(orderOperations.orderId, line.orderId));
+      const ladder = stageLadder(ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
+      const current = readAllProgress()[String(materialId)]?.stage ?? "";
+      const idx = ladder.indexOf(sanitizeStage(current));
+      if (idx === -1 || idx >= ladder.length - 1) {
+        return NextResponse.json({ error: "This material is already at the last stage." }, { status: 409 });
+      }
+      stage = ladder[idx + 1];
+    } else {
+      stage = sanitizeStage(body?.stage);
+    }
+    const all = readAllProgress();
     // The rule: a material moves ONE stage at a time along the order's steps —
     // no jumping to Edge Banding before Cutting, no straight to Done early.
     const ops = await db
@@ -116,7 +113,7 @@ export async function PUT(request: Request) {
     }
     const entry = { stage, at: new Date().toISOString(), by: user.name || user.role };
     all[String(materialId)] = entry;
-    writeAll(all);
+    writeAllProgress(all);
     logAudit(
       user,
       "material.stage",

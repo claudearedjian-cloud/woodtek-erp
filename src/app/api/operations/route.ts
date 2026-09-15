@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orderOperations, orders, machines, users } from "@/db/schema";
-import { eq, asc, desc, not } from "drizzle-orm";
+import { orderOperations, orders, machines, users, orderMaterials, inventoryItems } from "@/db/schema";
+import { eq, asc, desc, not, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { readAllProgress } from "@/lib/materialProgress.server";
 
 export async function GET(request: Request) {
   const { error: authError } = await authorize("orders:read");
@@ -56,7 +57,33 @@ export async function GET(request: Request) {
       filtered = filtered.filter(o => o.status === "Ready" || o.status === "In Progress" || o.status === "Rejected/Rework");
     }
 
-    return NextResponse.json(filtered);
+    // Attach the order's materials with their live production stage so the
+    // operator station can show the process per material ("cutting by material").
+    const orderIds = Array.from(new Set(filtered.map((o) => o.orderId).filter((id): id is number => typeof id === "number")));
+    let materialsByOrder = new Map<number, any[]>();
+    if (orderIds.length > 0) {
+      const [mats, progress] = await Promise.all([
+        db
+          .select({
+            id: orderMaterials.id,
+            orderId: orderMaterials.orderId,
+            itemName: inventoryItems.name,
+            itemSku: inventoryItems.sku,
+            itemUnit: inventoryItems.unit,
+            quantityUsed: orderMaterials.quantityUsed,
+          })
+          .from(orderMaterials)
+          .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
+          .where(inArray(orderMaterials.orderId, orderIds)),
+        Promise.resolve(readAllProgress()),
+      ]);
+      for (const m of mats) {
+        const list = materialsByOrder.get(m.orderId) ?? [];
+        list.push({ ...m, stage: progress[String(m.id)]?.stage ?? "" });
+        materialsByOrder.set(m.orderId, list);
+      }
+    }
+    return NextResponse.json(filtered.map((o) => ({ ...o, materials: materialsByOrder.get(o.orderId) ?? [] })));
   } catch (error: any) {
     console.error("GET operations error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch shop floor operations" }, { status: 500 });

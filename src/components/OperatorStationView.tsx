@@ -303,6 +303,21 @@ export default function OperatorStationView({
     });
   };
 
+  // One tap: "this material is finished on THIS step" — the server picks
+  // the next ladder stage (never a skip). Best-effort; the queue refetches.
+  const advanceMaterial = async (materialId: number) => {
+    try {
+      await fetch("/api/material-progress", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderMaterialsId: materialId, advance: true }),
+      });
+      await fetchMachineQueue();
+    } catch {
+      /* ignore */
+    }
+  };
+
   // C4 — finish requires a second tap within 3s
   const handleFinishTap = (op: any) => {
     if (confirmingFinishId === op.id) {
@@ -603,6 +618,40 @@ export default function OperatorStationView({
                       {(op.customerCompany || op.customerName) && (
                         <div className="text-base font-black text-amber-300 truncate">
                           Client: {op.customerCompany || op.customerName}
+                        </div>
+                      )}
+                      {(op.materials?.length ?? 0) > 0 && (
+                        <div className="mt-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                          <div className="mb-1.5 text-[10px] font-black uppercase tracking-wider text-slate-500">Materials on this step — live progress</div>
+                          <div className="space-y-1.5">
+                            {op.materials.map((mat: any) => {
+                              const mStage: string = mat.stage ?? "";
+                              const atThisStep = mStage === op.operationName;
+                              const mDone = mStage === "DONE";
+                              const mWaiting = !mDone && !atThisStep;
+                              return (
+                                <div key={mat.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <span className="min-w-0 truncate font-bold text-slate-200">
+                                    <span className="font-mono text-amber-400">{mat.itemSku ?? "\u2014"}</span> \u00b7 {mat.itemName} \u00d7 {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
+                                  </span>
+                                  <span className="flex items-center gap-1.5">
+                                    <span className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
+                                      mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
+                                    }`}>{mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${op.operationName}` : "Waiting"}</span>
+                                    {atThisStep && isRunning && !lockedByMate && (
+                                      <button
+                                        onClick={() => advanceMaterial(mat.id)}
+                                        className="rounded-lg bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-300 hover:bg-emerald-500/25 active:scale-95 transition"
+                                        title="Finished working this material on this step — it moves to the next stage"
+                                      >
+                                        \u2713 Finished here
+                                      </button>
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
 
