@@ -12,3 +12,4 @@ src-current.txt
 woodtek-source.txt
 start-prod.v1.cjs
 next-env.d.ts
+compiled/

@@ -13,6 +13,7 @@ exports.digestTotalIssues = digestTotalIssues;
 exports.EMPTY_DIGEST = {
     date: "",
     overdue: [],
+    staleQuotes: [],
     dueSoon: [],
     materials: [],
     warehousePending: [],
@@ -46,6 +47,7 @@ function digestToLines(d, maxPerSection = 8) {
             lines.push(`  …and ${items.length - maxPerSection} more`);
     };
     section("OVERDUE ORDERS", d.overdue.map(shortOrder));
+    section("STALE QUOTES - FOLLOW UP", d.staleQuotes.map((q) => `${q.orderNumber} ${q.customerCompany ?? ""} ${q.title ?? ""} - quote is ${q.daysOld} days old`.replace(/\s+/g, " ")));
     section("DUE WITHIN 7 DAYS", d.dueSoon.map(shortOrder));
     section("MATERIALS FLAGGED BY THE FLOOR", d.materials.map((m) => `${m.orderNumber} · ${m.title ?? ""} — ${m.state}`.replace(" ·  — ", " — ")));
     section("WAREHOUSE LINES NOT FULLY SENT", d.warehousePending.map((w) => `${w.orderNumber} · ${w.title ?? ""} — ${w.pending}/${w.total} line(s) open`));
@@ -60,6 +62,7 @@ function digestSectionCount(d, key) {
 }
 function digestTotalIssues(d) {
     return (d.overdue.length +
+        d.staleQuotes.length +
         d.materials.length +
         d.machinesDown.length +
         d.serviceDue.length +

@@ -153,6 +153,7 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { label: "Overdue", items: digest.overdue, tab: "orders", tone: "text-rose-300" },
+              { label: "Stale quotes", items: digest.staleQuotes, tab: "orders", tone: "text-amber-300" },
               { label: "Due 7 days", items: digest.dueSoon, tab: "orders", tone: "text-amber-300" },
               { label: "Materials flagged", items: digest.materials, tab: "reception", tone: "text-amber-300" },
               { label: "Warehouse pending", items: digest.warehousePending, tab: "warehouse", tone: "text-sky-300" },
@@ -187,7 +188,7 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
                             ? `${(sec.items[0] as any).orderNumber} · ${(sec.items[0] as any).pending}/${(sec.items[0] as any).total}`
                             : sec.label === "Materials flagged"
                               ? `${(sec.items[0] as any).orderNumber} · ${(sec.items[0] as any).state}`
-                              : `${(sec.items[0] as any).orderNumber}${(sec.items[0] as any).daysLate ? ` · ${(sec.items[0] as any).daysLate}d late` : ""}`}
+                              : `${(sec.items[0] as any).orderNumber}${(sec.items[0] as any).daysLate ? ` · ${(sec.items[0] as any).daysLate}d late` : (sec.items[0] as any).daysOld ? ` · ${(sec.items[0] as any).daysOld}d old` : ""}`}
                   </div>
                 )}
               </button>

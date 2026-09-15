@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
+import { QUOTE_STRINGS, type Lang } from "@/lib/i18n";
 import autoTable from "jspdf-autotable";
 import { can } from "@/lib/permissions";
 
@@ -56,6 +57,7 @@ export default function OrderWorkflowDetail({
   const [actionError, setActionError] = useState("");
   const [busyOperationId, setBusyOperationId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"workflow" | "materials" | "details">("workflow");
+  const [quoteLangOpen, setQuoteLangOpen] = useState(false);
 
   // BOM Allocator state
   const [allocItemId, setAllocItemId] = useState<string>("");
@@ -245,9 +247,70 @@ export default function OrderWorkflowDetail({
     w.print();
   };
 
-  // Branded client-facing quotation PDF built from the order, its BOM and its routing.
-  const generateQuotation = () => {
+  // Branded client-facing quotation built from the order, its BOM and its
+  // routing. English/French download straight as a PDF; Arabic opens a print
+  // window instead - the browser shapes and right-aligns Arabic properly
+  // (jsPDF's built-in fonts cannot).
+  const openArabicQuotation = () => {
     if (!order) return;
+    const materials: any[] = order.materials ?? [];
+    const costed = materials.filter((m: any) => m.costPerUnit != null);
+    const materialsTotal = costed.reduce((s: number, m: any) => s + (m.quantityUsed || 0) * parseFloat(m.costPerUnit || "0"), 0);
+    const quoted = Number(order.totalValue || 0);
+    const productionValue = Math.max(0, quoted - materialsTotal);
+    const ops: any[] = order.operations ?? [];
+    const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+    const rows = costed.map((m: any) =>
+      `<tr><td>${esc(m.itemName ?? "")}</td><td class="n">${esc(m.quantityUsed ?? 0)}</td><td>${esc(m.itemUnit ?? "")}</td><td class="n">${parseFloat(m.costPerUnit || "0").toFixed(2)} $</td><td class="n">${((m.quantityUsed || 0) * parseFloat(m.costPerUnit || "0")).toFixed(2)} $</td></tr>`,
+    ).join("");
+    const opRows = ops.map((o: any, i: number) =>
+      `<tr><td class="n">${esc(o.stepOrder ?? i + 1)}</td><td>${esc(o.operationName ?? "")}</td><td>${esc(o.machineName || o.machineCode || "—")}</td><td class="n">${((o.estimatedMinutes || 0) / 60).toFixed(1)}</td></tr>`,
+    ).join("");
+    const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>عرض سعر ${esc(order.orderNumber)}</title>
+<style>
+  body { font-family: "Segoe UI", Tahoma, Arial, sans-serif; color:#0f172a; margin:24px; }
+  .band { background:#0f172a; color:#f59e0b; padding:18px 20px; border-bottom:4px solid #f59e0b; display:flex; justify-content:space-between; align-items:center; }
+  .band h1 { margin:0; font-size:24px; letter-spacing:1px; } .band .q { color:#fff; font-size:18px; font-weight:700; }
+  .band small { display:block; color:#cbd5e1; font-weight:400; }
+  h2 { font-size:15px; margin:26px 0 6px; } table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { background:#1e293b; color:#f59e0b; padding:6px 8px; text-align:right; } td { border:1px solid #e2e8f0; padding:5px 8px; }
+  .n { text-align:center; font-family:monospace; }
+  .meta { margin-top:14px; font-size:12px; color:#475569; } .meta b { color:#0f172a; }
+  .totals { margin:20px 0 0 auto; width:300px; background:#f8fafc; border:1px solid #e2e8f0; padding:10px 12px; font-size:13px; }
+  .totals .row { display:flex; justify-content:space-between; padding:2px 0; }
+  .totals .grand { font-weight:800; color:#b45309; font-size:15px; border-top:1px solid #cbd5e1; margin-top:6px; padding-top:6px; }
+  .terms { margin-top:18px; font-size:11px; color:#64748b; } .foot { margin-top:24px; font-size:10px; color:#94a3b8; }
+</style></head><body>
+<div class="band"><div><h1>WOODTEK</h1><small>${esc(QUOTE_STRINGS.ar.tagline)}</small></div><div class="q">${esc(QUOTE_STRINGS.ar.quotation)}<br><small style="color:#cbd5e1">QT-${esc(order.orderNumber)}</small></div></div>
+<div class="meta"><b>${esc(QUOTE_STRINGS.ar.billTo)}:</b> ${esc(order.customerCompany || order.customerName || "—")}${order.customerName && order.customerCompany ? ` — ${esc(QUOTE_STRINGS.ar.attn)} ${esc(order.customerName)}` : ""}<br>
+<b>${esc(QUOTE_STRINGS.ar.date)}:</b> ${new Date().toLocaleDateString()} &nbsp;·&nbsp; <b>${esc(QUOTE_STRINGS.ar.due)}:</b> ${order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"} &nbsp;·&nbsp; <b>${esc(QUOTE_STRINGS.ar.category)}:</b> ${esc(order.projectType || "—")} &nbsp;·&nbsp; <b>${esc(QUOTE_STRINGS.ar.reference)}:</b> ${esc(order.orderNumber)}</div>
+<h2>${esc(order.title || "")}</h2>
+${costed.length > 0 ? `<table><thead><tr><th>${esc(QUOTE_STRINGS.ar.material)}</th><th>${esc(QUOTE_STRINGS.ar.qty)}</th><th>${esc(QUOTE_STRINGS.ar.unit)}</th><th>${esc(QUOTE_STRINGS.ar.unitCost)}</th><th>${esc(QUOTE_STRINGS.ar.amount)}</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><thead><tr><th>#</th><th>${esc(QUOTE_STRINGS.ar.operation)}</th><th>${esc(QUOTE_STRINGS.ar.station)}</th><th>${esc(QUOTE_STRINGS.ar.estHours)}</th></tr></thead><tbody>${opRows}</tbody></table>` : ""}
+<div class="totals">
+  ${costed.length > 0 ? `<div class="row"><span>${esc(QUOTE_STRINGS.ar.materials)}</span><span>${materialsTotal.toFixed(2)} $</span></div><div class="row"><span>${esc(QUOTE_STRINGS.ar.productionFull)}</span><span>${productionValue.toFixed(2)} $</span></div>` : ""}
+  <div class="row grand"><span>${esc(QUOTE_STRINGS.ar.totalQuoted)}</span><span>${quoted.toFixed(2)} $</span></div>
+</div>
+<p class="terms">${esc(QUOTE_STRINGS.ar.terms)}</p>
+<p class="foot">${esc(QUOTE_STRINGS.ar.generated)} ${new Date().toLocaleString()} · WoodTek</p>
+</body></html>`;
+    const w = window.open("", "_blank", "width=900,height=1000");
+    if (!w) {
+      setActionError("Allow pop-ups to open the Arabic quotation, then print it as PDF.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 700);
+  };
+
+  const generateQuotation = (lang: Lang) => {
+    if (!order) return;
+    if (lang === "ar") {
+      openArabicQuotation();
+      return;
+    }
+    const qs = QUOTE_STRINGS[lang];
     const doc = new jsPDF();
     const amber: [number, number, number] = [245, 158, 11];
     const dark: [number, number, number] = [15, 23, 42];
@@ -262,11 +325,11 @@ export default function OrderWorkflowDetail({
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(203, 213, 225);
-    doc.text("Custom Woodworking · Production & Fit-out", 14, 20);
+    doc.text(qs.tagline, 14, 20);
     doc.setTextColor(...amber);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("QUOTATION", 196, 14, { align: "right" });
+    doc.text(qs.quotation, 196, 14, { align: "right" });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(203, 213, 225);
@@ -276,8 +339,8 @@ export default function OrderWorkflowDetail({
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
     doc.setTextColor(...grey);
-    doc.text("BILL TO", 14, y);
-    doc.text("QUOTE DETAILS", 118, y);
+    doc.text(qs.billTo, 14, y);
+    doc.text(qs.details, 118, y);
     doc.setFontSize(11);
     doc.setTextColor(...dark);
     doc.text(String(order.customerCompany || order.customerName || "—"), 14, y + 6);
@@ -285,15 +348,15 @@ export default function OrderWorkflowDetail({
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(71, 85, 105);
-      doc.text(`Attn: ${order.customerName}`, 14, y + 11);
+      doc.text(`${qs.attn} ${order.customerName}`, 14, y + 11);
     }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     const meta: Array<[string, string]> = [
-      ["Date", new Date().toLocaleDateString()],
-      ["Target due", order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"],
-      ["Project category", String(order.projectType || "—")],
-      ["Reference", String(order.orderNumber)],
+      [qs.date, new Date().toLocaleDateString()],
+      [qs.due, order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"],
+      [qs.category, String(order.projectType || "—")],
+      [qs.reference, String(order.orderNumber)],
     ];
     meta.forEach((m, i) => {
       doc.setTextColor(...grey);
@@ -315,7 +378,7 @@ export default function OrderWorkflowDetail({
     if (costed.length > 0) {
       autoTable(doc, {
         startY: cursor,
-        head: [["Material", "Qty", "Unit", "Unit Cost", "Amount"]],
+        head: [[qs.material, qs.qty, qs.unit, qs.unitCost, qs.amount]],
         body: costed.map((m) => {
           const amount = (m.quantityUsed || 0) * parseFloat(m.costPerUnit || "0");
           materialsTotal += amount;
@@ -339,11 +402,11 @@ export default function OrderWorkflowDetail({
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.setTextColor(...dark);
-      doc.text("Production & finishing steps", 14, cursor);
+      doc.text(qs.productionSteps, 14, cursor);
       cursor += 3;
       autoTable(doc, {
         startY: cursor,
-        head: [["#", "Operation", "Station", "Est. hours"]],
+        head: [["#", qs.operation, qs.station, qs.estHours]],
         body: ops.map((o: any, i: number) => [
           String(o.stepOrder ?? i + 1),
           String(o.operationName ?? ""),
@@ -367,12 +430,12 @@ export default function OrderWorkflowDetail({
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(...grey);
-      doc.text("Materials", 114, ty);
+      doc.text(qs.materials, 114, ty);
       doc.setTextColor(...dark);
       doc.text(`$${materialsTotal.toFixed(2)}`, 192, ty, { align: "right" });
       ty += 6;
       doc.setTextColor(...grey);
-      doc.text("Production, finishing & installation", 114, ty);
+      doc.text(qs.productionFull, 114, ty);
       doc.setTextColor(...dark);
       doc.text(`$${productionValue.toFixed(2)}`, 192, ty, { align: "right" });
       ty += 6;
@@ -380,15 +443,15 @@ export default function OrderWorkflowDetail({
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(...dark);
-    doc.text("TOTAL QUOTED", 114, ty);
+    doc.text(qs.totalQuoted, 114, ty);
     doc.setTextColor(...amber);
     doc.text(`$${quoted.toFixed(2)}`, 192, ty, { align: "right" });
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(...grey);
-    doc.text("Terms: 50% deposit on acceptance, balance on delivery. Quote valid for 30 days unless stated otherwise.", 14, cursor + boxHeight + 8, { maxWidth: 182 });
-    doc.text(`Generated ${new Date().toLocaleString()} · WoodTek production system`, 14, 287);
+    doc.text(qs.terms, 14, cursor + boxHeight + 8, { maxWidth: 182 });
+    doc.text(`${qs.generated} ${new Date().toLocaleString()} · WoodTek`, 14, 287);
 
     doc.save(`Quotation-${order.orderNumber}.pdf`);
   };
@@ -553,13 +616,29 @@ export default function OrderWorkflowDetail({
               </option>
             ))}
           </select>
-          <button
-            onClick={generateQuotation}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 hover:border-amber-500/50 hover:text-amber-200 transition"
-            title="Download a branded quotation PDF for this client"
-          >
-            <FileText className="w-4 h-4" /> Quotation PDF
-          </button>
+          <div className="relative">
+            {quoteLangOpen && (
+              <div className="absolute left-0 top-11 z-40 w-44 rounded-xl border border-slate-700 bg-slate-900 p-1 shadow-2xl">
+                {(["en", "fr", "ar"] as Lang[]).map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => { setQuoteLangOpen(false); generateQuotation(l); }}
+                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                  >
+                    <span>{l === "en" ? "English" : l === "fr" ? "Français" : "العربية — طباعة"}</span>
+                    <FileText className="h-3.5 w-3.5 text-amber-400" />
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setQuoteLangOpen((v) => !v)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 hover:border-amber-500/50 hover:text-amber-200 transition"
+              title="Quotation PDF — English, Français or العربية"
+            >
+              <FileText className="w-4 h-4" /> Quotation PDF ▾
+            </button>
+          </div>
           {(currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator") && onCloneOrder && (
             <button
               onClick={() =>

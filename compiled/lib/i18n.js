@@ -9,7 +9,7 @@
 // Manager customized in the Menu Designer are never overwritten.
 // ============================================================================
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LANG_STORAGE_KEY = exports.LANG_LABELS = void 0;
+exports.QUOTE_STRINGS = exports.LANG_STORAGE_KEY = exports.LANG_LABELS = void 0;
 exports.loadSavedLang = loadSavedLang;
 exports.saveLang = saveLang;
 exports.tt = tt;
@@ -138,6 +138,83 @@ const FR = {
     "Auto-lock soon — move the mouse to stay signed in": "Verrouillage bientôt — bougez la souris pour rester connecté",
 };
 const DICTS = { ar: AR, fr: FR };
+exports.QUOTE_STRINGS = {
+    en: {
+        quotation: "QUOTATION",
+        tagline: "Custom Woodworking · Production & Fit-out",
+        billTo: "BILL TO",
+        details: "QUOTE DETAILS",
+        attn: "Attn:",
+        date: "Date",
+        due: "Target due",
+        category: "Project category",
+        reference: "Reference",
+        material: "Material",
+        qty: "Qty",
+        unit: "Unit",
+        unitCost: "Unit Cost",
+        amount: "Amount",
+        productionSteps: "Production & finishing steps",
+        operation: "Operation",
+        station: "Station",
+        estHours: "Est. hours",
+        materials: "Materials",
+        productionFull: "Production, finishing & installation",
+        totalQuoted: "TOTAL QUOTED",
+        terms: "Terms: 50% deposit on acceptance, balance on delivery. Quote valid for 30 days unless stated otherwise.",
+        generated: "Generated",
+    },
+    ar: {
+        quotation: "عرض سعر",
+        tagline: "نجارة مخصصة · إنتاج وتجهيز",
+        billTo: "الفاتورة إلى",
+        details: "تفاصيل العرض",
+        attn: "لعناية:",
+        date: "التاريخ",
+        due: "التسليم المستهدف",
+        category: "فئة المشروع",
+        reference: "المرجع",
+        material: "المادة",
+        qty: "الكمية",
+        unit: "الوحدة",
+        unitCost: "سعر الوحدة",
+        amount: "المبلغ",
+        productionSteps: "خطوات الإنتاج والتشطيب",
+        operation: "العملية",
+        station: "المحطة",
+        estHours: "ساعات متوقعة",
+        materials: "المواد",
+        productionFull: "الإنتاج والتشطيب والتركيب",
+        totalQuoted: "إجمالي عرض السعر",
+        terms: "الشروط: 50% دفعة مقدمة عند القبول، والرصيد عند التسليم. العرض ساري لمدة 30 يوماً ما لم يُذكر خلاف ذلك.",
+        generated: "أُنشئ في",
+    },
+    fr: {
+        quotation: "DEVIS",
+        tagline: "Menuiserie sur mesure · Production & aménagement",
+        billTo: "FACTURER À",
+        details: "DÉTAILS DU DEVIS",
+        attn: "À l'attention de :",
+        date: "Date",
+        due: "Livraison prévue",
+        category: "Catégorie du projet",
+        reference: "Référence",
+        material: "Matériau",
+        qty: "Qté",
+        unit: "Unité",
+        unitCost: "Coût unitaire",
+        amount: "Montant",
+        productionSteps: "Étapes de production & finition",
+        operation: "Opération",
+        station: "Poste",
+        estHours: "Heures est.",
+        materials: "Matériaux",
+        productionFull: "Production, finition & installation",
+        totalQuoted: "TOTAL DU DEVIS",
+        terms: "Conditions : 50 % d'acompte à l'acceptation, solde à la livraison. Devis valable 30 jours sauf indication contraire.",
+        generated: "Généré le",
+    },
+};
 /**
  * Translate an EXACT English default label. Unknown strings (custom menu
  * names, anything not in the dictionary) come back untouched.

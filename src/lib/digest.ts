@@ -30,6 +30,14 @@ export interface DigestWarehouseRow {
   total: number;
 }
 
+export interface DigestStaleQuoteRow {
+  id: number;
+  orderNumber: string;
+  title?: string | null;
+  customerCompany?: string | null;
+  daysOld: number;
+}
+
 export interface DigestMachineRow {
   code?: string | null;
   name?: string | null;
@@ -54,6 +62,7 @@ export interface DigestStockRow {
 export interface DigestData {
   date: string;
   overdue: DigestOrderRow[];
+  staleQuotes: DigestStaleQuoteRow[];
   dueSoon: DigestOrderRow[];
   materials: DigestMaterialRow[];
   warehousePending: DigestWarehouseRow[];
@@ -66,6 +75,7 @@ export interface DigestData {
 export const EMPTY_DIGEST: DigestData = {
   date: "",
   overdue: [],
+  staleQuotes: [],
   dueSoon: [],
   materials: [],
   warehousePending: [],
@@ -97,6 +107,10 @@ export function digestToLines(d: DigestData, maxPerSection = 8): string[] {
   };
 
   section("OVERDUE ORDERS", d.overdue.map(shortOrder));
+  section(
+    "STALE QUOTES - FOLLOW UP",
+    d.staleQuotes.map((q) => `${q.orderNumber} ${q.customerCompany ?? ""} ${q.title ?? ""} - quote is ${q.daysOld} days old`.replace(/\s+/g, " ")),
+  );
   section("DUE WITHIN 7 DAYS", d.dueSoon.map(shortOrder));
   section(
     "MATERIALS FLAGGED BY THE FLOOR",
@@ -129,6 +143,7 @@ export function digestSectionCount(d: DigestData, key: keyof Omit<DigestData, "d
 export function digestTotalIssues(d: DigestData): number {
   return (
     d.overdue.length +
+    d.staleQuotes.length +
     d.materials.length +
     d.machinesDown.length +
     d.serviceDue.length +

@@ -159,6 +159,21 @@ export async function GET() {
       .sort((a, b) => b.pastBy - a.pastBy)
       .slice(0, 10);
 
+    // --- Stale quotes (Quoted / Deposit Paid, no conversion in N days) --------
+    const staleDays = Number(process.env.WOODTEK_QUOTE_STALE_DAYS) || 7;
+    const staleCutoff = now.getTime() - staleDays * DAY_MS;
+    const staleQuotes = all
+      .filter((o) => (o.status === "Quoted" || o.status === "Deposit Paid") && o.createdAt && new Date(o.createdAt).getTime() < staleCutoff)
+      .map((o) => ({
+        id: o.id,
+        orderNumber: o.orderNumber,
+        title: o.title,
+        customerCompany: o.customerCompany,
+        daysOld: Math.floor((now.getTime() - new Date(o.createdAt).getTime()) / DAY_MS),
+      }))
+      .sort((a, b) => b.daysOld - a.daysOld)
+      .slice(0, 12);
+
     // --- Completed, awaiting delivery -----------------------------------------
     const awaitingDelivery = all
       .filter((o) => o.status === "Completed")
@@ -174,6 +189,7 @@ export async function GET() {
     const payload: DigestData = {
       date: now.toISOString(),
       overdue,
+      staleQuotes,
       dueSoon,
       materials: materials as DigestData["materials"],
       warehousePending,

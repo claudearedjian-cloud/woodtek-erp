@@ -296,6 +296,10 @@ const dg = require("./compiled/lib/digest.js");
 const fakeDigest = {
   date: "2026-09-14T06:00:00.000Z",
   overdue: [{ id: 1, orderNumber: "PO-0007/2026", title: "Wardrobe", customerCompany: "ACME", daysLate: 5 }],
+  staleQuotes: [
+    { id: 9, orderNumber: "PO-0011/2026", title: "Reception desk", customerCompany: "GLOBEX", daysOld: 14 },
+    { id: 8, orderNumber: "PO-0004/2026", title: "Shelves", customerCompany: "INITECH", daysOld: 9 },
+  ],
   dueSoon: [],
   materials: [{ orderId: 2, orderNumber: "PO-0009/2026", title: "Desk", state: "Declined" }],
   warehousePending: [{ orderId: 3, orderNumber: "PO-0010/2026", title: null, pending: 2, total: 5 }],
@@ -307,12 +311,15 @@ const fakeDigest = {
 const dLines = dg.digestToLines(fakeDigest, 8);
 check(dLines.some((l) => l === "OVERDUE ORDERS (1)"), "digest: section headers carry counts");
 check(dLines.some((l) => l === "  PO-0007/2026 \u00b7 Wardrobe \u00b7 ACME \u00b7 5d late"), "digest: order detail line with days late");
+check(dLines.some((l) => l.startsWith("STALE QUOTES - FOLLOW UP (2)")), "digest: stale quotes section with count");
+check(dLines.some((l) => l.includes("PO-0011/2026") && l.includes("14 days old")), "digest: stale quote line carries days old");
+check(dg.digestTotalIssues(fakeDigest) === 7, "digest: stale quotes count toward the attention total");
 check(dLines.some((l) => l.includes("DUE WITHIN 7 DAYS: none")), "digest: empty sections say none");
 check(dLines.some((l) => l.includes("BEAM-01") && l.includes("1h 35m")), "digest: downtime line formats hours+minutes");
-check(dLines.filter((l) => !l.startsWith("  ")).length === 8, "digest: exactly 8 section headers");
+check(dLines.filter((l) => !l.startsWith("  ")).length === 9, "digest: all 9 section headers render");
 const capped = dg.digestToLines({ ...fakeDigest, overdue: Array.from({ length: 12 }, (_, i) => ({ id: i, orderNumber: `PO-${i}` })) }, 8);
 check(capped.some((l) => l.includes("…and 4 more")), "digest: long sections are capped with a trailing count");
-check(dg.digestTotalIssues(fakeDigest) === 1 + 1 + 1 + 1 + 1, "digest: total issues counts the 5 attention sections");
+check(dg.digestTotalIssues(fakeDigest) === 1 + 2 + 1 + 1 + 1 + 1, "digest: total issues counts all attention sections");
 check(dg.digestToLines(dg.EMPTY_DIGEST).every((l) => l.endsWith(": none")), "digest: empty digest renders all-none");
 
 // ---- client statement builder ----
@@ -422,6 +429,17 @@ const hinge = short.find((s) => s.itemId === 12);
 check(hinge && hinge.missing === 1 && hinge.stock === 0, "stock check: zero-stock flagged with the gap");
 check(bk.stockShortfall([{ itemId: "", qty: "5" }, { itemId: "3", qty: "0" }], itemsMap).length === 0, "stock check: empty/zero lines ignored");
 check(bk.stockShortfall([{ itemId: "99", qty: "5" }], itemsMap).length === 0, "stock check: unknown items skipped (API rejects them at creation)");
+
+// ---- quotation strings (EN/AR/FR) ----
+const qEn = i18n.QUOTE_STRINGS.en, qAr = i18n.QUOTE_STRINGS.ar, qFr = i18n.QUOTE_STRINGS.fr;
+const qKeys = Object.keys(qEn).sort();
+check(
+  JSON.stringify(Object.keys(qAr).sort()) === JSON.stringify(qKeys) &&
+    JSON.stringify(Object.keys(qFr).sort()) === JSON.stringify(qKeys),
+  "quote strings: EN/AR/FR cover the exact same key set",
+);
+check(qEn.quotation === "QUOTATION" && qFr.quotation === "DEVIS" && qAr.quotation === "\u0639\u0631\u0636 \u0633\u0639\u0631", "quote strings: translated titles");
+check(qEn.totalQuoted !== qFr.totalQuoted && qFr.terms.includes("30"), "quote strings: totals + terms differ per language");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

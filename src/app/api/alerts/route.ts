@@ -42,6 +42,23 @@ export async function GET() {
       }
     }
 
+    // Stale quotes: Quoted / Deposit Paid orders nobody converted in time.
+    const staleDays = Number(process.env.WOODTEK_QUOTE_STALE_DAYS) || 7;
+    for (const o of orderRows as any[]) {
+      if ((o.status === "Quoted" || o.status === "Deposit Paid") && o.createdAt) {
+        const days = Math.floor((now - new Date(o.createdAt).getTime()) / 86400000);
+        if (days >= staleDays) {
+          alerts.push({
+            kind: "quote",
+            severity: "amber",
+            title: `${o.orderNumber} quote is ${days} days old`,
+            detail: `${o.customerCompany ?? "—"} · ${o.title} — follow up with the client`,
+            tab: "orders",
+          });
+        }
+      }
+    }
+
     const received = readReceived();
     for (const [orderId, entry] of Object.entries(received)) {
       if (entry.received === false) {
