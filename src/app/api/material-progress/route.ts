@@ -14,11 +14,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { orderMaterials } from "@/db/schema";
+import { orderMaterials, orderOperations } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
-import { sanitizeProgressMap, sanitizeStage } from "@/lib/materialProgress";
+import { STAGE_DONE, allowedStages, sanitizeProgressMap, sanitizeStage } from "@/lib/materialProgress";
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -97,6 +97,23 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "This material line no longer exists." }, { status: 404 });
     }
     const all = readAll();
+    // The rule: a material moves ONE stage at a time along the order's steps —
+    // no jumping to Edge Banding before Cutting, no straight to Done early.
+    const ops = await db
+      .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+      .from(orderOperations)
+      .where(eq(orderOperations.orderId, line.orderId));
+    const steps = ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name);
+    const current = all[String(materialId)]?.stage ?? "";
+    const allowed = allowedStages(steps, current);
+    if (!allowed.includes(stage)) {
+      const label = (s: string) => (s === STAGE_DONE ? "Done" : s === "" ? "Not started" : `"${s}"`);
+      const options = allowed.filter((s) => s !== current).map(label).join(" or ");
+      return NextResponse.json(
+        { error: `Materials move one stage at a time. From ${label(current)} you may go to: ${options}.` },
+        { status: 409 },
+      );
+    }
     const entry = { stage, at: new Date().toISOString(), by: user.name || user.role };
     all[String(materialId)] = entry;
     writeAll(all);

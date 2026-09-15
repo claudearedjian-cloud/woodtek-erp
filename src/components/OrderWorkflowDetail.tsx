@@ -32,6 +32,7 @@ import QRCode from "qrcode";
 import { QUOTE_STRINGS, type Lang } from "@/lib/i18n";
 import autoTable from "jspdf-autotable";
 import { can, canAssignMachines } from "@/lib/permissions";
+import { allowedStages } from "@/lib/materialProgress";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -1266,11 +1267,9 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
                                 title="Where is this material in production right now?"
                               >
-                                <option value="">Not started</option>
-                                {stageSteps.map((sName: string, si: number) => (
-                                  <option key={`${sName}-${si}`} value={sName}>{sName}</option>
+                                {allowedStages(stageSteps, stage).map((opt: string, oi: number) => (
+                                  <option key={`${opt}-${oi}`} value={opt}>{opt === "DONE" ? "\u2713 Done" : opt === "" ? "Not started" : opt}</option>
                                 ))}
-                                <option value="DONE">✓ Done</option>
                               </select>
                             )}
                             {canManageBom && !isConsumed && !isReleased && (

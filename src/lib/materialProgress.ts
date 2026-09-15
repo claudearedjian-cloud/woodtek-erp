@@ -40,6 +40,30 @@ export function sanitizeProgressMap(raw: unknown): Record<string, MaterialStageE
   return out;
 }
 
+/**
+ * The stage ladder for an order: Not started → step 1 → … → step N → DONE.
+ * Every material line walks this ladder in order — no skipping ahead.
+ */
+export function stageLadder(steps: string[]): string[] {
+  return ["", ...steps.map((s) => sanitizeStage(s)).filter(Boolean), STAGE_DONE];
+}
+
+/**
+ * Stages a line may move to from `current`: stay, one back, one forward.
+ * An unknown current stage (renamed step, hand-edited file) may go anywhere
+ * so it stays correctable.
+ */
+export function allowedStages(steps: string[], current: string): string[] {
+  const ladder = stageLadder(steps);
+  const idx = ladder.indexOf(sanitizeStage(current));
+  if (idx === -1) return ladder;
+  const out = new Set<string>();
+  for (const i of [idx - 1, idx, idx + 1]) {
+    if (i >= 0 && i < ladder.length) out.add(ladder[i]);
+  }
+  return Array.from(out);
+}
+
 export type StageTone = "slate" | "amber" | "emerald";
 
 /** How a stage renders: label + colour tone. */

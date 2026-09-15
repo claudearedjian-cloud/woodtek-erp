@@ -507,6 +507,15 @@ check(mp.stageDisplay("").label === "Not started" && mp.stageDisplay("").tone ==
 check(mp.stageDisplay("Edge Banding").label === "\u2192 Edge Banding" && mp.stageDisplay("Edge Banding").tone === "amber", "material stage: in-progress renders amber");
 check(mp.stageDisplay("DONE").label === "\u2713 Done" && mp.stageDisplay("DONE").tone === "emerald", "material stage: done renders emerald");
 
+// ---- material stage ordering (one step at a time) ----
+check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "")) === JSON.stringify(["", "Cutting"]), "stage order: not-started can only enter the first step");
+check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "Cutting")) === JSON.stringify(["", "Cutting", "Edging"]), "stage order: mid-step can go one back or one forward");
+check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "Edging")) === JSON.stringify(["Cutting", "Edging", "DONE"]), "stage order: last step may finish");
+check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "DONE")) === JSON.stringify(["Edging", "DONE"]), "stage order: done can only step back");
+check(mp.allowedStages(["Cutting", "Edging"], "Renamed Step").length === 4, "stage order: unknown/manual stage may go anywhere");
+check(JSON.stringify(mp.allowedStages([], "")) === JSON.stringify(["", "DONE"]), "stage order: order without steps goes straight to done");
+check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "Cutting")).includes("DONE") === false, "stage order: can NOT jump to Done from the middle");
+
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");
 check(jl.jobLockedByOther({ status: "In Progress", operatorId: 7 }, 9, true) === true, "job lock: crew mate is locked out of a running job");
