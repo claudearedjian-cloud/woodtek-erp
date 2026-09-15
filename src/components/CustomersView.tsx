@@ -17,7 +17,11 @@ import {
   ClipboardList,
   ChevronRight,
   Receipt,
+  FileDown,
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { buildStatement } from "@/lib/clientStatement";
 
 interface CustomersViewProps {
   customers: any[];
@@ -112,6 +116,74 @@ export default function CustomersView({
     } catch (err) {
       setLedgerMsg(err instanceof Error ? err.message : "Failed to record entry");
     }
+  };
+
+  // Statement PDF: chronological invoices/payments with a running balance.
+  const generateStatement = () => {
+    if (!detail) return;
+    const st = buildStatement(ledger?.entries ?? []);
+    const doc = new jsPDF();
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 26, "F");
+    doc.setFillColor(245, 158, 11);
+    doc.rect(0, 26, 210, 1.2, "F");
+    doc.setTextColor(245, 158, 11);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("WOODTEK", 14, 12);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.text("CLIENT STATEMENT", 14, 20);
+    doc.setFontSize(9);
+    doc.setTextColor(200, 210, 230);
+    doc.text(`As of ${new Date().toLocaleString()}`, 196, 12, { align: "right" });
+    doc.text("Furniture Service Center", 196, 20, { align: "right" });
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text(String(detail.company || detail.name || "Client"), 14, 40);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105);
+    const contact = [detail.name, detail.phone, detail.email].filter(Boolean).join(" · ");
+    if (contact) doc.text(contact, 14, 46);
+    if (detail.address) doc.text(String(detail.address), 14, 52);
+
+    autoTable(doc, {
+      startY: 58,
+      head: [["Invoiced", "Paid", "Outstanding", "Credit limit", "Available"]],
+      body: [[
+        `$${st.invoiced.toFixed(2)}`,
+        `$${st.paid.toFixed(2)}`,
+        `$${st.balance.toFixed(2)}`,
+        `$${Number(detail.creditLimit || 0).toFixed(2)}`,
+        `$${(Number(detail.creditLimit || 0) - st.balance).toFixed(2)}`,
+      ]],
+      styles: { fontSize: 9, cellPadding: 2.5, halign: "right" },
+      headStyles: { fillColor: [30, 41, 59], textColor: [245, 158, 11], halign: "right" },
+    });
+
+    const rows = st.rows.map((r) => [
+      new Date(r.at).toLocaleDateString(),
+      r.type === "payment" ? "Payment" : "Invoice",
+      r.reference || "-",
+      r.invoiced ? `$${r.invoiced.toFixed(2)}` : "-",
+      r.paid ? `$${r.paid.toFixed(2)}` : "-",
+      `$${r.balance.toFixed(2)}`,
+    ]);
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : 80,
+      head: [["Date", "Type", "Reference", "Invoiced", "Paid", "Balance"]],
+      body: rows.length > 0 ? rows : [["-", "-", "No entries yet", "-", "-", "$0.00"]],
+      foot: [["", "", "TOTAL", `$${st.invoiced.toFixed(2)}`, `$${st.paid.toFixed(2)}`, `$${st.balance.toFixed(2)}`]],
+      styles: { fontSize: 9, cellPadding: 2.2 },
+      headStyles: { fillColor: [30, 41, 59], textColor: [245, 158, 11] },
+      footStyles: { fillColor: [245, 158, 11], textColor: [15, 23, 42], fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [245, 247, 251] },
+      columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
+    });
+    doc.save(`Statement-${String(detail.company || detail.name || "client").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
   };
 
   const deleteLedgerEntry = async (entryId: number) => {
@@ -487,6 +559,17 @@ export default function CustomersView({
                   <div className="py-10 text-center text-xs text-slate-500 animate-pulse">Loading ledger…</div>
                 ) : (
                   <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Account summary</span>
+                      <button
+                        onClick={generateStatement}
+                        disabled={(ledger?.entries ?? []).length === 0}
+                        title="Download a printable statement PDF (invoices, payments, running balance)"
+                        className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20 disabled:opacity-40"
+                      >
+                        <FileDown className="h-3.5 w-3.5" /> Statement PDF
+                      </button>
+                    </div>
                     {(() => {
                       const limit = Number(detail.creditLimit || 0);
                       const balance = Number(ledger?.balance ?? 0);

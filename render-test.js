@@ -30,6 +30,8 @@ compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
 compile("src/lib/menuIcons.ts", "lib/menuIcons.js");
 compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
+compile("src/lib/digest.ts", "lib/digest.js");
+compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -283,6 +285,46 @@ const csv = dr.paretoToCsv(p30);
 check(csv.startsWith("Reason,Events,DowntimeMinutes") && csv.includes("TOTAL,5,280"), "downtime pareto: CSV has header + totals row");
 const emptyP = dr.buildPareto([], 30, now);
 check(emptyP.rows.length === 0 && emptyP.totalMinutes === 0, "downtime pareto: no events -> empty rows (no crash)");
+
+// ---- daily digest formatting ----
+const dg = require("./compiled/lib/digest.js");
+const fakeDigest = {
+  date: "2026-09-14T06:00:00.000Z",
+  overdue: [{ id: 1, orderNumber: "PO-0007/2026", title: "Wardrobe", customerCompany: "ACME", daysLate: 5 }],
+  dueSoon: [],
+  materials: [{ orderId: 2, orderNumber: "PO-0009/2026", title: "Desk", state: "Declined" }],
+  warehousePending: [{ orderId: 3, orderNumber: "PO-0010/2026", title: null, pending: 2, total: 5 }],
+  machinesDown: [{ code: "BEAM-01", name: "Beam saw", reason: "Mechanical Failure", minutes: 95 }],
+  serviceDue: [{ assetTag: "GEN-01", name: "Generator", interval: 250, pastBy: 40 }],
+  awaitingDelivery: [{ id: 4, orderNumber: "PO-0002/2026", title: "Chairs" }],
+  lowStock: [{ name: "MDF 18mm", qty: 2, unit: "sheet", reorderLevel: 5 }],
+};
+const dLines = dg.digestToLines(fakeDigest, 8);
+check(dLines.some((l) => l === "OVERDUE ORDERS (1)"), "digest: section headers carry counts");
+check(dLines.some((l) => l === "  PO-0007/2026 \u00b7 Wardrobe \u00b7 ACME \u00b7 5d late"), "digest: order detail line with days late");
+check(dLines.some((l) => l.includes("DUE WITHIN 7 DAYS: none")), "digest: empty sections say none");
+check(dLines.some((l) => l.includes("BEAM-01") && l.includes("1h 35m")), "digest: downtime line formats hours+minutes");
+check(dLines.filter((l) => !l.startsWith("  ")).length === 8, "digest: exactly 8 section headers");
+const capped = dg.digestToLines({ ...fakeDigest, overdue: Array.from({ length: 12 }, (_, i) => ({ id: i, orderNumber: `PO-${i}` })) }, 8);
+check(capped.some((l) => l.includes("…and 4 more")), "digest: long sections are capped with a trailing count");
+check(dg.digestTotalIssues(fakeDigest) === 1 + 1 + 1 + 1 + 1, "digest: total issues counts the 5 attention sections");
+check(dg.digestToLines(dg.EMPTY_DIGEST).every((l) => l.endsWith(": none")), "digest: empty digest renders all-none");
+
+// ---- client statement builder ----
+const cs = require("./compiled/lib/clientStatement.js");
+const st = cs.buildStatement([
+  { type: "invoice", amount: 1000, reference: "INV-1", at: "2026-09-02T10:00:00Z" },
+  { type: "payment", amount: "400", reference: "CHK-9", at: "2026-09-05T10:00:00Z" },
+  { type: "invoice", amount: 250.5, reference: "INV-2", at: "2026-09-01T10:00:00Z" }, // out of order on purpose
+]);
+check(st.rows.length === 3, "statement: all entries become rows");
+check(new Date(st.rows[0].at).getDate() === 1, "statement: rows sorted chronologically");
+check(st.rows[0].balance === 250.5 && st.rows[1].balance === 1250.5 && st.rows[2].balance === 850.5, "statement: running balance correct (invoice +, payment -)");
+check(st.invoiced === 1250.5 && st.paid === 400 && st.balance === 850.5, "statement: totals correct");
+check(st.rows[2].invoiced === 0 && st.rows[2].paid === 400, "statement: payment rows carry no invoiced amount");
+check(cs.buildStatement([]).balance === 0 && cs.buildStatement([]).rows.length === 0, "statement: empty ledger is safe");
+const neg = cs.buildStatement([{ type: "invoice", amount: -50, at: "2026-09-01T00:00:00Z" }]);
+check(neg.invoiced === 50, "statement: negative amounts clamp to positive");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

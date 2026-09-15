@@ -352,7 +352,7 @@ export default function WoodTekERP() {
         />
 
         <main key={activeTab} className="flex-1 pb-16 animate-fade-up">
-          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} />}
+          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} currentUser={currentUser} />}
           {activeTab === "plant" && <PlantView onNavigate={setActiveTab} />}
           {activeTab === "orders" && (
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}

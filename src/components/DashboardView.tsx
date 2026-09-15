@@ -13,12 +13,17 @@ import {
   Activity, 
   Flame, 
   User, 
+  Sunrise,
+  Printer,
 } from "lucide-react";
+import jsPDF from "jspdf";
+import { digestToLines, digestTotalIssues, EMPTY_DIGEST, type DigestData } from "@/lib/digest";
 
 interface DashboardViewProps {
   data: any;
   loading: boolean;
   onNavigate: (tab: string, status?: string) => void;
+  currentUser?: any;
 }
 
 // Top bar: one button per order status, click to open Orders & Routing pre-filtered.
@@ -31,10 +36,63 @@ const STATUS_BUTTONS = [
   { label: "On Hold", key: "OnHold", cls: "border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300" },
 ] as const;
 
-export default function DashboardView({ data, loading, onNavigate }: DashboardViewProps) {
+export default function DashboardView({ data, loading, onNavigate, currentUser }: DashboardViewProps) {
   // Attention center: polls /api/alerts (overdue orders, missing materials, CMMS service, low stock).
   const [alerts, setAlerts] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
+
+  // Morning digest: one snapshot of everything the boss should know at a glance.
+  const canSeeDigest = currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator";
+  const [digest, setDigest] = useState<DigestData>(EMPTY_DIGEST);
+  useEffect(() => {
+    if (!canSeeDigest) return;
+    let alive = true;
+    const loadDigest = () =>
+      fetch("/api/digest", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d && Array.isArray(d.overdue)) setDigest(d); })
+        .catch(() => {});
+    loadDigest();
+    const t = setInterval(loadDigest, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, [canSeeDigest]);
+
+  const printDigest = () => {
+    const doc = new jsPDF();
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 24, "F");
+    doc.setFillColor(245, 158, 11);
+    doc.rect(0, 24, 210, 1.2, "F");
+    doc.setTextColor(245, 158, 11);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text("WOODTEK", 14, 11);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.text("MORNING DIGEST", 14, 18);
+    doc.setFontSize(9);
+    doc.setTextColor(200, 210, 230);
+    doc.text(new Date(digest.date || Date.now()).toLocaleString(), 196, 11, { align: "right" });
+    doc.text("Furniture Service Center", 196, 18, { align: "right" });
+
+    let y = 36;
+    for (const line of digestToLines(digest, 12)) {
+      if (y > 282) { doc.addPage(); y = 20; }
+      if (!line.startsWith("  ")) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(180, 83, 9);
+        doc.text(line, 14, y);
+      } else {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(30, 41, 59);
+        doc.text(line.trim(), 18, y);
+      }
+      y += 5.4;
+    }
+    doc.save(`MorningDigest-${new Date(digest.date || Date.now()).toISOString().slice(0, 10)}.pdf`);
+  };
   useEffect(() => {
     let alive = true;
     const loadAlerts = () =>
@@ -72,6 +130,72 @@ export default function DashboardView({ data, loading, onNavigate }: DashboardVi
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Morning digest (Manager / Sales Coordinator) */}
+      {canSeeDigest && (
+        <div className="rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-300">
+              <Sunrise className="h-4 w-4 text-amber-400" /> Morning digest
+              {digestTotalIssues(digest) > 0 && (
+                <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-black text-rose-300">
+                  {digestTotalIssues(digest)} need attention
+                </span>
+              )}
+            </h3>
+            <button
+              onClick={printDigest}
+              title="Save the full morning brief as a PDF"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
+            >
+              <Printer className="h-3.5 w-3.5" /> Print digest
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              { label: "Overdue", items: digest.overdue, tab: "orders", tone: "text-rose-300" },
+              { label: "Due 7 days", items: digest.dueSoon, tab: "orders", tone: "text-amber-300" },
+              { label: "Materials flagged", items: digest.materials, tab: "reception", tone: "text-amber-300" },
+              { label: "Warehouse pending", items: digest.warehousePending, tab: "warehouse", tone: "text-sky-300" },
+              { label: "Machines down", items: digest.machinesDown, tab: "downtime", tone: "text-rose-300" },
+              { label: "Service overdue", items: digest.serviceDue, tab: "cmms", tone: "text-orange-300" },
+              { label: "Awaiting delivery", items: digest.awaitingDelivery, tab: "schedule", tone: "text-emerald-300" },
+              { label: "Low stock", items: digest.lowStock, tab: "inventory", tone: "text-violet-300" },
+            ].map((sec) => (
+              <button
+                key={sec.label}
+                onClick={() => sec.items.length > 0 && onNavigate(sec.tab)}
+                disabled={sec.items.length === 0}
+                className={`rounded-xl border p-2.5 text-left transition ${
+                  sec.items.length > 0
+                    ? "border-slate-800 bg-slate-950/60 hover:border-amber-500/40"
+                    : "border-slate-800/60 bg-slate-950/30 opacity-60"
+                }`}
+              >
+                <div className={`font-mono text-lg font-black ${sec.items.length > 0 ? sec.tone : "text-slate-600"}`}>
+                  {sec.items.length}
+                </div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{sec.label}</div>
+                {sec.items.length > 0 && (
+                  <div className="mt-0.5 truncate text-[10px] font-bold text-slate-400">
+                    {sec.label === "Machines down"
+                      ? `${(sec.items[0] as any).code ?? "?"} · ${(sec.items[0] as any).reason}`
+                      : sec.label === "Service overdue"
+                        ? `${(sec.items[0] as any).assetTag} · +${(sec.items[0] as any).pastBy}h`
+                        : sec.label === "Low stock"
+                          ? String((sec.items[0] as any).name ?? "")
+                          : sec.label === "Warehouse pending"
+                            ? `${(sec.items[0] as any).orderNumber} · ${(sec.items[0] as any).pending}/${(sec.items[0] as any).total}`
+                            : sec.label === "Materials flagged"
+                              ? `${(sec.items[0] as any).orderNumber} · ${(sec.items[0] as any).state}`
+                              : `${(sec.items[0] as any).orderNumber}${(sec.items[0] as any).daysLate ? ` · ${(sec.items[0] as any).daysLate}d late` : ""}`}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Order status quick bar */}
       <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
