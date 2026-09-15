@@ -180,6 +180,77 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.save(`PackingSlip-${String(o.orderNumber ?? o.id)}.pdf`);
   };
 
+  // Delivery manifest: driver's sheet for every order awaiting delivery.
+  const printManifest = () => {
+    const stops = dispatchOrders
+      .filter((o) => o.stage === "awaiting_delivery")
+      .sort((a, b) =>
+        String(a.customerAddress ?? "").localeCompare(String(b.customerAddress ?? "")) ||
+        String(a.orderNumber ?? "").localeCompare(String(b.orderNumber ?? "")),
+      );
+    if (stops.length === 0) {
+      setNotice("No orders are awaiting delivery — nothing to put on the manifest.");
+      return;
+    }
+    const doc = new jsPDF();
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 24, "F");
+    doc.setFillColor(245, 158, 11);
+    doc.rect(0, 24, 210, 1.2, "F");
+    doc.setTextColor(245, 158, 11);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.text("WOODTEK", 14, 11);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.text("DELIVERY MANIFEST", 14, 18);
+    doc.setFontSize(9);
+    doc.setTextColor(200, 210, 230);
+    doc.text(new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }), 196, 11, { align: "right" });
+    doc.text(`${stops.length} stop(s)`, 196, 18, { align: "right" });
+
+    doc.setTextColor(71, 85, 105);
+    doc.setFontSize(9);
+    doc.text("Driver: ____________________________    Vehicle: ____________________________", 14, 34);
+
+    let y = 44;
+    stops.forEach((o: any, i: number) => {
+      if (y > 250) {
+        doc.addPage();
+        y = 20;
+      }
+      const blockH = 30;
+      // stop card
+      doc.setDrawColor(203, 213, 225);
+      doc.roundedRect(12, y - 6, 186, blockH + 2, 2, 2);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${i + 1}. ${String(o.orderNumber ?? "")}`, 16, y + 1);
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105);
+      doc.text(String(o.customerCompany ?? ""), 16, y + 7);
+      const addr = String(o.customerAddress ?? "").trim();
+      if (addr) doc.text(`Addr: ${addr}`, 16, y + 12.5);
+      const phone = String(o.customerPhone ?? "").trim();
+      const cat = String(o.projectType ?? "").trim();
+      doc.text([phone ? `Tel: ${phone}` : "", cat].filter(Boolean).join("   "), 16, y + 18);
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+      doc.text("[   ] Delivered       [   ] Returned", 16, y + 23);
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Signature: ____________________________", 120, y + 23);
+      y += blockH + 6;
+    });
+
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    if (y > 275) { doc.addPage(); y = 20; }
+    doc.text("Tick Delivered or Returned per stop. Returned items go back to the warehouse with a note.", 14, y + 2);
+    doc.save(`DeliveryManifest-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const setDispatchStage = async (orderId: number, stage: string) => {
     setDispatchBusy(orderId);
     try {
@@ -419,9 +490,19 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           <h2 className="flex items-center gap-2 text-sm font-black text-white">
             <Truck className="h-4 w-4 text-emerald-400" /> Dispatch queue — completed orders
           </h2>
-          <span className="text-[11px] font-bold text-slate-500">
-            Service orders go straight to awaiting delivery; project orders follow Cleaning → QC → Packing.
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={printManifest}
+              title="Print the driver's manifest for every order awaiting delivery"
+              className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
+            >
+              <Truck className="h-3.5 w-3.5" /> Print manifest
+            </button>
+            <span className="text-[11px] font-bold text-slate-500">
+              Service orders go straight to awaiting delivery; project orders follow Cleaning → QC → Packing.
+            </span>
+          </div>
         </div>
         {dispatchOrders.length === 0 ? (
           <div className="py-6 text-center text-xs text-slate-500">No completed orders waiting for dispatch.</div>

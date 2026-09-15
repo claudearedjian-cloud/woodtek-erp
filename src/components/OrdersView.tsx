@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { STAGE_LABELS, type DispatchStage } from "@/lib/dispatch";
 import { 
   ClipboardList, 
@@ -28,6 +28,7 @@ import {
   Save
 } from "lucide-react";
 import { DEFAULT_PROJECT_TYPES } from "@/lib/projectTypes";
+import { mergeBomKit, stockShortfall, type BomKit } from "@/lib/bomKits";
 
 interface OrdersViewProps {
   orders: any[];
@@ -167,6 +168,72 @@ export default function OrdersView({
   const [showCatMgr, setShowCatMgr] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [catMsg, setCatMsg] = useState("");
+
+  // Material kits (reusable BOM lists, like recipes but for materials).
+  const [kits, setKits] = useState<BomKit[]>([]);
+  const [kitSel, setKitSel] = useState("");
+  const [kitMsg, setKitMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/bom-kits", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { kits: [] }))
+      .then((d) => setKits(Array.isArray(d.kits) ? d.kits : []))
+      .catch(() => {});
+  }, []);
+
+  const saveBomAsKit = async () => {
+    setKitMsg("");
+    const valid = bom.filter((b) => b.itemId && Number(b.qty) > 0);
+    if (valid.length === 0) {
+      setKitMsg("Add materials before saving a kit.");
+      return;
+    }
+    const name = window.prompt('Name this material kit (e.g. "Standard 2-door cabinet"):', '');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch("/api/bom-kits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          items: valid.map((b) => ({ itemId: Number(b.itemId), qty: Math.max(1, Number(b.qty) || 1) })),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to save the kit");
+      setKits(Array.isArray(d.kits) ? d.kits : []);
+      setKitMsg(`Kit "${name.trim()}" saved — reuse it on any order.`);
+    } catch (e: any) {
+      setKitMsg(e.message || "Failed to save the kit");
+    }
+  };
+
+  const applyKit = (name: string) => {
+    const kit = kits.find((k) => k.name === name);
+    if (!kit) return;
+    setBom((list) => mergeBomKit(list, kit));
+    setKitMsg(`Kit "${kit.name}" added (${kit.items.length} line(s)) — quantities merge if an item was already listed.`);
+  };
+
+  const deleteKit = async (name: string) => {
+    if (!confirm(`Delete the kit "${name}"? Orders already created are not affected.`)) return;
+    try {
+      const res = await fetch(`/api/bom-kits?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to delete the kit");
+      setKits(Array.isArray(d.kits) ? d.kits : []);
+      setKitMsg(`Kit "${name}" deleted.`);
+    } catch (e: any) {
+      setKitMsg(e.message || "Failed to delete the kit");
+    }
+  };
+
+  // Stock check (#4): aggregate draft quantities and flag shortages live.
+  const itemsById = useMemo(
+    () => new Map((inventoryItems as any[]).map((it) => [Number(it.id), it])),
+    [inventoryItems],
+  );
+  const shortfalls = useMemo(() => stockShortfall(bom, itemsById), [bom, itemsById]);
 
   // Project categories: managed list, merged with defaults and in-use values.
   const [projectTypes, setProjectTypes] = useState<string[]>(DEFAULT_PROJECT_TYPES);
@@ -1068,18 +1135,73 @@ export default function OrdersView({
               {/* BOM — materials the warehouse must prepare for this order */}
               {orderTab === "materials" && (
                 <div className="space-y-2.5 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[11px] font-medium text-slate-400">
                       Materials / BOM ({bom.length}) — the warehouse prepares these once the order is issued
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setBom(b => [...b, { itemId: inventoryItems[0] ? String(inventoryItems[0].id) : "", qty: "1" }])}
-                      className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300"
-                    >
-                      <Plus className="h-3.5 w-3.5" /> Add material
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={saveBomAsKit}
+                        title="Save this materials list as a reusable kit"
+                        className="flex items-center gap-1 text-[11px] font-bold text-teal-300 hover:text-teal-200"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Save as kit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBom(b => [...b, { itemId: inventoryItems[0] ? String(inventoryItems[0].id) : "", qty: "1" }])}
+                        className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add material
+                      </button>
+                    </div>
                   </div>
+
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-800/50 bg-slate-950/70 p-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-teal-400">Material kits</span>
+                    <select
+                      value={kitSel}
+                      onChange={(e) => { setKitSel(e.target.value); if (e.target.value) applyKit(e.target.value); }}
+                      className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] font-bold text-white outline-none"
+                    >
+                      <option value="">Load a saved kit…</option>
+                      {kits.map((k) => (
+                        <option key={k.name} value={k.name}>
+                          {k.name} ({k.items.length})
+                        </option>
+                      ))}
+                    </select>
+                    {kitSel && (
+                      <button
+                        type="button"
+                        onClick={() => { deleteKit(kitSel); setKitSel(""); }}
+                        className="p-1 text-slate-500 transition hover:text-rose-400"
+                        title={`Delete the kit "${kitSel}"`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {kitMsg && <span className="text-[11px] font-bold text-teal-300">{kitMsg}</span>}
+                  </div>
+
+                  {shortfalls.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-2.5">
+                      <div className="text-[11px] font-black text-amber-300">
+                        ⚠ Stock check — {shortfalls.length} item{shortfalls.length === 1 ? "" : "s"} short of stock for this order:
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {shortfalls.slice(0, 4).map((s) => (
+                          <div key={s.itemId} className="text-[11px] font-bold text-amber-200">
+                            {s.name}: needs {s.needed}{s.unit ? ` ${s.unit}` : ""}, only {s.stock} in stock — short by {s.missing}
+                          </div>
+                        ))}
+                        {shortfalls.length > 4 && (
+                          <div className="text-[11px] text-amber-200/70">…and {shortfalls.length - 4} more</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {bom.length === 0 ? (
                     <div className="py-3 text-center text-[11px] text-slate-500">
                       No materials requested yet — add panels, edge banding, hardware…
@@ -1107,6 +1229,20 @@ export default function OrdersView({
                           className="w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center font-mono text-xs text-white"
                           title="Quantity"
                         />
+                        {(() => {
+                          const it = itemsById.get(Number(b.itemId));
+                          if (!it) return null;
+                          const need = Number(b.qty) || 0;
+                          const stock = Number(it.stockQuantity) || 0;
+                          return need > stock ? (
+                            <span
+                              className="shrink-0 rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-black text-rose-300"
+                              title={`${it.name}: needs ${need}, only ${stock} ${it.unit || ""} in stock`}
+                            >
+                              −{need - stock}
+                            </span>
+                          ) : null;
+                        })()}
                         <button type="button" onClick={() => setBom(list => list.filter((_, k) => k !== i))} className="p-1.5 text-slate-500 transition hover:text-rose-400">
                           <Trash2 className="h-4 w-4" />
                         </button>

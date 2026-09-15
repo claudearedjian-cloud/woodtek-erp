@@ -35,6 +35,7 @@ compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
 compile("src/lib/idle.ts", "lib/idle.js");
+compile("src/lib/bomKits.ts", "lib/bomKits.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -390,6 +391,37 @@ check(s5.remainingSec === 300 && !s5.warn, "idle: fresh activity -> full countdo
 const fakeStorage = { getItem: (k) => (k === idl.IDLE_STORAGE_KEY ? "5" : null) };
 check(idl.loadIdleMinutes(fakeStorage) === 5, "idle: reads the per-device setting from storage");
 check(idl.loadIdleMinutes({ getItem: () => null }) === 15, "idle: missing setting -> default");
+
+// ---- BOM kits + order-entry stock check ----
+const bk = require("./compiled/lib/bomKits.js");
+const kits = bk.sanitizeKitList([
+  { name: "  Standard cabinet ", items: [{ itemId: 3, qty: "4" }, { itemId: 3, qty: 2 }, { itemId: "7", qty: 1.9 }, { itemId: 0, qty: 5 }, { itemId: 9, qty: -3 }] },
+  { name: "standard cabinet" },                       // duplicate name (case-insensitive) -> dropped
+  { name: "" },                                        // no name -> dropped
+  "junk",                                              // non-object -> dropped
+]);
+check(kits.length === 1 && kits[0].name === "Standard cabinet", "bomKits: names trimmed, dupes dropped");
+check(kits[0].items.length === 2 && kits[0].items[0].qty === 6 && kits[0].items[1].qty === 1, "bomKits: quantities merged as integers, invalid items dropped");
+check(bk.sanitizeKitList("not-a-list").length === 0, "bomKits: non-array rejected");
+const mergedDraft = bk.mergeBomKit(
+  [{ itemId: "3", qty: "2" }, { itemId: "12", qty: "1" }],
+  { name: "kit", items: [{ itemId: 3, qty: 4 }, { itemId: 8, qty: 2 }] },
+);
+check(mergedDraft.length === 3, "bomKits: merging keeps existing lines and adds new ones");
+const line3 = mergedDraft.find((l) => l.itemId === "3");
+check(line3 && line3.qty === "6", "bomKits: duplicate item quantities SUM (2+4=6)");
+const itemsMap = new Map([
+  [3, { name: "MDF 18mm", stockQuantity: 8, unit: "sheet" }],
+  [8, { name: "Edge banding", stockQuantity: 100, unit: "m" }],
+  [12, { name: "Hinges", stockQuantity: 0, unit: "pcs" }],
+]);
+const short = bk.stockShortfall(mergedDraft, itemsMap);
+check(short.length === 1 && short[0].itemId === 12, "stock check: only genuinely short lines flagged (MDF needs 6, has 8 -> fine)");
+check(short[0].needed === 1 && short[0].stock === 0 && short[0].missing === 1, "stock check: missing = needed - stock");
+const hinge = short.find((s) => s.itemId === 12);
+check(hinge && hinge.missing === 1 && hinge.stock === 0, "stock check: zero-stock flagged with the gap");
+check(bk.stockShortfall([{ itemId: "", qty: "5" }, { itemId: "3", qty: "0" }], itemsMap).length === 0, "stock check: empty/zero lines ignored");
+check(bk.stockShortfall([{ itemId: "99", qty: "5" }], itemsMap).length === 0, "stock check: unknown items skipped (API rejects them at creation)");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

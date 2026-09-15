@@ -66,6 +66,8 @@ export async function GET() {
         status: orders.status,
         dueDate: orders.dueDate,
         customerCompany: customers.company,
+        customerAddress: customers.address,
+        customerPhone: customers.phone,
       })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))

@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import { eq, desc, gte, lte, and } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { baseRoleOf } from "@/lib/permissions";
 
 export async function GET(request: Request) {
   const { error: authError } = await authorize("reports:read");
@@ -157,26 +158,58 @@ export async function POST(request: Request) {
         }),
       };
     } else if (type === "Operator Performance") {
-      const allUsers = await db.select().from(users).where(eq(users.role, "Machine Operator"));
+      // v2 (2026-09-14): respects the date range (by completion time), shows
+      // estimated vs actual per operator AND per machine, and includes every
+      // operator-based role (custom roles inheriting Machine Operator).
+      const allUsers = await db.select().from(users);
+      const operators = allUsers.filter(u => {
+        const role = String(u.role || "");
+        return role === "Machine Operator" || baseRoleOf(role) === "Machine Operator";
+      });
       const allOps = await db.select().from(orderOperations);
+      const from = new Date(`${dateFrom}T00:00:00`).getTime();
+      const to = new Date(`${dateTo}T23:59:59.999`).getTime();
+      const completedInRange = allOps.filter(o => {
+        if (o.status !== "Completed" || !o.endTime) return false;
+        const t = new Date(o.endTime).getTime();
+        return Number.isFinite(t) && t >= from && t <= to;
+      });
+
+      const eff = (est: number, act: number, count: number) =>
+        est > 0 && act > 0 ? Math.min(200, Math.round((est / act) * 100)) : count > 0 ? 100 : 0;
+
       reportData = {
-        operators: allUsers.map(u => {
-          const operatorOps = allOps.filter(o => o.operatorId === u.id && o.status === "Completed");
-          const totalEstimated = operatorOps.reduce((sum, o) => sum + (o.estimatedMinutes || 0), 0);
-          const totalActual = operatorOps.reduce((sum, o) => sum + (o.actualMinutes || 0), 0);
-          // Efficiency = planned time / actual time. >100% = faster than plan.
-          const efficiency = totalEstimated > 0 && totalActual > 0
-            ? Math.min(200, Math.round((totalEstimated / totalActual) * 100))
-            : operatorOps.length > 0 ? 100 : 0;
+        window: { from: dateFrom, to: dateTo },
+        operators: operators.map(u => {
+          const mine = completedInRange.filter(o => o.operatorId === u.id);
+          const totalEstimated = mine.reduce((sum, o) => sum + (o.estimatedMinutes || 0), 0);
+          const totalActual = mine.reduce((sum, o) => sum + (o.actualMinutes || 0), 0);
           return {
             name: u.name,
             role: u.role,
-            completedOperations: operatorOps.length,
+            completedOperations: mine.length,
             totalMinutes: Math.round(totalActual),
             totalHours: Math.round((totalActual / 60) * 10) / 10,
-            avgEfficiency: efficiency,
+            totalEstimated,
+            totalActual: Math.round(totalActual),
+            avgDeltaMin: mine.length > 0 ? Math.round((totalActual - totalEstimated) / mine.length) : 0,
+            avgEfficiency: eff(totalEstimated, totalActual, mine.length),
           };
         }),
+        machines: (await db.select({ id: machines.id, code: machines.code, name: machines.name }).from(machines)).map(m => {
+          const its = completedInRange.filter(o => o.machineId === m.id);
+          const totalEstimated = its.reduce((sum, o) => sum + (o.estimatedMinutes || 0), 0);
+          const totalActual = its.reduce((sum, o) => sum + (o.actualMinutes || 0), 0);
+          return {
+            code: m.code,
+            name: m.name,
+            completedOperations: its.length,
+            totalEstimated,
+            totalActual: Math.round(totalActual),
+            avgActualMin: its.length > 0 ? Math.round(totalActual / its.length) : 0,
+            avgEfficiency: eff(totalEstimated, totalActual, its.length),
+          };
+        }).filter(m => m.completedOperations > 0),
       };
     } else if (type === "Downtime Analysis") {
       const dateFromObj = new Date(dateFrom);

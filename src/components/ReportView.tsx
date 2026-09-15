@@ -298,16 +298,40 @@ export default function ReportView({ currentUser, searchQuery = "" }: ReportView
 
       autoTable(doc, {
         startY,
-        head: [["Operator", "Completed Ops", "Total Hours", "Efficiency"]],
+        head: [["Operator", "Ops", "Est h", "Actual h", "Avg Δ min/op", "Efficiency"]],
         body: data.operators.map((o: any) => [
           o.name,
           String(o.completedOperations),
+          String(o.totalEstimated != null ? Math.round((o.totalEstimated / 60) * 10) / 10 : "-"),
           String(o.totalHours),
+          String(o.avgDeltaMin != null ? (o.avgDeltaMin > 0 ? `+${o.avgDeltaMin}` : o.avgDeltaMin) : "-"),
           `${o.avgEfficiency}%`,
         ]),
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
       });
+
+      const machines = data.machines ?? [];
+      if (machines.length > 0) {
+        startY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : startY + 60;
+        doc.setFontSize(12);
+        doc.text("Machines — estimated vs actual", 14, startY);
+        startY += 6;
+        autoTable(doc, {
+          startY,
+          head: [["Machine", "Ops", "Est h", "Actual h", "Avg min/op", "Efficiency"]],
+          body: machines.map((m: any) => [
+            `${m.code ?? ""}${m.name ? ` - ${m.name}` : ""}`,
+            String(m.completedOperations),
+            String(Math.round(((m.totalEstimated ?? 0) / 60) * 10) / 10),
+            String(Math.round(((m.totalActual ?? 0) / 60) * 10) / 10),
+            String(m.avgActualMin ?? "-"),
+            `${m.avgEfficiency}%`,
+          ]),
+          theme: "grid",
+          headStyles: { fillColor: [30, 41, 59] },
+        });
+      }
     } else if (reportType === "Downtime Analysis") {
       doc.setFontSize(14);
       doc.text("Downtime Analysis", 14, startY);
@@ -438,9 +462,25 @@ export default function ReportView({ currentUser, searchQuery = "" }: ReportView
         data.clients.map((c: any) => [c.company, c.contactName, c.totalOrders, c.activeOrders, c.totalSpend]),
       );
     } else if (reportType === "Operator Performance") {
+      const opRows = data.operators.map((o: any) => [
+        o.name,
+        o.completedOperations,
+        o.totalEstimated != null ? Math.round((o.totalEstimated / 60) * 10) / 10 : "",
+        o.totalHours,
+        o.avgDeltaMin ?? "",
+        `${o.avgEfficiency}%`,
+      ]);
+      const machineRows = (data.machines ?? []).map((m: any) => [
+        `MACHINE: ${m.code ?? ""}${m.name ? ` ${m.name}` : ""}`,
+        m.completedOperations,
+        Math.round(((m.totalEstimated ?? 0) / 60) * 10) / 10,
+        Math.round(((m.totalActual ?? 0) / 60) * 10) / 10,
+        m.avgActualMin ?? "",
+        `${m.avgEfficiency}%`,
+      ]);
       csv = toCSV(
-        ["Operator", "Completed Ops", "Total Hours", "Efficiency"],
-        data.operators.map((o: any) => [o.name, o.completedOperations, o.totalHours, `${o.avgEfficiency}%`]),
+        ["Operator / Machine", "Completed Ops", "Estimated h", "Actual h", "Avg Δ min/op", "Efficiency"],
+        [...opRows, ...machineRows],
       );
     } else if (reportType === "Downtime Analysis") {
       csv = toCSV(
@@ -795,28 +835,72 @@ function ReportContent({ data, type }: { data: any; type: string }) {
   }
 
   if (type === "Operator Performance") {
+    const effChip = (v: number) => (
+      <span className={`text-xs font-bold px-2 py-1 rounded ${v >= 100 ? "bg-emerald-100 text-emerald-700" : v >= 80 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{v}%</span>
+    );
     return (
-      <div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
-              <th className="py-2 px-3">Operator</th>
-              <th className="py-2 px-3 text-center">Completed Ops</th>
-              <th className="py-2 px-3 text-right">Total Hours</th>
-              <th className="py-2 px-3 text-right">Avg Efficiency</th>
-            </tr>
-          </thead>
-          <tbody className="text-sm">
-            {data.operators.map((o: any, idx: number) => (
-              <tr key={idx} className="border-b border-slate-100">
-                <td className="py-2 px-3 font-bold">{o.name}</td>
-                <td className="py-2 px-3 text-center font-mono">{o.completedOperations}</td>
-                <td className="py-2 px-3 text-right font-mono font-bold">{o.totalHours}</td>
-                <td className="py-2 px-3 text-right"><span className="text-xs font-bold px-2 py-1 rounded bg-emerald-100 text-emerald-700">{o.avgEfficiency}%</span></td>
+      <div className="space-y-6">
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-slate-700">Operators — estimated vs actual (completed in the selected period)</h3>
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                <th className="py-2 px-3">Operator</th>
+                <th className="py-2 px-3 text-center">Completed Ops</th>
+                <th className="py-2 px-3 text-right">Estimated h</th>
+                <th className="py-2 px-3 text-right">Actual h</th>
+                <th className="py-2 px-3 text-right">Avg Δ min/op</th>
+                <th className="py-2 px-3 text-right">Efficiency</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="text-sm">
+              {data.operators.map((o: any, idx: number) => (
+                <tr key={idx} className="border-b border-slate-100">
+                  <td className="py-2 px-3 font-bold">{o.name}</td>
+                  <td className="py-2 px-3 text-center font-mono">{o.completedOperations}</td>
+                  <td className="py-2 px-3 text-right font-mono">{o.totalEstimated != null ? Math.round((o.totalEstimated / 60) * 10) / 10 : "—"}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold">{o.totalHours}</td>
+                  <td className={`py-2 px-3 text-right font-mono ${Number(o.avgDeltaMin) > 5 ? "text-rose-600" : Number(o.avgDeltaMin) < -5 ? "text-emerald-600" : ""}`}>
+                    {o.avgDeltaMin != null ? (o.avgDeltaMin > 0 ? `+${o.avgDeltaMin}` : o.avgDeltaMin) : "—"}
+                  </td>
+                  <td className="py-2 px-3 text-right">{effChip(Number(o.avgEfficiency) || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-slate-700">Machines — where the time actually went</h3>
+          {(data.machines ?? []).length === 0 ? (
+            <p className="text-sm text-slate-500 italic">No completed operations on machines in this period.</p>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b-2 border-slate-200 text-xs font-bold text-slate-600 uppercase">
+                  <th className="py-2 px-3">Machine</th>
+                  <th className="py-2 px-3 text-center">Completed Ops</th>
+                  <th className="py-2 px-3 text-right">Estimated h</th>
+                  <th className="py-2 px-3 text-right">Actual h</th>
+                  <th className="py-2 px-3 text-right">Avg min/op</th>
+                  <th className="py-2 px-3 text-right">Efficiency</th>
+                </tr>
+              </thead>
+              <tbody className="text-sm">
+                {data.machines.map((m: any, idx: number) => (
+                  <tr key={idx} className="border-b border-slate-100">
+                    <td className="py-2 px-3 font-bold">{m.code}{m.name ? ` — ${m.name}` : ""}</td>
+                    <td className="py-2 px-3 text-center font-mono">{m.completedOperations}</td>
+                    <td className="py-2 px-3 text-right font-mono">{Math.round(((m.totalEstimated ?? 0) / 60) * 10) / 10}</td>
+                    <td className="py-2 px-3 text-right font-mono font-bold">{Math.round(((m.totalActual ?? 0) / 60) * 10) / 10}</td>
+                    <td className="py-2 px-3 text-right font-mono">{m.avgActualMin}</td>
+                    <td className="py-2 px-3 text-right">{effChip(Number(m.avgEfficiency) || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <p className="text-xs text-slate-500">Efficiency = estimated / actual time. +Δ means work took longer than planned on average per operation.</p>
       </div>
     );
   }
