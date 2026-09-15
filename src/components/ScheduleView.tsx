@@ -12,11 +12,14 @@ import {
   Plus,
   RefreshCw,
   Route,
+  StickyNote,
   Trash2,
   Truck,
   Wand2,
   X,
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { can } from "@/lib/permissions";
 import {
   STAGE_LABELS,
@@ -110,6 +113,71 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     } finally {
       setDispatchBusy(null);
     }
+  };
+
+  // Packing slip: branded PDF with the order's BOM lines + signature lines.
+  const generatePackingSlip = (o: any) => {
+    const doc = new jsPDF();
+    // Branded band
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 26, "F");
+    doc.setFillColor(245, 158, 11);
+    doc.rect(0, 26, 210, 1.2, "F");
+    doc.setTextColor(245, 158, 11);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("WOODTEK", 14, 12);
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.text("PACKING SLIP", 14, 20);
+    doc.setFontSize(9);
+    doc.setTextColor(200, 210, 230);
+    doc.text(`Printed ${new Date().toLocaleString()}`, 196, 12, { align: "right" });
+    doc.text(`Stage: ${STAGE_LABELS[o.stage as keyof typeof STAGE_LABELS] ?? o.stage}`, 196, 20, { align: "right" });
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(22);
+    doc.setFont("helvetica", "bold");
+    doc.text(String(o.orderNumber ?? ""), 14, 40);
+    doc.setFontSize(12);
+    doc.text(String(o.title ?? ""), 14, 48);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    if (o.customerCompany) doc.text(`Client: ${o.customerCompany}`, 14, 56);
+    if (o.projectType) doc.text(`Category: ${o.projectType}`, 14, 63);
+    if (o.dueDate) doc.text(`Due: ${new Date(o.dueDate).toLocaleDateString()}`, 130, 56);
+
+    const rows = (o.materials ?? []).map((m: any, i: number) => [
+      String(i + 1),
+      String(m.itemName ?? "Item"),
+      String(m.itemSku ?? "-"),
+      String(m.quantityUsed ?? ""),
+      String(m.itemUnit || "pcs"),
+      "",
+    ]);
+    autoTable(doc, {
+      startY: 72,
+      head: [["#", "Material", "SKU", "Qty", "Unit", "Checked"]],
+      body: rows.length > 0 ? rows : [["-", "No materials on this order", "-", "-", "-", ""]],
+      styles: { fontSize: 9, cellPadding: 2.5 },
+      headStyles: { fillColor: [30, 41, 59], textColor: [245, 158, 11] },
+      alternateRowStyles: { fillColor: [245, 247, 251] },
+      columnStyles: { 0: { cellWidth: 10 }, 3: { halign: "right" }, 5: { cellWidth: 22 } },
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY;
+    const y = (typeof finalY === "number" ? finalY : 110) + 14;
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text("Packed by: ____________________________", 14, y);
+    doc.text("Date: ______________", 130, y);
+    doc.text("Received by: ____________________________", 14, y + 12);
+    doc.text("Date: ______________", 130, y + 12);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text("WoodTek ERP — Furniture Service Center · This slip lists everything allocated to the order.", 14, y + 26);
+
+    doc.save(`PackingSlip-${String(o.orderNumber ?? o.id)}.pdf`);
   };
 
   const setDispatchStage = async (orderId: number, stage: string) => {
@@ -406,6 +474,16 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
+                    </button>
+                  )}
+                  {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
+                    <button
+                      type="button"
+                      onClick={() => generatePackingSlip(o)}
+                      title="Download a printable packing slip PDF with the order's materials and signature lines"
+                      className="flex items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
+                    >
+                      <StickyNote className="h-3.5 w-3.5" /> Packing slip
                     </button>
                   )}
                 </div>

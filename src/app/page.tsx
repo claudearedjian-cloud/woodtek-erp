@@ -44,6 +44,14 @@ export default function WoodTekERP() {
   }, [activeTab]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showNewModal, setShowNewModal] = useState(false);
+  // Clone order: seed payload from OrderWorkflowDetail's Clone button, consumed
+  // by OrdersView's New Order form prefill.
+  const [cloneSeed, setCloneSeed] = useState<any>(null);
+  const handleCloneOrder = (seed: any) => {
+    setCloneSeed(seed);
+    setActiveTab("orders");
+    setShowNewModal(true);
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authCandidate, setAuthCandidate] = useState<any>(null);
@@ -350,14 +358,15 @@ export default function WoodTekERP() {
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}
               showNewModal={showNewModal && canCreateOrders} setShowNewModal={setShowNewModal} customers={customers}
               templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} inventoryItems={inventory}
-              presetStatus={ordersPresetStatus} />
+              presetStatus={ordersPresetStatus} cloneSeed={cloneSeed} onCloneConsumed={() => setCloneSeed(null)} />
           )}
           {activeTab === "schedule" && (
             <ScheduleView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} searchQuery={searchQuery} />
           )}
           {activeTab.startsWith("order-") && (
             <OrderWorkflowDetail orderId={Number(activeTab.split("-")[1])} onBack={() => setActiveTab("orders")}
-              onRefresh={fetchAllData} currentUser={currentUser} machines={machines} inventoryItems={inventory} />
+              onRefresh={fetchAllData} currentUser={currentUser} machines={machines} inventoryItems={inventory}
+              onCloneOrder={canCreateOrders ? handleCloneOrder : undefined} />
           )}
           {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={fetchAllData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}

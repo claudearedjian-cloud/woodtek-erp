@@ -15,6 +15,8 @@ export interface BomStatusEntry {
   status: BomStatus;
   machineId?: number | null;
   updatedAt?: string;
+  /** Partial-delivery tally (units already sent to the floor). Null = none. */
+  deliveredQty?: number | null;
 }
 
 export type ReceptionState = "Received" | "Not Received" | "Declined";
@@ -69,11 +71,13 @@ export function setBomStatus(
   allocationId: number,
   status: BomStatus,
   machineId?: number | null,
+  deliveredQty?: number | null,
 ): void {
   const data = readRaw();
   data.entries[String(allocationId)] = {
     status,
     machineId: machineId ?? null,
+    deliveredQty: typeof deliveredQty === "number" && deliveredQty > 0 ? deliveredQty : null,
     updatedAt: new Date().toISOString(),
   };
   writeRaw(data);

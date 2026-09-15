@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { PackageCheck, RefreshCw, Send, TriangleAlert, Undo2, Warehouse as WarehouseIcon } from "lucide-react";
 import { can } from "@/lib/permissions";
+import { sentQty } from "@/lib/bomDelivery";
 
 interface Line {
   id: number;
@@ -22,6 +23,7 @@ interface Line {
   released: boolean;
   status: "Requested" | "Prepared" | "Delivered";
   machineId: number | null;
+  deliveredQty?: number | null;
 }
 
 interface BoardOrder {
@@ -73,13 +75,18 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
     load();
   }, [load]);
 
-  const setStatus = async (line: Line, status: Line["status"], machineId?: number | null) => {
+  const setStatus = async (line: Line, status: Line["status"], machineId?: number | null, deliverQty?: number) => {
     setBusyId(line.id);
     try {
       const res = await fetch("/api/bom", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allocationId: line.id, status, machineId: machineId ?? line.machineId }),
+        body: JSON.stringify({
+          allocationId: line.id,
+          status,
+          machineId: machineId ?? line.machineId,
+          ...(deliverQty != null ? { deliverQty } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed to update status");
@@ -89,6 +96,19 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
     } finally {
       setBusyId(null);
     }
+  };
+
+  // Partial send: ask for the quantity, clamp it, pick the resulting status.
+  const sendPartial = (line: Line) => {
+    const remaining = line.quantityUsed - sentQty(line);
+    const raw = window.prompt(
+      `Send how many of "${line.itemName || "this line"}" to the floor? (0–${line.quantityUsed}, ${remaining} not sent yet)`,
+      String(remaining),
+    );
+    if (raw == null) return; // cancelled
+    const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(raw) || 0)));
+    if (n <= 0) return;
+    setStatus(line, n >= line.quantityUsed ? "Delivered" : "Prepared", line.machineId, n);
   };
 
   const withLines = orders.filter((o) => o.materials.length > 0);
@@ -200,6 +220,15 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                         {line.quantityUsed}
                         <span className="ml-1 text-[10px] font-bold text-slate-500">{line.itemUnit || "pcs"}</span>
                       </div>
+                      {(() => {
+                        const sent = sentQty(line);
+                        if (line.status === "Requested" || line.quantityUsed <= 1 || sent <= 0 || sent >= line.quantityUsed) return null;
+                        return (
+                          <div className="mt-0.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-black text-sky-300" title="Units already sent to the floor">
+                            {sent}/{line.quantityUsed} sent
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {isManager ? (
@@ -247,14 +276,27 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                           </button>
                         )}
                         {line.status === "Prepared" && (
-                          <button
-                            type="button"
-                            disabled={busyId === line.id}
-                            onClick={() => setStatus(line, "Delivered")}
-                            className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
-                          >
-                            <Send className="h-3.5 w-3.5" /> Send
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={busyId === line.id}
+                              onClick={() => setStatus(line, "Delivered")}
+                              className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
+                            >
+                              <Send className="h-3.5 w-3.5" /> Send
+                            </button>
+                            {line.quantityUsed > 1 && (
+                              <button
+                                type="button"
+                                disabled={busyId === line.id}
+                                onClick={() => sendPartial(line)}
+                                title="Send part of this quantity now, the rest later"
+                                className="rounded-lg border border-sky-500/50 bg-sky-500/10 px-2 py-1.5 text-[10px] font-black text-sky-300 hover:bg-sky-500/20 disabled:opacity-50"
+                              >
+                                Partial…
+                              </button>
+                            )}
+                          </>
                         )}
                         {line.status !== "Requested" && (
                           <button

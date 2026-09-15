@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, orders } from "@/db/schema";
+import { customers, inventoryItems, orderMaterials, orders } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import {
@@ -72,10 +72,35 @@ export async function GET() {
       .orderBy(asc(orders.dueDate));
 
     const stages = readFile().stages;
+
+    // BOM lines for the packing slips (client-side PDF, no extra fetch).
+    const ids = completed.map((o) => o.id);
+    let mats: { orderId: number; itemName: string | null; itemSku: string | null; itemUnit: string | null; quantityUsed: number }[] = [];
+    if (ids.length > 0) {
+      mats = await db
+        .select({
+          orderId: orderMaterials.orderId,
+          itemName: inventoryItems.name,
+          itemSku: inventoryItems.sku,
+          itemUnit: inventoryItems.unit,
+          quantityUsed: orderMaterials.quantityUsed,
+        })
+        .from(orderMaterials)
+        .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
+        .where(inArray(orderMaterials.orderId, ids));
+    }
+    const matsByOrder = new Map<number, typeof mats>();
+    for (const m of mats) {
+      const list = matsByOrder.get(m.orderId) ?? [];
+      list.push(m);
+      matsByOrder.set(m.orderId, list);
+    }
+
     const payload = completed.map((o) => ({
       ...o,
       stage: (stages[String(o.id)]?.stage as DispatchStage) ?? defaultStage(o.projectType),
       proof: stages[String(o.id)]?.proof ?? null,
+      materials: matsByOrder.get(o.id) ?? [],
     }));
     return NextResponse.json({ orders: payload });
   } catch (err: unknown) {

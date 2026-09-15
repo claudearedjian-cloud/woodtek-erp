@@ -43,6 +43,8 @@ interface OrdersViewProps {
   currentUser?: any;
   inventoryItems?: any[];
   presetStatus?: string | null;
+  cloneSeed?: any;
+  onCloneConsumed?: () => void;
 }
 
 export default function OrdersView({
@@ -59,6 +61,8 @@ export default function OrdersView({
   currentUser,
   inventoryItems = [],
   presetStatus = null,
+  cloneSeed = null,
+  onCloneConsumed,
 }: OrdersViewProps) {
   const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
   const [statusFilter, setStatusFilter] = useState(presetStatus ?? "All");
@@ -111,6 +115,52 @@ export default function OrdersView({
   // New-order modal wizard tab: details -> routing -> materials.
   const [orderTab, setOrderTab] = useState<"details" | "routing" | "materials">("details");
   useEffect(() => { if (showNewModal) setOrderTab("details"); }, [showNewModal]);
+
+  // Clone order: pre-fill the whole wizard from an existing order's seed
+  // (client, routing steps with their exact machines, BOM lines).
+  useEffect(() => {
+    if (!cloneSeed) return;
+    if (cloneSeed.customerId != null && customers.some((c: any) => String(c.id) === String(cloneSeed.customerId))) {
+      setCustomerId(cloneSeed.customerId);
+    }
+    if (cloneSeed.title) setTitle(String(cloneSeed.title));
+    const pt = cloneSeed.projectType ? String(cloneSeed.projectType) : "";
+    if (pt) {
+      setProjectType(pt);
+      setProjectTypes((prev) => (prev.includes(pt) ? prev : [...prev, pt]));
+    }
+    if (cloneSeed.priority) setPriority(String(cloneSeed.priority));
+    if (cloneSeed.totalValue) setTotalValue(String(cloneSeed.totalValue));
+    if (typeof cloneSeed.dueDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(cloneSeed.dueDate)) {
+      setDueDate(cloneSeed.dueDate);
+    }
+    setNotes(cloneSeed.notes ? String(cloneSeed.notes) : "");
+    if (Array.isArray(cloneSeed.steps) && cloneSeed.steps.length > 0) {
+      setSteps(
+        cloneSeed.steps
+          .map((s: any) => ({
+            operationName: String(s.operationName || "New Operation"),
+            machineId: s.machineId != null ? String(s.machineId) : "",
+            machineCategory: String(s.machineCategory || ""),
+            estimatedMinutes: String(s.estimatedMinutes || 60),
+            auto: Boolean(s.auto),
+          }))
+          .filter((s: StepDraft) => s.operationName.trim()),
+      );
+    }
+    if (Array.isArray(cloneSeed.bom) && cloneSeed.bom.length > 0) {
+      setBom(
+        cloneSeed.bom
+          .map((b: any) => ({ itemId: String(b.itemId ?? ""), qty: String(b.qty ?? "1") }))
+          .filter((b: { itemId: string }) => b.itemId),
+      );
+    }
+    setRecipeId("");
+    setRecipeName("");
+    setOrderTab("details");
+    onCloneConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloneSeed]);
 
   // Machine categories: managed list (data file) merged with machine-derived ones.
   const [categoryList, setCategoryList] = useState<string[]>([]);

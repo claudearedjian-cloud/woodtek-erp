@@ -24,6 +24,7 @@ import {
   DollarSign,
   FileText,
   QrCode,
+  Copy,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -38,6 +39,7 @@ interface OrderWorkflowDetailProps {
   currentUser: any;
   machines: any[];
   inventoryItems: any[];
+  onCloneOrder?: (seed: any) => void;
 }
 
 export default function OrderWorkflowDetail({
@@ -47,6 +49,7 @@ export default function OrderWorkflowDetail({
   currentUser,
   machines = [],
   inventoryItems = [],
+  onCloneOrder,
 }: OrderWorkflowDetailProps) {
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -557,6 +560,35 @@ export default function OrderWorkflowDetail({
           >
             <FileText className="w-4 h-4" /> Quotation PDF
           </button>
+          {(currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator") && onCloneOrder && (
+            <button
+              onClick={() =>
+                onCloneOrder({
+                  customerId: order.customerId,
+                  title: `${order.title || "Order"} (copy)`,
+                  projectType: order.projectType,
+                  priority: order.priority,
+                  totalValue: order.totalValue != null ? String(order.totalValue) : "",
+                  dueDate: order.dueDate ? new Date(order.dueDate).toISOString().split("T")[0] : "",
+                  notes: order.notes || "",
+                  steps: (order.operations ?? []).map((op: any) => ({
+                    operationName: op.operationName,
+                    machineId: op.machineId != null ? String(op.machineId) : "",
+                    machineCategory: op.machineCategory || "",
+                    estimatedMinutes: String(op.estimatedMinutes || 60),
+                    auto: false,
+                  })),
+                  bom: (order.materials ?? [])
+                    .filter((m: any) => m.itemId != null)
+                    .map((m: any) => ({ itemId: String(m.itemId), qty: String(m.quantityUsed) })),
+                })
+              }
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-emerald-300 hover:border-emerald-500/50 hover:text-emerald-200 transition"
+              title="Clone this order — opens the New Order form pre-filled with the same client, routing steps and materials"
+            >
+              <Copy className="w-4 h-4" /> Clone
+            </button>
+          )}
           <button
             onClick={openQr}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-sky-300 hover:border-sky-500/50 hover:text-sky-200 transition"

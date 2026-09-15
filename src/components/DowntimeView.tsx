@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,17 +9,14 @@ import {
   Square,
   Trash2,
   Zap,
+  BarChart3,
+  Download,
 } from "lucide-react";
-
-const DOWNTIME_REASONS = [
-  "Mechanical Failure",
-  "Electrical Fault",
-  "Material Shortage",
-  "Setup & Changeover",
-  "Operator Unavailable",
-  "Quality Issue",
-  "Other",
-];
+import {
+  DOWNTIME_REASON_CODES as DOWNTIME_REASONS,
+  buildPareto,
+  paretoToCsv,
+} from "@/lib/downtimeReasons";
 
 interface DowntimeViewProps {
   currentUser: any;
@@ -42,7 +39,7 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
 
   // Start-downtime form
   const [machineId, setMachineId] = useState("");
-  const [reason, setReason] = useState(DOWNTIME_REASONS[0]);
+  const [reason, setReason] = useState<string>(DOWNTIME_REASONS[0]);
   const [orderId, setOrderId] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -149,6 +146,20 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
   const totalTodayMinutes = closedEvents
     .filter(e => new Date(e.startedAt).toDateString() === new Date().toDateString())
     .reduce((s, e) => s + (e.durationMinutes || 0), 0);
+
+  // Downtime Pareto: minutes per reason code over a selectable window.
+  const [paretoDays, setParetoDays] = useState<number | null>(30);
+  const pareto = useMemo(() => buildPareto(events, paretoDays), [events, paretoDays]);
+  const paretoMax = pareto.rows.reduce((m, r) => Math.max(m, r.minutes), 0);
+  const downloadParetoCsv = () => {
+    const blob = new Blob([paretoToCsv(pareto)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `downtime-pareto-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const startDowntimeAllowed = currentUser?.role === "Manager" || currentUser?.role === "Machine Operator" || currentUser?.role === "Technician";
 
@@ -304,6 +315,63 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Downtime Pareto — which causes eat the minutes */}
+      <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-amber-400" /> Downtime Pareto — top causes
+          </h3>
+          <div className="flex items-center gap-2">
+            <select
+              value={paretoDays == null ? "all" : String(paretoDays)}
+              onChange={(e) => setParetoDays(e.target.value === "all" ? null : Number(e.target.value))}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[11px] font-bold text-white"
+            >
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="all">All time</option>
+            </select>
+            <button
+              type="button"
+              onClick={downloadParetoCsv}
+              disabled={pareto.rows.length === 0}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white disabled:opacity-40"
+            >
+              <Download className="w-3.5 h-3.5" /> CSV
+            </button>
+          </div>
+        </div>
+        {pareto.rows.length === 0 ? (
+          <div className="py-4 text-center text-xs text-slate-500">No downtime recorded in this period.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {pareto.rows.map((r) => (
+              <div key={r.reason} className="flex items-center gap-3">
+                <span className={`w-44 shrink-0 truncate text-xs font-bold ${r.band === "A" ? "text-rose-300" : "text-slate-400"}`} title={r.reason}>
+                  {r.reason}
+                </span>
+                <div className="h-4 flex-1 overflow-hidden rounded bg-slate-950/70">
+                  <div
+                    className={`h-full rounded ${r.band === "A" ? "bg-gradient-to-r from-rose-500 to-rose-400" : "bg-slate-600"}`}
+                    style={{ width: `${paretoMax > 0 ? Math.max(2, (r.minutes / paretoMax) * 100) : 0}%` }}
+                  />
+                </div>
+                <span className="w-16 shrink-0 text-right font-mono text-xs font-bold text-white">{fmtDur(r.minutes)}</span>
+                <span className="w-12 shrink-0 text-right text-[11px] font-bold text-slate-400">{r.events}x</span>
+                <span className="w-24 shrink-0 text-right text-[11px] font-bold text-slate-400">{r.share}% · cum {r.cumulative}%</span>
+                <span className={`w-5 shrink-0 rounded text-center text-[9px] font-black ${r.band === "A" ? "bg-rose-500/20 text-rose-300" : "bg-slate-800 text-slate-500"}`}>
+                  {r.band}
+                </span>
+              </div>
+            ))}
+            <div className="pt-2 text-[10px] font-bold text-slate-500">
+              A = causes inside the first 80% of downtime minutes — fix these first · {pareto.totalEvents} stoppages · {fmtDur(pareto.totalMinutes)} total
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

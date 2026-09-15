@@ -28,6 +28,8 @@ compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
 compile("src/lib/menuIcons.ts", "lib/menuIcons.js");
+compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
+compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -240,6 +242,47 @@ check(resNav.sections.length === 1 && resNav.sections[0].icon === "target", "ico
 check(resNav.top.concat(...resNav.sections.map((s) => s.items)).find((i) => i.id === "quality").icon === "hammer", "icons: item icon resolved");
 const ssrNav = renderToString(React.createElement(Sidebar, props("Manager", sanNav)));
 check(ssrNav.includes("Board"), "icons SSR: sidebar renders with pinned icons (no crash)");
+
+// ---- partial BOM delivery helpers ----
+const bd = require("./compiled/lib/bomDelivery.js");
+check(bd.clampDeliveredQty("7", 10) === 7, "bomDelivery: numeric string clamped to line qty range");
+check(bd.clampDeliveredQty(99, 10) === 10, "bomDelivery: over-qty clamped down to line qty");
+check(bd.clampDeliveredQty(-3, 10) === 0, "bomDelivery: negative floored to 0");
+check(bd.clampDeliveredQty("abc", 10) === 0, "bomDelivery: garbage floored to 0");
+check(bd.sentQty({ status: "Delivered", quantityUsed: 10, deliveredQty: null }) === 10, "bomDelivery: Delivered line is fully sent");
+check(bd.sentQty({ status: "Prepared", quantityUsed: 10, deliveredQty: 4 }) === 4, "bomDelivery: partial Prepared line reports its tally");
+check(bd.sentQty({ status: "Prepared", quantityUsed: 10 }) === 0, "bomDelivery: Prepared without tally = 0 sent");
+check(bd.statusAfterPartial(10, 10) === "Delivered" && bd.statusAfterPartial(4, 10) === "Prepared", "bomDelivery: status flips to Delivered only at full qty");
+
+// ---- downtime reason codes + Pareto ----
+const dr = require("./compiled/lib/downtimeReasons.js");
+check(dr.normalizeReason("mechanical failure") === "Mechanical Failure", "downtime: exact match is case-insensitive");
+check(dr.normalizeReason("hydraulic leak on spindle") === "Mechanical Failure", "downtime: legacy free text buckets mechanically");
+check(dr.normalizeReason("no material for panels") === "Material Shortage", "downtime: material wording buckets correctly");
+check(dr.normalizeReason("cable short") === "Electrical Fault", "downtime: electrical wording buckets correctly");
+check(dr.normalizeReason("weird one-off note") === "Other", "downtime: unmatched text falls to Other");
+check(dr.normalizeReason("") === "Other", "downtime: empty reason falls to Other");
+const now = new Date("2026-09-14T12:00:00Z");
+const dEvents = [
+  { reason: "Mechanical Failure", durationMinutes: 120, startedAt: "2026-09-13T10:00:00Z" },
+  { reason: "Mechanical Failure", durationMinutes: 60, startedAt: "2026-09-12T10:00:00Z" },
+  { reason: "Electrical Fault", durationMinutes: 30, startedAt: "2026-09-10T10:00:00Z" },
+  { reason: "Quality Issue", durationMinutes: 10, startedAt: "2026-09-01T10:00:00Z" },
+  { reason: "Mechanical Failure", durationMinutes: null, startedAt: "2026-09-14T11:00:00Z", endedAt: null }, // open, running 60m
+  { reason: "Other", durationMinutes: 5, startedAt: "2026-06-01T10:00:00Z" }, // outside 30d window
+];
+const p30 = dr.buildPareto(dEvents, 30, now);
+check(p30.totalEvents === 5 && p30.totalMinutes === 280, "downtime pareto: window filters + open event counts running time");
+check(p30.rows[0].reason === "Mechanical Failure" && p30.rows[0].minutes === 240, "downtime pareto: sorted by minutes desc");
+check(p30.rows[0].band === "A" && p30.rows[0].cumulative === Math.round((240 / 280) * 1000) / 10, "downtime pareto: biggest cause is band A with correct cumulative");
+check(p30.rows.every((r, i) => (i === 0 ? r.band === "A" : r.band === "B")), "downtime pareto: cause crossing the 80% line stays band A, the rest are B");
+check(p30.rows.every((r) => r.share + r.events > 0), "downtime pareto: rows carry share + counts");
+const pAll = dr.buildPareto(dEvents, null, now);
+check(pAll.totalEvents === 6, "downtime pareto: all-time window includes old events");
+const csv = dr.paretoToCsv(p30);
+check(csv.startsWith("Reason,Events,DowntimeMinutes") && csv.includes("TOTAL,5,280"), "downtime pareto: CSV has header + totals row");
+const emptyP = dr.buildPareto([], 30, now);
+check(emptyP.rows.length === 0 && emptyP.totalMinutes === 0, "downtime pareto: no events -> empty rows (no crash)");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

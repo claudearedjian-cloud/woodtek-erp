@@ -118,6 +118,7 @@ export async function GET() {
         ...m,
         status: entry?.status ?? "Requested",
         machineId: entry?.machineId ?? null,
+        deliveredQty: entry?.deliveredQty ?? null,
       });
     }
     const machineById = new Map<number, (typeof machinesAll)[number]>(machinesAll.map((m) => [m.id, m]));
@@ -213,6 +214,22 @@ export async function PUT(request: Request) {
     if (!Number.isInteger(allocationId) || !VALID.includes(status)) {
       return NextResponse.json({ error: "allocationId and a valid status are required." }, { status: 400 });
     }
+    // Partial delivery: how many units have physically gone to the floor.
+    // "Delivered" always means the full line quantity; a smaller deliverQty
+    // keeps the line in "Prepared" with a tally. Undo to Requested clears it.
+    let deliveredQty: number | null = null;
+    const [line] = await db
+      .select({ id: orderMaterials.id, quantityUsed: orderMaterials.quantityUsed })
+      .from(orderMaterials)
+      .where(eq(orderMaterials.id, allocationId));
+    if (line) {
+      if (status === "Delivered") {
+        deliveredQty = line.quantityUsed;
+      } else if (body.deliverQty != null && body.deliverQty !== "") {
+        const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(body.deliverQty) || 0)));
+        deliveredQty = n > 0 ? n : null;
+      }
+    }
     // Only a Manager may change the target machine; everyone else keeps the
     // machine the routing assigned (or the last manager-chosen one).
     const existing = readBomStatus().entries[String(allocationId)];
@@ -221,8 +238,8 @@ export async function PUT(request: Request) {
     const machineId = mayRoute && wantsMachine
       ? Number(body.machineId)
       : (existing?.machineId ?? null);
-    setBomStatus(allocationId, status, machineId);
-    return NextResponse.json({ ok: true, allocationId, status, machineId });
+    setBomStatus(allocationId, status, machineId, deliveredQty);
+    return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update status";
     return NextResponse.json({ error: message }, { status: 500 });
