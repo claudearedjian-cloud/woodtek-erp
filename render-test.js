@@ -36,6 +36,10 @@ compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
 compile("src/lib/idle.ts", "lib/idle.js");
 compile("src/lib/bomKits.ts", "lib/bomKits.js");
+compile("src/lib/packingQc.ts", "lib/packingQc.js");
+compile("src/lib/orderArchive.ts", "lib/orderArchive.js");
+compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
+compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -440,6 +444,56 @@ check(
 );
 check(qEn.quotation === "QUOTATION" && qFr.quotation === "DEVIS" && qAr.quotation === "\u0639\u0631\u0636 \u0633\u0639\u0631", "quote strings: translated titles");
 check(qEn.totalQuoted !== qFr.totalQuoted && qFr.terms.includes("30"), "quote strings: totals + terms differ per language");
+
+// ---- packing QC checklist ----
+const pq = require("./compiled/lib/packingQc.js");
+check(pq.DEFAULT_QC_TEMPLATE.length === 5, "packingQc: factory default template has 5 items");
+check(
+  JSON.stringify(pq.sanitizeTemplate(["  All  items packed ", "", "x", "X", "  ALL ITEMS PACKED", "a".repeat(200)])) ===
+    JSON.stringify(["All items packed", "x", "a".repeat(120)]),
+  "packingQc: template trims, drops empties, dedupes case-insensitive, caps length",
+);
+check(JSON.stringify(pq.sanitizeTemplate("nope")) === "[]" && JSON.stringify(pq.sanitizeTemplate([1, 2])) === "[]", "packingQc: non-string junk rejected");
+check(pq.normalizeChecks([true, "yes"], 4).length === 4 && pq.normalizeChecks([true, "yes"], 4)[0] === true && pq.normalizeChecks([true, "yes"], 4)[1] === false, "packingQc: checks normalize to strict booleans at fixed length");
+check(pq.checklistComplete([true, true]) && !pq.checklistComplete([true, false]) && !pq.checklistComplete([]), "packingQc: complete requires every tick");
+check(pq.checklistProgress([true, false, true]) === 2, "packingQc: progress counts ticks");
+check(pq.templateGates([]) === false && pq.templateGates(["a"]) === true, "packingQc: empty template disables the gate");
+
+// ---- order archive ----
+const oa = require("./compiled/lib/orderArchive.js");
+check(
+  JSON.stringify(oa.sanitizeArchivedIds([3, "5", 3, -1, 2.5, 0, 1])) === JSON.stringify([1, 3, 5]),
+  "orderArchive: ids cleaned, deduped, sorted",
+);
+check(oa.sanitizeArchivedIds("junk").length === 0, "orderArchive: non-array input gives an empty list");
+check(JSON.stringify(oa.withArchived([1, 2], 7, true)) === JSON.stringify([1, 2, 7]), "orderArchive: withArchived adds");
+check(JSON.stringify(oa.withArchived([1, 2, 7], 2, false)) === JSON.stringify([1, 7]), "orderArchive: withArchived removes");
+
+// ---- delivery photos ----
+const dp = require("./compiled/lib/deliveryPhotos.js");
+check(dp.validatePhoto("image/jpeg", 1024) === null, "deliveryPhotos: jpeg accepted");
+check(dp.validatePhoto("image/heic", 10) !== null, "deliveryPhotos: heic rejected with a reason");
+check(dp.validatePhoto("image/png", dp.MAX_PHOTO_BYTES + 1) !== null, "deliveryPhotos: oversize rejected");
+check(dp.photoExtFor("image/webp") === "webp" && dp.photoExtFor("application/pdf") === null, "deliveryPhotos: mime map");
+check(dp.isSafeStoredPhotoName("delivery-12-1699999999999-1.jpg") && !dp.isSafeStoredPhotoName("../secret.jpg") && !dp.isSafeStoredPhotoName("delivery-1-2-3.exe"), "deliveryPhotos: stored-name pattern blocks traversal");
+
+// ---- wall board ----
+const wb = require("./compiled/lib/wallboard.js");
+const wall = wb.buildWallBoard({
+  generatedAt: "2026-09-15T08:00:00Z",
+  kpis: { runningStations: 2, idleStations: 1, machinesDown: 1, activeOrders: 3 },
+  machineBoard: [
+    { id: 4, code: "BEAM-01", name: "Beam saw", category: "Beam Saw", state: "Running", currentJob: { orderNumber: "PO-0042/2026", customerName: "AUB", operationName: "Cutting", startTime: "2026-09-15T07:30:00Z" }, queue: [{}, {}], queueMinutes: 90 },
+    { id: 5, code: "EDGE-02", name: "Edger", category: "Edge Banding", state: "Idle", currentJob: null, queue: [], queueMinutes: 0 },
+  ],
+  orderBoard: [{ orderNumber: "PO-0042/2026", title: "Kitchen", customerName: "AUB", status: "In Production", priority: "Urgent", progressPercent: 40, completedSteps: 2, totalSteps: 5 }],
+});
+check(wall.machines.length === 2 && wall.orders.length === 1, "wallboard: rows mapped");
+check(wall.machines[0].currentOrder === "PO-0042/2026" && wall.machines[0].currentClient === "AUB" && wall.machines[0].currentOperation === "Cutting", "wallboard: current job fields");
+check(wall.machines[0].currentStartMs !== null && wall.machines[1].currentStartMs === null, "wallboard: start time only when running");
+check(wall.machines[0].queued === 2 && wall.machines[1].queued === 0, "wallboard: queue depth");
+check(wall.kpis.running === 2 && wall.kpis.down === 1 && wall.kpis.activeOrders === 3, "wallboard: kpis mapped");
+check(wb.buildWallBoard(null).machines.length === 0, "wallboard: empty payload is safe");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

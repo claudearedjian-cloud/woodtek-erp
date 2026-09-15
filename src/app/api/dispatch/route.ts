@@ -21,6 +21,13 @@ import {
   defaultStage,
   type DispatchStage,
 } from "@/lib/dispatch";
+import {
+  checklistComplete,
+  checklistProgress,
+  normalizeChecks,
+  templateGates,
+} from "@/lib/packingQc";
+import { readChecksFile, readTemplateFile } from "@/lib/packingQc.server";
 
 interface DispatchFile {
   version: 1;
@@ -130,6 +137,23 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "A valid orderId and stage are required." }, { status: 400 });
     }
     const data = readFile();
+
+    // Packing QC gate: an order cannot leave the Packing stage until every
+    // checklist item is ticked (Settings can disable the gate with an empty
+    // template). Service orders skip Packing, so they are never blocked.
+    if (data.stages[String(orderId)]?.stage === "packing" && stage === "awaiting_delivery") {
+      const template = readTemplateFile();
+      if (templateGates(template)) {
+        const checks = normalizeChecks(readChecksFile()[String(orderId)], template.length);
+        if (!checklistComplete(checks)) {
+          return NextResponse.json(
+            { error: `The packing QC checklist is not finished (${checklistProgress(checks)}/${template.length}). Open the order's QC checklist in the Schedule tab and tick every item first.` },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
     const entry: any = { stage, updatedAt: new Date().toISOString() };
     if (body.proof && typeof body.proof === "object") {
       entry.proof = {

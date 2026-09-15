@@ -28,6 +28,7 @@ import {
   Save
 } from "lucide-react";
 import { DEFAULT_PROJECT_TYPES } from "@/lib/projectTypes";
+import { Archive } from "lucide-react";
 import { mergeBomKit, stockShortfall, type BomKit } from "@/lib/bomKits";
 
 interface OrdersViewProps {
@@ -89,6 +90,32 @@ export default function OrdersView({
     const t = setInterval(loadDispatch, 15000);
     return () => { alive = false; clearInterval(t); };
   }, []);
+
+  // Order archive: finished/clutter orders hidden from the default list (data/order-archive.json).
+  const [archivedIds, setArchivedIds] = useState<number[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  useEffect(() => {
+    fetch("/api/order-archive", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.archived)) setArchivedIds(d.archived); })
+      .catch(() => {});
+  }, []);
+  const archivedSet = useMemo(() => new Set(archivedIds), [archivedIds]);
+  const canArchive = currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator";
+  const toggleArchive = async (order: any) => {
+    const archived = !archivedSet.has(order.id);
+    try {
+      const r = await fetch("/api/order-archive", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.id, archived }),
+      });
+      const d = await r.json();
+      if (r.ok && Array.isArray(d.archivedIds)) setArchivedIds(d.archivedIds);
+    } catch {
+      /* ignore */
+    }
+  };
   const [priorityFilter, setPriorityFilter] = useState("All");
 
   // Form State for new order
@@ -368,6 +395,8 @@ export default function OrdersView({
 
   // Filtered orders
   const filteredOrders = orders.filter(order => {
+    // Archive: hidden unless the "Archived" toggle is on (then ONLY archived show).
+    if (archivedSet.has(order.id) !== showArchived) return false;
     const matchesSearch = !searchQuery || 
       order.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
       order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -541,6 +570,18 @@ export default function OrdersView({
               {s}
             </button>
           ))}
+          <button
+            onClick={() => setShowArchived((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition ${
+              showArchived
+                ? "bg-slate-700 text-white shadow-sm"
+                : "border border-slate-800 bg-slate-950/60 text-slate-400 hover:bg-slate-800"
+            }`}
+            title={showArchived ? "Back to the active orders" : `Show the ${archivedIds.length} archived order(s) — nothing is deleted`}
+          >
+            <Archive className="h-3.5 w-3.5" />
+            Archived{archivedIds.length > 0 ? ` (${archivedIds.length})` : ""}
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
@@ -627,6 +668,11 @@ export default function OrdersView({
                         Dispatch: {STAGE_LABELS[dispatchByOrder[String(order.id)]]}
                       </span>
                     )}
+                    {archivedSet.has(order.id) && (
+                      <span className="border border-slate-600/50 bg-slate-700/60 px-2 py-0.5 text-[10px] font-extrabold uppercase text-slate-300 rounded">
+                        Archived
+                      </span>
+                    )}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${getPriorityBadge(order.priority)}`}>
                       {order.priority}
                     </span>
@@ -684,6 +730,15 @@ export default function OrdersView({
                   </div>
                   <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Total Value</div>
                 </div>
+                {canArchive && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleArchive(order); }}
+                    className="w-9 h-9 rounded-xl bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white flex items-center justify-center transition-all flex-shrink-0"
+                    title={archivedSet.has(order.id) ? "Restore this order to the active list" : "Archive this order — hides it from the default list (nothing is deleted)"}
+                  >
+                    <Archive className="w-4 h-4" />
+                  </button>
+                )}
                 <div className="w-9 h-9 rounded-xl bg-slate-800 group-hover:bg-amber-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center transition-all">
                   <ChevronRight className="w-5 h-5 stroke-[2.5]" />
                 </div>

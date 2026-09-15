@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { Tv } from "lucide-react";
+import WallBoardView from "@/components/WallBoardView";
 import {
   Activity,
   AlertTriangle,
@@ -48,6 +50,7 @@ const STATE_STYLES: Record<string, string> = {
 };
 
 export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardViewProps) {
+  const [showBoard, setShowBoard] = useState(false);
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -138,13 +141,22 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
             </p>
           </div>
         </div>
-        <button
-          onClick={fetchBoard}
-          className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
-          title="Refresh now"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+<div className="flex items-center gap-2">
+  <button
+    onClick={() => setShowBoard(true)}
+    className="flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20 transition"
+    title="Full-screen view for the shop-floor TV (wall board)"
+  >
+    <Tv className="w-4 h-4" /> Wall board
+  </button>
+          <button
+            onClick={fetchBoard}
+            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
+            title="Refresh now"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+</div>
       </div>
 
       {/* KPI strip */}
@@ -384,6 +396,7 @@ export default function WipBoardView({ onSelectOrder, onNavigate }: WipBoardView
           </div>
         </div>
       </div>
+      {showBoard && <WallBoardView onClose={() => setShowBoard(false)} />}
     </div>
   );
 }

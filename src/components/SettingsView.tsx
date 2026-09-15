@@ -26,6 +26,7 @@ import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permi
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
 import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
 import { Timer } from "lucide-react";
+import { ListChecks } from "lucide-react";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -76,6 +77,37 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   const [auditEntries, setAuditEntries] = useState<any[]>([]);
   const [auditQuery, setAuditQuery] = useState("");
   const [auditLoading, setAuditLoading] = useState(false);
+
+  // Packing QC checklist template (Manager): what the warehouse must tick
+  // before an order leaves the Packing stage. Empty list = gate disabled.
+  const [qcTpl, setQcTpl] = useState<string[]>([]);
+  const [qcTplMsg, setQcTplMsg] = useState("");
+  useEffect(() => {
+    if (!isManager) return;
+    fetch("/api/packing-qc", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.template)) setQcTpl(d.template); })
+      .catch(() => {});
+  }, [isManager]);
+  const saveQcTemplate = async (template: string[]) => {
+    setQcTplMsg("");
+    try {
+      const res = await fetch("/api/packing-qc", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template }),
+      });
+      const d = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        setQcTplMsg(d.error || "Save failed.");
+        return;
+      }
+      setQcTpl(Array.isArray(d.template) ? d.template : template);
+      setQcTplMsg(d.template?.length === 0 ? "Checklist disabled — orders can leave Packing freely." : "Checklist saved.");
+    } catch {
+      setQcTplMsg("Save failed.");
+    }
+  };
 
   const loadAudit = async (q: string = auditQuery) => {
     if (!isManager) return;
@@ -687,6 +719,63 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           a warning appears 60 seconds before. This setting applies to THIS computer only.
         </p>
       </div>
+
+      {/* Packing QC checklist (Manager only) */}
+      {isManager && (
+        <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
+          <h3 className="flex items-center gap-2 text-sm font-black text-white">
+            <ListChecks className="h-4 w-4 text-amber-400" /> Packing QC checklist
+          </h3>
+          <p className="mt-1 text-xs text-slate-400">
+            The warehouse must tick every item before an order can leave the Packing stage (Schedule tab).
+            Removing all items turns the check off.
+          </p>
+          <div className="mt-3 space-y-2">
+            {qcTpl.map((item, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  value={item}
+                  maxLength={120}
+                  onChange={(e) => setQcTpl(qcTpl.map((v, j) => (j === i ? e.target.value : v)))}
+                  placeholder={`Check ${i + 1} — e.g. all materials packed`}
+                  className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-amber-500 focus:outline-none"
+                />
+                <button
+                  onClick={() => setQcTpl(qcTpl.filter((_, j) => j !== i))}
+                  className="rounded-lg bg-slate-800 p-2 text-slate-400 hover:bg-rose-600 hover:text-white"
+                  title="Remove this item"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setQcTpl([...qcTpl, ""])}
+              disabled={qcTpl.length >= 12}
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            >
+              + Add item
+            </button>
+            <button
+              onClick={() => saveQcTemplate(qcTpl.map((s) => s.trim()).filter(Boolean))}
+              className="rounded-xl bg-amber-500 px-4 py-1.5 text-xs font-black text-slate-950 hover:bg-amber-400"
+            >
+              Save checklist
+            </button>
+            <button
+              onClick={() => saveQcTemplate([])}
+              className="rounded-xl border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-300 hover:bg-rose-500/20"
+              title="No checklist — orders can leave Packing without QC"
+            >
+              Disable gate
+            </button>
+            {qcTpl.length === 0 && <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">Gate is currently OFF</span>}
+          </div>
+          {qcTplMsg && <div className="mt-2 text-[11px] font-bold text-emerald-400">{qcTplMsg}</div>}
+        </div>
+      )}
 
       {/* Audit log (Manager only) */}
       {isManager && (

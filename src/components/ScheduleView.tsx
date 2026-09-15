@@ -4,10 +4,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
+  Camera,
   CheckCircle2,
   Clock3,
   Cpu,
   GripVertical,
+  ListChecks,
   ListFilter,
   Plus,
   RefreshCw,
@@ -27,6 +29,7 @@ import {
   isServiceFlow,
   nextStage,
 } from "@/lib/dispatch";
+import { checklistComplete, checklistProgress, templateGates } from "@/lib/packingQc";
 
 interface ScheduleViewProps {
   machines: any[];
@@ -70,6 +73,108 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   // ---- Dispatch queue: completed orders awaiting the delivery pipeline ----
   const [dispatchOrders, setDispatchOrders] = useState<any[]>([]);
   const [dispatchBusy, setDispatchBusy] = useState<number | null>(null);
+  const [dispatchError, setDispatchError] = useState("");
+
+  // ---- Packing QC checklist (template + per-order ticks, data/packing-qc.json) ----
+  const [qcTemplate, setQcTemplate] = useState<string[]>([]);
+  const [qcChecks, setQcChecks] = useState<Record<number, boolean[]>>({});
+  const [qcOpenId, setQcOpenId] = useState<number | null>(null);
+  const [qcBusy, setQcBusy] = useState(false);
+
+  const fetchQc = async () => {
+    try {
+      const r = await fetch("/api/packing-qc", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      const template = Array.isArray(d.template) ? d.template : [];
+      setQcTemplate(template);
+      const map: Record<number, boolean[]> = {};
+      for (const [key, value] of Object.entries(d.checks ?? {})) {
+        if (Array.isArray(value)) map[Number(key)] = value.map(Boolean);
+      }
+      setQcChecks(map);
+    } catch {
+      /* best effort */
+    }
+  };
+
+  const checksFor = (orderId: number): boolean[] => {
+    const raw = qcChecks[orderId] ?? [];
+    return qcTemplate.map((_, i) => raw[i] === true);
+  };
+
+  const qcCompleteFor = (orderId: number): boolean =>
+    qcTemplate.length === 0 || checklistComplete(checksFor(orderId));
+
+  const toggleQcItem = async (orderId: number, index: number) => {
+    const checks = checksFor(orderId).slice();
+    checks[index] = !checks[index];
+    setQcChecks((m) => ({ ...m, [orderId]: checks }));
+    setQcBusy(true);
+    try {
+      await fetch("/api/packing-qc", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, checks }),
+      });
+      await fetchQc();
+    } catch {
+      /* ignore */
+    } finally {
+      setQcBusy(false);
+    }
+  };
+
+  // ---- Delivery photos (proof pictures, data/uploads/delivery) ----
+  const [photosByOrder, setPhotosByOrder] = useState<Record<number, any[]>>({});
+  const [photosOpenId, setPhotosOpenId] = useState<number | null>(null);
+  const [photoMsg, setPhotoMsg] = useState("");
+
+  const loadPhotos = async (orderId: number) => {
+    try {
+      const r = await fetch(`/api/delivery-photos?orderId=${orderId}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      setPhotosByOrder((m) => ({ ...m, [orderId]: Array.isArray(d.photos) ? d.photos : [] }));
+    } catch {
+      /* best effort */
+    }
+  };
+
+  const openPhotos = (orderId: number) => {
+    setPhotoMsg("");
+    setPhotosOpenId((v) => (v === orderId ? null : orderId));
+    if (!photosByOrder[orderId]) loadPhotos(orderId);
+  };
+
+  const uploadPhotos = async (orderId: number, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const form = new FormData();
+    form.append("orderId", String(orderId));
+    Array.from(files).forEach((f) => form.append("files", f));
+    setPhotoMsg("");
+    try {
+      const r = await fetch("/api/delivery-photos", { method: "POST", body: form });
+      const d = await r.json().catch(() => ({} as any));
+      if (!r.ok) {
+        setPhotoMsg(d.error || "Upload failed.");
+        return;
+      }
+      setPhotosByOrder((m) => ({ ...m, [orderId]: d.photos ?? [] }));
+    } catch {
+      setPhotoMsg("Upload failed.");
+    }
+  };
+
+  const deletePhoto = async (orderId: number, file: string) => {
+    try {
+      const r = await fetch(`/api/delivery-photos?orderId=${orderId}&file=${encodeURIComponent(file)}`, { method: "DELETE" });
+      const d = await r.json().catch(() => ({} as any));
+      if (r.ok) setPhotosByOrder((m) => ({ ...m, [orderId]: d.photos ?? [] }));
+    } catch {
+      /* ignore */
+    }
+  };
 
   const canDispatch =
     can(currentUser?.role, "quality:write") ||
@@ -95,8 +200,9 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     event.preventDefault();
     if (!proofFor) return;
     setDispatchBusy(proofFor.id);
+    setDispatchError("");
     try {
-      await fetch("/api/dispatch", {
+      const res = await fetch("/api/dispatch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -105,9 +211,14 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           proof: { receivedBy: proofForm.receivedBy.trim(), notes: proofForm.notes.trim() },
         }),
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any));
+        setDispatchError(d.error || "Could not confirm the delivery.");
+      }
       setProofFor(null);
       setProofForm({ receivedBy: "", notes: "" });
       await fetchDispatch();
+      fetchQc();
     } catch {
       /* ignore */
     } finally {
@@ -253,13 +364,19 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
 
   const setDispatchStage = async (orderId: number, stage: string) => {
     setDispatchBusy(orderId);
+    setDispatchError("");
     try {
-      await fetch("/api/dispatch", {
+      const res = await fetch("/api/dispatch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderId, stage }),
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any));
+        setDispatchError(d.error || "Could not update the stage.");
+      }
       await fetchDispatch();
+      fetchQc();
     } catch {
       /* ignore */
     } finally {
@@ -269,6 +386,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
 
   useEffect(() => {
     fetchDispatch();
+    fetchQc();
     const t = setInterval(fetchDispatch, 20000);
     return () => clearInterval(t);
   }, []);
@@ -504,6 +622,9 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             </span>
           </div>
         </div>
+        {dispatchError && (
+          <div className="mb-2.5 rounded-xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-300">{dispatchError}</div>
+        )}
         {dispatchOrders.length === 0 ? (
           <div className="py-6 text-center text-xs text-slate-500">No completed orders waiting for dispatch.</div>
         ) : (
@@ -511,8 +632,12 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             {dispatchOrders.map((o: any) => {
               const flow = flowFor(o.projectType);
               const nxt = nextStage(o.projectType, o.stage);
+              const showQc = flow.includes("packing") && ["packing", "awaiting_delivery"].includes(o.stage);
+              const qcDone = qcCompleteFor(o.id);
+              const qcBlocked = o.stage === "packing" && nxt === "awaiting_delivery" && templateGates(qcTemplate) && !qcDone;
               return (
-                <div key={o.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
+                <React.Fragment key={o.id}>
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-base font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
@@ -550,11 +675,34 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                   {canDispatch && o.stage !== "delivered" && nxt && (
                     <button
                       type="button"
-                      disabled={dispatchBusy === o.id}
+                      disabled={dispatchBusy === o.id || qcBlocked}
                       onClick={() => (nxt === "delivered" ? (setProofForm({ receivedBy: "", notes: "" }), setProofFor(o)) : setDispatchStage(o.id, nxt))}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
+                      title={qcBlocked ? "Tick every packing QC checklist item first (QC button)" : undefined}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
+                      {qcBlocked ? "QC checklist first" : nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
+                    </button>
+                  )}
+                  {showQc && qcTemplate.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setQcOpenId((v) => (v === o.id ? null : o.id))}
+                      className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-black ${
+                        qcDone ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300" : "border-amber-500/60 bg-amber-500/10 text-amber-300"
+                      }`}
+                      title="Packing QC checklist — every item must be ticked before the order can leave Packing"
+                    >
+                      <ListChecks className="h-3.5 w-3.5" /> QC {checklistProgress(checksFor(o.id))}/{qcTemplate.length}{qcDone ? " \u2713" : ""}
+                    </button>
+                  )}
+                  {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
+                    <button
+                      type="button"
+                      onClick={() => openPhotos(o.id)}
+                      className="flex items-center gap-1 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20"
+                      title="Delivery photos — proof pictures from packing / the delivery gate"
+                    >
+                      <Camera className="h-3.5 w-3.5" /> Photos{(photosByOrder[o.id]?.length ?? 0) > 0 ? ` (${photosByOrder[o.id].length})` : ""}
                     </button>
                   )}
                   {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
@@ -568,6 +716,75 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                     </button>
                   )}
                 </div>
+                {qcOpenId === o.id && qcTemplate.length > 0 && (
+                  <div className="w-full rounded-xl border border-amber-500/30 bg-slate-900/80 p-3">
+                    <div className="mb-2 text-[11px] font-black uppercase tracking-wider text-amber-300">
+                      Packing QC — {o.orderNumber} · {checklistProgress(checksFor(o.id))}/{qcTemplate.length} done
+                    </div>
+                    <div className="space-y-1.5">
+                      {qcTemplate.map((item, i) => {
+                        const done = checksFor(o.id)[i] === true;
+                        return (
+                          <label key={i} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold ${done ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : "border-slate-700 bg-slate-950/60 text-slate-300"}`}>
+                            <input
+                              type="checkbox"
+                              checked={done}
+                              disabled={qcBusy || !canDispatch}
+                              onChange={() => toggleQcItem(o.id, i)}
+                              className="h-4 w-4 accent-emerald-500"
+                            />
+                            {item}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      {!canDispatch && <span className="text-[10px] font-bold text-slate-500">Only Manager / Warehouse / Floor roles can tick items.</span>}
+                      {checklistComplete(checksFor(o.id)) && <span className="text-[10px] font-black text-emerald-400">All checks done — the order can advance to Awaiting Delivery.</span>}
+                      <button type="button" onClick={() => setQcOpenId(null)} className="ml-auto rounded-lg bg-slate-800 px-2.5 py-1 text-[10px] font-black text-slate-300 hover:bg-slate-700">Close</button>
+                    </div>
+                  </div>
+                )}
+                {photosOpenId === o.id && (
+                  <div className="w-full rounded-xl border border-sky-500/30 bg-slate-900/80 p-3">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-sky-300">Delivery photos — {o.orderNumber}</div>
+                      {canDispatch && (
+                        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20">
+                          <Camera className="h-3.5 w-3.5" /> Add photos
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => { uploadPhotos(o.id, e.target.files); e.currentTarget.value = ""; }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    {photoMsg && <div className="mb-2 text-[10px] font-bold text-rose-400">{photoMsg}</div>}
+                    {(photosByOrder[o.id]?.length ?? 0) === 0 ? (
+                      <div className="py-2 text-[11px] text-slate-500">No photos yet. JPG / PNG / WebP, up to 8 MB each, max 12 per order — a phone camera works through the file picker.</div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                        {photosByOrder[o.id].map((p: any) => (
+                          <div key={p.file} className="group relative overflow-hidden rounded-lg border border-slate-700">
+                            <img src={`/api/delivery-photos?file=${encodeURIComponent(p.file)}`} alt="Delivery proof" className="h-24 w-full object-cover" loading="lazy" />
+                            <div className="absolute inset-x-0 bottom-0 truncate bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-bold text-slate-300">
+                              {p.by}{p.at ? ` · ${new Date(p.at).toLocaleDateString()}` : ""}
+                            </div>
+                            {canDispatch && (
+                              <button type="button" onClick={() => deletePhoto(o.id, p.file)} className="absolute right-1 top-1 hidden rounded bg-rose-600 p-1 text-white hover:bg-rose-500 group-hover:block" title="Delete photo">
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
