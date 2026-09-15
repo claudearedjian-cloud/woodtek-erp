@@ -41,6 +41,7 @@ compile("src/lib/orderArchive.ts", "lib/orderArchive.js");
 compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
+compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -495,6 +496,16 @@ check(wall.machines[0].currentStartMs !== null && wall.machines[1].currentStartM
 check(wall.machines[0].queued === 2 && wall.machines[1].queued === 0, "wallboard: queue depth");
 check(wall.kpis.running === 2 && wall.kpis.down === 1 && wall.kpis.activeOrders === 3, "wallboard: kpis mapped");
 check(wb.buildWallBoard(null).machines.length === 0, "wallboard: empty payload is safe");
+
+// ---- material production stage ----
+const mp = require("./compiled/lib/materialProgress.js");
+check(mp.sanitizeStage("  Edge   Banding ") === "Edge Banding" && mp.sanitizeStage("x".repeat(99)).length === mp.STAGE_MAX_LENGTH, "material stage: trims and caps");
+check(mp.sanitizeStage(42) === "" && mp.sanitizeStage(null) === "", "material stage: junk becomes not-started");
+const mpMap = mp.sanitizeProgressMap({ 7: { stage: "Cutting", at: "t", by: "A" }, "x": 1, 8: "junk", 9: { stage: "" }, "-3": { stage: "No" } });
+check(Object.keys(mpMap).length === 1 && mpMap["7"].stage === "Cutting", "material stage: map keeps only valid numeric lines");
+check(mp.stageDisplay("").label === "Not started" && mp.stageDisplay("").tone === "slate", "material stage: not-started renders slate");
+check(mp.stageDisplay("Edge Banding").label === "\u2192 Edge Banding" && mp.stageDisplay("Edge Banding").tone === "amber", "material stage: in-progress renders amber");
+check(mp.stageDisplay("DONE").label === "\u2713 Done" && mp.stageDisplay("DONE").tone === "emerald", "material stage: done renders emerald");
 
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");

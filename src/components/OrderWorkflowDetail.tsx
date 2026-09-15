@@ -55,6 +55,45 @@ export default function OrderWorkflowDetail({
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState("");
+  // Per-material production stage: where each BOM line is right now
+  // ("" = not started, a step name from this order, or DONE).
+  const [matProgress, setMatProgress] = useState<Record<string, { stage: string; at: string; by: string }>>({});
+  useEffect(() => {
+    if (!order?.id) return;
+    let alive = true;
+    fetch(`/api/material-progress?orderId=${order.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d && d.progress) setMatProgress(d.progress); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [order?.id]);
+
+  const setMatStage = async (materialId: number, stage: string) => {
+    try {
+      const res = await fetch("/api/material-progress", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderMaterialsId: materialId, stage }),
+      });
+      const d = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        setActionError(d.error || "Could not update the material stage.");
+        return;
+      }
+      setMatProgress((prev) => ({ ...prev, [String(materialId)]: d.entry }));
+    } catch {
+      setActionError("Could not update the material stage.");
+    }
+  };
+  const canSetStage =
+    can(currentUser?.role, "operations:update-status") ||
+    can(currentUser?.role, "quality:write") ||
+    can(currentUser?.role, "orders:write") ||
+    can(currentUser?.role, "inventory:write");
+  const stageSteps: string[] = (order?.operations ?? [])
+    .slice()
+    .sort((a: any, b: any) => a.stepOrder - b.stepOrder)
+    .map((o: any) => o.operationName);
   const [busyOperationId, setBusyOperationId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"workflow" | "materials" | "details">("workflow");
   const [quoteLangOpen, setQuoteLangOpen] = useState(false);
@@ -1165,6 +1204,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                       const remaining = (m.itemStockRemaining !== null && m.itemStockRemaining !== undefined)
                         ? Number(m.itemStockRemaining)
                         : null;
+                      const stage = matProgress[String(m.id)]?.stage ?? "";
                       return (
                         <li
                           key={m.id}
@@ -1189,6 +1229,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                               {isReleased && (
                                 <span className="text-[10px] font-extrabold uppercase bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">Released</span>
                               )}
+                              {stage === "DONE" ? (
+                                <span className="text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">✓ Done</span>
+                              ) : stage !== "" ? (
+                                <span className="text-[10px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">→ {stage}</span>
+                              ) : (
+                                <span className="text-[10px] font-extrabold uppercase bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Not started</span>
+                              )}
                             </div>
                             {remaining !== null && !isReleased && (
                               <p className="mt-1 text-[11px] text-slate-500">
@@ -1212,6 +1259,20 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 @ ${Number(m.costPerUnit).toFixed(2)} · ${lineTotal.toFixed(2)}
                               </div>
                             </div>
+                            {canSetStage && (
+                              <select
+                                value={stage}
+                                onChange={(e) => setMatStage(m.id, e.target.value)}
+                                className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+                                title="Where is this material in production right now?"
+                              >
+                                <option value="">Not started</option>
+                                {stageSteps.map((sName: string, si: number) => (
+                                  <option key={`${sName}-${si}`} value={sName}>{sName}</option>
+                                ))}
+                                <option value="DONE">✓ Done</option>
+                              </select>
+                            )}
                             {canManageBom && !isConsumed && !isReleased && (
                               <button
                                 type="button"
