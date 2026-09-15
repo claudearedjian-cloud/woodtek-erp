@@ -4,6 +4,7 @@ import { orderOperations, orders, machines, qualityEvents, orderMaterials } from
 import { readReceived } from "@/lib/bomStatus.server";
 import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
 import { can } from "@/lib/permissions";
 
@@ -317,6 +318,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return { operation: updatedOp, progressPercent, orderStatus };
     });
 
+    logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
     return NextResponse.json(result);
   } catch (error: unknown) {
     if (error instanceof WorkflowError) {

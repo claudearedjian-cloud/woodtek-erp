@@ -10,6 +10,7 @@ import path from "node:path";
 import { authorize } from "@/lib/auth";
 import { sanitizeMenuConfig, type MenuConfig } from "@/lib/menuConfig";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import { logAudit } from "@/lib/audit.server";
 
 function fileLocation(): string {
   const dir =
@@ -40,6 +41,7 @@ export async function PUT(request: Request) {
     ensureRolesRegistered();
     const body = await request.json();
     const config = sanitizeMenuConfig(body);
+    logAudit(null, "menu.save", "system", `Menu Designer saved (${config.items.length} items)`);
     const file = fileLocation();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(config, null, 2), "utf8");

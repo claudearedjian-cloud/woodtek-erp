@@ -5,6 +5,7 @@ import { and, eq, desc, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm
 import { chooseFreestMachine } from "@/lib/machineCategories";
 import { setBomStatus } from "@/lib/bomStatus.server";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { nextOrderNumber } from "@/lib/orderNumbers.server";
 import { getSessionUser } from "@/lib/auth";
@@ -270,6 +271,7 @@ export async function POST(request: Request) {
       }
     }
 
+        logAudit(user, "order.create", "order", `${newOrder.orderNumber} created for ${title}`, newOrder.id);
     return NextResponse.json(newOrder, { status: 201 });
   } catch (error: any) {
     console.error("POST order error:", error);

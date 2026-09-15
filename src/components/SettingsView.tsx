@@ -18,7 +18,9 @@ import {
   CheckCircle2,
   Mail,
   Phone,
-  MapPin
+  MapPin,
+  History,
+  Download
 } from "lucide-react";
 import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
@@ -53,6 +55,49 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     address: "",
     creditLimit: "15000.00",
   });
+
+  // ---- audit log (Manager-only trail of who did what) ----
+  const isManager = currentUser?.role === "Manager";
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditEntries, setAuditEntries] = useState<any[]>([]);
+  const [auditQuery, setAuditQuery] = useState("");
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  const loadAudit = async (q: string = auditQuery) => {
+    if (!isManager) return;
+    setAuditLoading(true);
+    try {
+      const res = await fetch(`/api/audit${q ? `?q=${encodeURIComponent(q)}` : ""}`, { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setAuditEntries(Array.isArray(data.entries) ? data.entries : []);
+    } catch {
+      /* keep old entries */
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const clearAuditTrail = async () => {
+    if (!confirm("Clear the ENTIRE audit log? This cannot be undone.")) return;
+    await fetch("/api/audit", { method: "DELETE" });
+    setAuditEntries([]);
+  };
+
+  const downloadAuditCsv = () => {
+    const head = "Time,User,Role,Action,Entity,EntityId,Detail";
+    const rows = auditEntries.map((e) =>
+      [new Date(e.at).toLocaleString(), e.actorName, e.actorRole, e.action, e.entity, e.entityId ?? "", (e.detail ?? "").replace(/"/g, '""')]
+        .map((v) => `"${String(v)}"`)
+        .join(","),
+    );
+    const blob = new Blob([[head, ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `woodtek-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // ---- custom roles (Manager can add/remove named roles) ----
   const [customRoles, setCustomRoles] = useState<{ name: string; base: string; modules?: string[] }[]>([]);
@@ -605,6 +650,62 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       )}
 
       {/* Modal Form */}
+      {/* Audit log (Manager only) */}
+      {isManager && (
+        <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-sm font-black text-white">
+              <History className="h-4 w-4 text-amber-400" /> Audit log — who did what
+            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={auditQuery}
+                onChange={(e) => setAuditQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") loadAudit(); }}
+                placeholder="Filter by name, action, detail…"
+                className="w-56 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white placeholder-slate-500"
+              />
+              <button type="button" onClick={() => loadAudit()} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-black text-slate-950 hover:bg-amber-400">Search</button>
+              <button type="button" onClick={() => { setAuditQuery(""); loadAudit(""); }} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white">All</button>
+              <button type="button" onClick={downloadAuditCsv} disabled={auditEntries.length === 0} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white disabled:opacity-40"><Download className="h-3.5 w-3.5" /> CSV</button>
+              <button type="button" onClick={clearAuditTrail} className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-300 hover:bg-rose-500/20">Clear</button>
+            </div>
+          </div>
+          {!auditOpen ? (
+            <button type="button" onClick={() => { setAuditOpen(true); loadAudit(); }} className="w-full rounded-xl border border-dashed border-slate-700 py-3 text-xs font-bold text-slate-400 hover:text-white hover:border-slate-500">
+              Show the audit trail (logins, status changes, deletes, backups…)
+            </button>
+          ) : auditLoading && auditEntries.length === 0 ? (
+            <div className="py-6 text-center text-xs text-slate-500 animate-pulse">Loading the trail…</div>
+          ) : auditEntries.length === 0 ? (
+            <div className="py-6 text-center text-xs text-slate-500">Nothing recorded{auditQuery ? " for this filter" : " yet"}.</div>
+          ) : (
+            <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-slate-800">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-950">
+                  <tr className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    <th className="px-3 py-2">When</th>
+                    <th className="px-3 py-2">Who</th>
+                    <th className="px-3 py-2">Action</th>
+                    <th className="px-3 py-2">Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditEntries.map((e, i) => (
+                    <tr key={`${e.at}-${i}`} className="border-t border-slate-800/60 hover:bg-slate-800/40">
+                      <td className="whitespace-nowrap px-3 py-1.5 text-[11px] text-slate-400">{new Date(e.at).toLocaleString()}</td>
+                      <td className="px-3 py-1.5 font-bold text-white">{e.actorName}<span className="ml-1 font-normal text-slate-500">({e.actorRole})</span></td>
+                      <td className="px-3 py-1.5"><span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-300">{e.action}</span></td>
+                      <td className="max-w-[420px] truncate px-3 py-1.5 text-slate-300" title={e.detail ?? ""}>{e.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {showModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">

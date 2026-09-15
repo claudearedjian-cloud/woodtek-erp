@@ -10,6 +10,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { allRoles } from "@/lib/permissions";
 import {
   ensureRolesRegistered,
@@ -26,7 +27,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const { error } = await authorize("users:manage");
+  const { user, error } = await authorize("users:manage");
   if (error) return error;
   try {
     const body = await request.json();
@@ -62,6 +63,7 @@ export async function PUT(request: Request) {
     }
 
     writeRolesConfig(next, nextOverrides);
+    logAudit(user, "roles.save", "system", `Roles saved (${next.length} roles, ${Object.keys(nextOverrides).length} screen override(s))`);
     return NextResponse.json({ roles: next, overrides: nextOverrides });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to save roles";

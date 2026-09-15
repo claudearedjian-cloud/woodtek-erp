@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { asc } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { allRoles } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
@@ -32,7 +33,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const { error: authError } = await authorize("users:manage");
+  const { user, error: authError } = await authorize("users:manage");
   if (authError) return authError;
 
   try {
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       active: users.active,
     });
 
+    logAudit(user, "user.create", "user", `User ${newUser.name} created with role ${newUser.role}`, newUser.id);
     return NextResponse.json(newUser, { status: 201 });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to create user";

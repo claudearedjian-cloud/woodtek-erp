@@ -11,6 +11,7 @@ import {
   Loader2,
   CheckCircle2,
 } from "lucide-react";
+import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 
 interface AuthGateProps {
@@ -20,9 +21,10 @@ interface AuthGateProps {
   onAuthenticated: (user: any) => void;
   onCancel?: () => void;
   demoMode?: boolean;
+  lang?: Lang;
 }
 
-export default function AuthGate({ users, initialUser, required, onAuthenticated, onCancel, demoMode = false }: AuthGateProps) {
+export default function AuthGate({ users, initialUser, required, onAuthenticated, onCancel, demoMode = false, lang = "en" }: AuthGateProps) {
   const [selectedId, setSelectedId] = useState<number | null>(initialUser?.id || null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -270,9 +272,9 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
           <div className="flex items-center gap-3">
             <BrandMark size={44} />
             <div>
-              <h2 className="text-lg font-black text-white">{required ? "WoodTek ERP Sign In" : "Authorize Role Switch"}</h2>
+              <h2 className="text-lg font-black text-white">{required ? tt(lang, "WoodTek ERP Sign In") : tt(lang, "Authorize Role Switch")}</h2>
               <p className="text-xs text-slate-400">
-                {demoMode ? "Choose a demo mode or sign in with your employee PIN." : "Select your profile and enter your personal shop PIN."}
+                {demoMode ? tt(lang, "Choose a demo mode or sign in with your employee PIN.") : tt(lang, "Select your profile and enter your personal shop PIN.")}
               </p>
             </div>
           </div>
@@ -310,7 +312,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-[11px] leading-relaxed text-slate-400">
-                Enter your personal four-digit PIN. Accounts lock for 5 minutes after 5 failed attempts.
+                {tt(lang, "Enter your personal four-digit PIN. Accounts lock for 5 minutes after 5 failed attempts.")}
               </div>
             )}
           </div>
@@ -338,7 +340,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ShieldCheck className="h-4 w-4" />
-              <span>{submitting ? "Verifying…" : "Unlock Workspace"}</span>
+              <span>{submitting ? "…" : tt(lang, "Sign In")}</span>
               {!submitting && <ArrowRight className="h-4 w-4" />}
             </button>
           </div>

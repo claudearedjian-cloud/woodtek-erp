@@ -32,6 +32,8 @@ compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
+compile("src/lib/audit.server.ts", "lib/audit.server.js");
+compile("src/lib/i18n.ts", "lib/i18n.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -45,7 +47,7 @@ const check = (cond, name) => {
   if (!cond) fails++;
 };
 
-const props = (role, menuConfig = null) => ({
+const props = (role, menuConfig = null, lang) => ({
   activeTab: "station",
   setActiveTab: () => {},
   currentUser: role
@@ -57,6 +59,7 @@ const props = (role, menuConfig = null) => ({
   menuConfig,
   isOpen: true,
   onClose: () => {},
+  lang,
 });
 
 const op = renderToString(React.createElement(Sidebar, props("Machine Operator")));
@@ -325,6 +328,46 @@ check(st.rows[2].invoiced === 0 && st.rows[2].paid === 400, "statement: payment 
 check(cs.buildStatement([]).balance === 0 && cs.buildStatement([]).rows.length === 0, "statement: empty ledger is safe");
 const neg = cs.buildStatement([{ type: "invoice", amount: -50, at: "2026-09-01T00:00:00Z" }]);
 check(neg.invoiced === 50, "statement: negative amounts clamp to positive");
+
+// ---- audit trail (real filesystem via WOODTEK_DATA_DIR tmp dir) ----
+const os = require("os");
+const auditTmp = fs.mkdtempSync(path.join(os.tmpdir(), "woodtek-audit-"));
+process.env.WOODTEK_DATA_DIR = auditTmp;
+const audit = require("./compiled/lib/audit.server.js");
+audit.logAudit({ id: 1, name: "Boss", role: "Manager" }, "login", "user", "Signed in", 1);
+audit.logAudit({ id: 2, name: "maroun", role: "Machine Operator" }, "operation.update", "operation", "Cutting: In Progress", 42);
+audit.logAudit(null, "login.failed", "user", "Failed sign-in for ghost@x");
+audit.logAudit({ id: 1, name: "Boss", role: "Manager" }, "db.backup", "system", "Backup woodtek-db.sql (12 KB)");
+const trail = audit.readAudit();
+check(trail.length === 4 && trail[0].action === "db.backup", "audit: newest-first read");
+check(trail[3].actorName === "Boss" && trail[3].action === "login", "audit: actor + action stored");
+const filtered = audit.readAudit({ q: "backup" });
+check(filtered.length === 1 && filtered[0].action === "db.backup", "audit: substring filter");
+audit.clearAudit();
+check(audit.readAudit().length === 0, "audit: clear empties the trail");
+audit.logAudit({ id: 9, name: "X".repeat(400), role: "r" }, "order.edit", "order", "d".repeat(400), 7);
+const one = audit.readAudit()[0];
+check(one.actorName.length === 400 && one.detail.length === 300, "audit: detail clamped to 300 (actor name preserved)");
+delete process.env.WOODTEK_DATA_DIR;
+fs.rmSync(auditTmp, { recursive: true, force: true });
+
+// ---- i18n dictionary sanity ----
+const i18n = require("./compiled/lib/i18n.js");
+const arKeys = i18n.translatedKeys("ar");
+const frKeys = i18n.translatedKeys("fr");
+check(arKeys.length > 40 && frKeys.length === arKeys.length, "i18n: AR and FR cover the same key set (>40 labels)");
+check(arKeys.every((k) => i18n.tt("ar", k) && i18n.tt("ar", k) !== k || k === "PIN"), "i18n: every AR translation differs from English (or is PIN)");
+check(frKeys.every((k) => i18n.tt("fr", k) && i18n.tt("fr", k) !== k || k === "PIN"), "i18n: every FR translation differs from English (or is PIN)");
+check(i18n.tt("en", "Executive Dashboard") === "Executive Dashboard", "i18n: EN passthrough");
+check(i18n.tt("ar", "Executive Dashboard") === "\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629", "i18n: AR menu label");
+check(i18n.tt("fr", "Orders & Routing") === "Commandes & routage", "i18n: FR menu label");
+check(i18n.tt("ar", "My Custom Menu Name") === "My Custom Menu Name", "i18n: custom Menu Designer names are untouched");
+check(i18n.tt("ar", "Some random UI string") === "Some random UI string", "i18n: unknown strings fall through to English");
+
+// SSR: sidebar renders Arabic labels when lang=ar
+const ssrAr = renderToString(React.createElement(Sidebar, props("Manager", null, "ar")));
+check(ssrAr.includes("\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629"), "i18n SSR: Arabic sidebar menu labels");
+check(ssrAr.includes("\u0627\u0644\u0637\u0644\u0628\u0627\u062a \u0648\u0627\u0644\u062a\u0648\u062c\u064a\u0647"), "i18n SSR: Arabic Orders & Routing label");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

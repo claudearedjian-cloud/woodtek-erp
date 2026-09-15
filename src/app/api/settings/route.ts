@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { users, customers } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
@@ -79,7 +80,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { error: authError } = await authorize("users:manage");
+  const { user, error: authError } = await authorize("users:manage");
   if (authError) return authError;
 
   try {
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
         }
         
         const [updated] = await db.update(users).set(updateData).where(eq(users.id, Number(id))).returning(SAFE_USER_COLUMNS);
+        logAudit(user, "user.update", "user", `${updated.name}: profile updated${pin ? " · PIN reset" : ""}${role ? ` · role ${role}` : ""}`, updated.id);
         return NextResponse.json(updated);
       } else {
         // Create new
@@ -120,6 +122,7 @@ export async function POST(request: Request) {
           phone,
           notes,
         }).returning(SAFE_USER_COLUMNS);
+        logAudit(user, "user.create", "user", `User ${created.name} created with role ${finalRole}`, created.id);
         return NextResponse.json(created, { status: 201 });
       }
     }

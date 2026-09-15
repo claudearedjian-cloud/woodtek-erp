@@ -29,6 +29,7 @@ import FullscreenSplash from "@/components/FullscreenSplash";
 import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
+import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 
 export default function WoodTekERP() {
@@ -66,6 +67,10 @@ export default function WoodTekERP() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [menuConfig, setMenuConfig] = useState<MenuConfig | null>(null);
+  // Label language (sidebar / sign-in / top bar). EN default, per device.
+  const [lang, setLang] = useState<Lang>("en");
+  useEffect(() => { setLang(loadSavedLang()); }, []);
+  const changeLang = (l: Lang) => { setLang(l); saveLang(l); };
   const [demoMode, setDemoMode] = useState(false);
   // Show the fullscreen welcome splash when a user signs in.
   // It closes once the dashboard finishes loading.
@@ -324,6 +329,7 @@ export default function WoodTekERP() {
         menuConfig={menuConfig}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        lang={lang}
       />
 
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto custom-scrollbar">
@@ -336,6 +342,8 @@ export default function WoodTekERP() {
           }}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
+          lang={lang}
+          onSetLang={changeLang}
           orders={orders}
           customers={customers}
           machinesList={machines}
@@ -398,6 +406,7 @@ export default function WoodTekERP() {
         <AuthGate
           users={users}
           initialUser={authCandidate}
+          lang={lang}
           required={!currentUser}
           onAuthenticated={handleAuthenticated}
           onCancel={currentUser ? () => { setAuthOpen(false); setAuthCandidate(null); } : undefined}

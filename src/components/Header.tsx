@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore } from "lucide-react";
+import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore, Languages } from "lucide-react";
+import { LANG_LABELS, tt, type Lang } from "@/lib/i18n";
 
 interface HeaderProps {
   activeTab: string;
@@ -15,6 +16,8 @@ interface HeaderProps {
   onSwitchProfile: () => void;
   onLock: () => void;
   onExit: () => void;
+  lang?: Lang;
+  onSetLang?: (l: Lang) => void;
   canCreateOrder: boolean;
   orders?: any[];
   customers?: any[];
@@ -41,9 +44,12 @@ export default function Header({
   machinesList = [],
   onOpenOrder,
   onNavigate,
+  lang = "en",
+  onSetLang,
 }: HeaderProps) {
   const [timeStr, setTimeStr] = useState("");
   const [searchFocus, setSearchFocus] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
   const q = searchQuery.trim().toLowerCase();
   const searchActive = q.length >= 2;
   const orderHits = searchActive
@@ -217,7 +223,7 @@ export default function Header({
           <input
             type="text"
             id="woodtek-global-search"
-            placeholder="Search orders, clients, machines…"
+            placeholder={tt(lang, "Search orders, clients, machines…")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -447,13 +453,35 @@ export default function Header({
           </div>
         )}
 
+        {onSetLang && (
+          <div className="relative">
+            <button onClick={() => setLangOpen((v) => !v)} className={`${iconBtn} hover:border-amber-500/50 hover:text-amber-300`} title="Label language / لغة الواجهة / Langue des libellés">
+              <Languages className="h-4 w-4" />
+            </button>
+            {langOpen && (
+              <div className="absolute right-0 top-10 z-[95] w-40 rounded-xl border border-slate-700 bg-slate-900 p-1 shadow-2xl">
+                {(["en", "ar", "fr"] as Lang[]).map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => { onSetLang(l); setLangOpen(false); }}
+                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-bold transition ${lang === l ? "bg-amber-500/20 text-amber-300" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}
+                  >
+                    <span>{LANG_LABELS[l]}</span>
+                    {lang === l && <span className="text-[10px]">●</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <button onClick={onSwitchProfile} className={`${iconBtn} hidden sm:flex`} title={`Switch profile — ${currentUser?.name || "employee"}`}>
           <UserRoundCog className="h-4 w-4" />
         </button>
-        <button onClick={onLock} className={`${iconBtn} hover:border-rose-500/50 hover:text-rose-300`} title="Lock workspace">
+        <button onClick={onLock} className={`${iconBtn} hover:border-rose-500/50 hover:text-rose-300`} title={tt(lang, "Lock")}>
           <LockKeyhole className="h-4 w-4" />
         </button>
-        <button onClick={onExit} className={`${iconBtn} hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-300`} title="Exit WoodTek ERP">
+        <button onClick={onExit} className={`${iconBtn} hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-300`} title={tt(lang, "Exit")}>
           <Power className="h-4 w-4" />
         </button>
 
@@ -463,7 +491,7 @@ export default function Header({
             className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 px-3.5 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" />
-            <span className="hidden sm:inline">New Order Flow</span>
+            <span className="hidden sm:inline">{tt(lang, "New Order")}</span>
             <span className="sm:hidden">Order</span>
           </button>
         )}

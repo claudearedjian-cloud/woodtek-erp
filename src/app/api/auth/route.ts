@@ -13,6 +13,7 @@ import {
   recordFailure,
   clearFailures,
 } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
@@ -62,16 +63,19 @@ export async function POST(request: Request) {
 
     if (!candidate) {
       recordFailure(rateKey);
+      logAudit(null, "login.failed", "user", `Failed sign-in for ${email || "user #" + String(body.userId)}`);
       return NextResponse.json({ error: "Incorrect PIN or inactive employee account." }, { status: 401 });
     }
 
     const ok = await verifyPin(pin, candidate.pin, candidate.id);
     if (!ok) {
       recordFailure(rateKey);
+      logAudit({ id: candidate.id, name: candidate.name, role: candidate.role }, "login.failed", "user", "Wrong PIN");
       return NextResponse.json({ error: "Incorrect PIN or inactive employee account." }, { status: 401 });
     }
 
     clearFailures(rateKey);
+    logAudit({ id: candidate.id, name: candidate.name, role: candidate.role }, "login", "user", "Signed in", candidate.id);
 
     // Custom roles resolve to the built-in role they inherit (same as
     // getSessionUser), so the client sees one consistent user shape.
@@ -102,6 +106,8 @@ export async function POST(request: Request) {
 
 /** DELETE /api/auth — sign out. */
 export async function DELETE() {
+  const sessionUser = await getSessionUser();
+  if (sessionUser) logAudit(sessionUser, "logout", "user", "Signed out", sessionUser.id);
   const response = NextResponse.json({ success: true });
   response.cookies.set(SESSION_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
   return response;

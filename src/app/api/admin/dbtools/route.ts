@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -74,14 +75,46 @@ export async function GET() {
         return { file: f, sizeKb: Math.max(1, Math.round(st.size / 1024)), at: st.mtimeMs };
       })
       .sort((a, b) => b.at - a.at);
-    return NextResponse.json({ dumps });
+    return NextResponse.json({ dumps, keep: keepCount() });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed to list backups" }, { status: 500 });
   }
 }
 
+/** How many dumps to keep (WOODTEK_DB_BACKUP_KEEP, default 30). */
+function keepCount(): number {
+  const n = Math.floor(Number(process.env.WOODTEK_DB_BACKUP_KEEP) || 30);
+  return Math.max(3, n);
+}
+
+/** Delete the oldest dumps beyond the retention count. Returns pruned names. */
+function pruneDumps(): string[] {
+  try {
+    const dumps = fs
+      .readdirSync(dumpsDir())
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => {
+        const st = fs.statSync(path.join(dumpsDir(), f));
+        return { f, at: st.mtimeMs };
+      })
+      .sort((a, b) => b.at - a.at);
+    const pruned: string[] = [];
+    for (const d of dumps.slice(keepCount())) {
+      try {
+        fs.unlinkSync(path.join(dumpsDir(), d.f));
+        pruned.push(d.f);
+      } catch {
+        /* file locked — keep it */
+      }
+    }
+    return pruned;
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(request: Request) {
-  const { error } = await authorize("users:manage");
+  const { user, error } = await authorize("users:manage");
   if (error) return error;
 
   const url = process.env.DATABASE_URL;
@@ -98,7 +131,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Backup failed: ${String(res.output).slice(0, 400)}` }, { status: 500 });
     }
     const sizeKb = Math.max(1, Math.round(fs.statSync(file).size / 1024));
-    return NextResponse.json({ ok: true, file: path.basename(file), sizeKb });
+    const pruned = pruneDumps();
+    logAudit(user, "db.backup", "system", `Backup ${path.basename(file)} (${sizeKb} KB)${pruned.length ? ` - ${pruned.length} old dump(s) pruned` : ""}`);
+    return NextResponse.json({ ok: true, file: path.basename(file), sizeKb, pruned });
   }
 
   if (action === "restore") {
@@ -124,6 +159,7 @@ export async function POST(request: Request) {
     if (!res.ok) {
       return NextResponse.json({ error: `Restore failed: ${String(res.output).slice(0, 400)}` }, { status: 500 });
     }
+    logAudit(user, "db.restore", "system", `Database restored from ${name}`);
     return NextResponse.json({ ok: true, file: name });
   }
 

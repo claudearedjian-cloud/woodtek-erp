@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { orders, customers, orderOperations, orderMaterials, machines, users, inventoryItems, materialConsumptions } from "@/db/schema";
 import { eq, asc, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { isFloorRole } from "@/lib/dataAccess";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -175,6 +176,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       .where(eq(orders.id, orderId))
       .returning();
 
+    if (body.status !== undefined && body.status !== updatedOrder.status) {
+      logAudit(user, "order.status", "order", `${updatedOrder.orderNumber}: status -> ${body.status}`, orderId);
+    } else if (Object.keys(updateFields).length > 0) {
+      logAudit(user, "order.edit", "order", `${updatedOrder.orderNumber}: edited (${Object.keys(updateFields).join(", ")})`, orderId);
+    }
     return NextResponse.json(updatedOrder);
   } catch (error: any) {
     console.error("PATCH order error:", error);
@@ -183,7 +189,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("orders:delete");
+  const { user, error: authError } = await authorize("orders:delete");
   if (authError) return authError;
 
   try {
@@ -215,6 +221,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     await db.delete(orderOperations).where(eq(orderOperations.orderId, orderId));
     await db.delete(orders).where(eq(orders.id, orderId));
 
+    logAudit(user, "order.delete", "order", `Order #${orderId} deleted`, orderId);
     return NextResponse.json({ success: true, message: "Order and workflow operations deleted." });
   } catch (error: any) {
     console.error("DELETE order error:", error);

@@ -14,6 +14,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, inventoryItems, orderMaterials, orders } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { can } from "@/lib/permissions";
 import {
   ALL_STAGES,
@@ -137,6 +138,7 @@ export async function PUT(request: Request) {
     }
     data.stages[String(orderId)] = entry;
     writeFile(data);
+    logAudit(user, stage === "delivered" ? "dispatch.delivered" : "dispatch.stage", "order", `Dispatch: ${stage}${entry.proof ? ` (received by ${entry.proof.receivedBy})` : ""}`, orderId);
     if (stage === "delivered") {
       // Delivery confirmed at the gate: the order leaves open work everywhere.
       await db.update(orders).set({ status: "Delivered" }).where(eq(orders.id, orderId));

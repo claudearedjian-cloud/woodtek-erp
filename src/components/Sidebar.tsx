@@ -66,6 +66,7 @@ import {
   Sparkle,
 } from "lucide-react";
 import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuConfig";
+import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 
 const ICONS: Record<string, any> = {
@@ -141,6 +142,7 @@ interface SidebarProps {
   menuConfig: MenuConfig | null;
   isOpen: boolean;
   onClose: () => void;
+  lang?: Lang;
 }
 
 export default function Sidebar({
@@ -153,6 +155,7 @@ export default function Sidebar({
   menuConfig,
   isOpen,
   onClose,
+  lang = "en",
 }: SidebarProps) {
   // Custom roles: menu overrides are keyed by the custom name, and the base
   // role decides module access — resolveMenu handles both.
@@ -206,7 +209,7 @@ export default function Sidebar({
               isActive ? (sub ? "text-amber-400" : "text-slate-950") : "text-slate-400 group-hover:text-amber-400"
             }`}
           />
-          <span className="truncate">{item.label}</span>
+          <span className="truncate">{tt(lang, item.label)}</span>
         </div>
         {item.badge && (
           <span
@@ -233,7 +236,7 @@ export default function Sidebar({
               isActive ? (sub ? "text-amber-400" : "text-slate-950") : "text-slate-400 group-hover:text-amber-400"
             }`}
           />
-          <span className="truncate">{item.label}</span>
+          <span className="truncate">{tt(lang, item.label)}</span>
         </div>
         {item.badge && (
           <span
@@ -281,12 +284,12 @@ export default function Sidebar({
       {/* Navigation Links */}
       <div className="flex-1 overflow-y-auto py-5 px-3 space-y-1.5 custom-scrollbar">
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-          Operations & Control
+          {tt(lang, "Operations & Control")}
         </div>
         {empty ? (
           <div className="mx-1 my-2 rounded-xl border border-dashed border-slate-700/80 bg-slate-950/40 px-4 py-5 text-center">
             <LockKeyhole className="mx-auto mb-2 h-5 w-5 text-amber-500/80" />
-            <p className="text-xs font-bold text-slate-300">Sign in to continue</p>
+            <p className="text-xs font-bold text-slate-300">{tt(lang, "Sign in to continue")}</p>
             <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
               Enter your shop PIN on the sign-in screen to load your modules and stations.
             </p>
@@ -323,11 +326,11 @@ export default function Sidebar({
 
         <div className="mx-3 mt-5 border-t border-slate-800/80 pt-4" />
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-          Factory Automation
+          {tt(lang, "Factory Automation")}
         </div>
         <div className="px-3.5 py-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs text-slate-400">
           <div className="flex items-center gap-2 font-semibold text-slate-300 mb-1">
-            <Sparkles className="w-4 h-4 text-amber-400" /> Auto Workflow Engine
+            <Sparkles className="w-4 h-4 text-amber-400" /> {tt(lang, "Auto Workflow Engine")}
           </div>
           <p className="text-slate-400 text-[11px] leading-relaxed">
             Completing an order operation automatically advances the part to the next machine along the line.
@@ -339,7 +342,7 @@ export default function Sidebar({
       <div className="p-4 border-t border-slate-800 bg-slate-950/80">
         {!isOperator && (<>
         <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
-          <span>Active Role Persona</span>
+          <span>{tt(lang, "Active Role Persona")}</span>
           <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
         </div>
 
@@ -350,9 +353,9 @@ export default function Sidebar({
               {currentUser?.name?.charAt(0) || "?"}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-white truncate">{currentUser?.name || "Not signed in"}</div>
+              <div className="text-sm font-bold text-white truncate">{currentUser?.name || tt(lang, "Not signed in")}</div>
               <div className="text-[11px] text-slate-400 font-semibold truncate flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 inline" /> {currentUser?.displayRole || currentUser?.role || "Sign in required"}
+                <ShieldCheck className="w-3 h-3 inline" /> {currentUser?.displayRole || currentUser?.role || tt(lang, "Sign in required")}
               </div>
             </div>
             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transform group-hover:translate-x-0.5 transition" />
@@ -389,7 +392,7 @@ export default function Sidebar({
           className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30 transition"
         >
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Switch profile (PIN required)</span>
+          <span>{tt(lang, "Switch profile (PIN required)")}</span>
         </button>
       </div>
     </aside>

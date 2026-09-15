@@ -20,6 +20,7 @@ import {
 import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus, type ReceptionState } from "@/lib/bomStatus.server";
+import { logAudit } from "@/lib/audit.server";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -206,6 +207,7 @@ export async function PUT(request: Request) {
         }
       }
       setOrderReceived(orderId, state === "Received", state);
+      logAudit(user, `bom.reception.${state === "Received" ? "approve" : state === "Declined" ? "decline" : "flag"}`, "order", `Material reception: ${state}`, orderId);
       return NextResponse.json({ ok: true, orderId, received: state === "Received", state });
     }
 
@@ -239,6 +241,7 @@ export async function PUT(request: Request) {
       ? Number(body.machineId)
       : (existing?.machineId ?? null);
     setBomStatus(allocationId, status, machineId, deliveredQty);
+    logAudit(user, status === "Delivered" ? "bom.deliver" : `bom.${status.toLowerCase()}`, "bom_line", `BOM line -> ${status}${deliveredQty != null && deliveredQty < (line?.quantityUsed ?? 0) ? ` (${deliveredQty}/${line?.quantityUsed} sent)` : ""}`, allocationId);
     return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update status";
