@@ -7,6 +7,7 @@
 // ============================================================================
 import React, { useEffect, useMemo, useState } from "react";
 import { PackageCheck, RefreshCw, AlertTriangle, ArrowRight } from "lucide-react";
+import { canAssignMachines } from "@/lib/permissions";
 
 type Line = {
   id: number;
@@ -58,6 +59,8 @@ export default function FloorReceptionView({
     (currentUser.role === "Manager" ||
       currentUser.role === "Floor Supervisor" ||
       currentUser.displayRole === "Floor Supervisor");
+  // Machine assignment: Floor Supervisor (or a custom role based on it) + Manager.
+  const canAssign = !!currentUser && canAssignMachines(currentUser.role);
 
   const load = async () => {
     try {
@@ -310,14 +313,14 @@ export default function FloorReceptionView({
                 </div>
 
                 {/* machine assignment — Floor Supervisor's call, after approval */}
-                {canApprove && (o.operations ?? []).some((op) => (op.candidates ?? []).length > 1 && (op.status === "Pending" || op.status === "Ready")) && (
+                {canAssign && (o.operations ?? []).some((op) => (op.candidates ?? []).length >= 1 && (op.status === "Pending" || op.status === "Ready")) && (
                   <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
                     <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-slate-400">
                       <span>Machine assignment — your decision</span>
                     </div>
                     <div className="mt-2 space-y-2">
                       {(o.operations ?? [])
-                        .filter((op) => (op.candidates ?? []).length > 1 && (op.status === "Pending" || op.status === "Ready"))
+                        .filter((op) => (op.candidates ?? []).length >= 1 && (op.status === "Pending" || op.status === "Ready"))
                         .map((op) => (
                           <div key={op.id} className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs font-bold text-slate-200 truncate">

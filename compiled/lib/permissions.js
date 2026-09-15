@@ -9,6 +9,7 @@ exports.registerCustomRoles = registerCustomRoles;
 exports.getCustomRoles = getCustomRoles;
 exports.allRoles = allRoles;
 exports.baseRoleOf = baseRoleOf;
+exports.canAssignMachines = canAssignMachines;
 exports.registerModuleOverrides = registerModuleOverrides;
 exports.getModuleOverrides = getModuleOverrides;
 exports.deniedMessage = deniedMessage;
@@ -168,6 +169,14 @@ function baseRoleOf(role) {
         return "";
     const hit = CUSTOM_ROLES.find((r) => r.name === role);
     return hit ? hit.base : role;
+}
+/**
+ * Machine assignment: built-in Floor Supervisors (and Manager), plus any
+ * custom role based on Floor Supervisor. can() alone never resolves custom
+ * roles, so they were silently locked out of machine assignment.
+ */
+function canAssignMachines(role) {
+    return can(role, "operations:assign-machine") || baseRoleOf(role) === "Floor Supervisor";
 }
 // ------------------------------------------------------- module overrides
 // Managers can re-pick the screens ANY role sees (Settings > Manage roles).

@@ -79,6 +79,7 @@ export async function GET() {
           operationName: orderOperations.operationName,
           status: orderOperations.status,
           machineId: orderOperations.machineId,
+          machineCategory: machines.category,
           machineCode: machines.code,
           machineName: machines.name,
         })
@@ -127,11 +128,15 @@ export async function GET() {
       const order = byOrder.get(op.orderId);
       if (!order) continue;
       const current = op.machineId != null ? machineById.get(op.machineId) : undefined;
+      // Same-category equivalents when a machine is assigned; when none is,
+      // offer every active machine so the Floor Supervisor can make the call.
       const candidates = current
         ? machinesAll
             .filter((m) => m.category === current.category && (m.status === "Active" || m.status === "In-Use"))
             .map((m) => ({ id: m.id, code: m.code, name: m.name, status: m.status }))
-        : [];
+        : machinesAll
+            .filter((m) => m.status === "Active" || m.status === "In-Use")
+            .map((m) => ({ id: m.id, code: m.code, name: m.name, status: m.status }));
       order.operations.push({
         id: op.id,
         stepOrder: op.stepOrder,

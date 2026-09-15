@@ -6,7 +6,7 @@ import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
-import { can } from "@/lib/permissions";
+import { canAssignMachines } from "@/lib/permissions";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -30,7 +30,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     // check; any other field combination still requires it.
     const machineOnlyRequest = Object.keys(body).every((k) => k === "machineId");
     let check: { allowed: boolean; reason?: string } = { allowed: true };
-    if (!(machineOnlyRequest && can(user.role, "operations:assign-machine"))) {
+    if (!(machineOnlyRequest && canAssignMachines(user.role))) {
       check = await canUserUpdateOperation(user, operationId);
     }
     if (!check.allowed) {
@@ -46,7 +46,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const restricted: string[] = [];
       // Floor Supervisors may move a step between equivalent machines (same
       // category) — validated further inside the transaction below.
-      if (body.machineId !== undefined && !can(user.role, "operations:assign-machine")) restricted.push("machineId");
+      if (body.machineId !== undefined && !canAssignMachines(user.role)) restricted.push("machineId");
       if (body.scheduledStart !== undefined) restricted.push("scheduledStart");
       if (body.scheduledEnd !== undefined) restricted.push("scheduledEnd");
       if (body.operatorId !== undefined && Number(body.operatorId) !== Number(user.id)) restricted.push("operatorId");
@@ -70,7 +70,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
       // Floor Supervisor machine choice: same-category equivalent machines,
       // only before work starts, only after reception approval.
-      if (body.machineId !== undefined && user.role !== "Manager" && can(user.role, "operations:assign-machine")) {
+      if (body.machineId !== undefined && user.role !== "Manager" && canAssignMachines(user.role)) {
         const chosenMachineId = body.machineId ? Number(body.machineId) : null;
         if (!chosenMachineId) {
           throw new WorkflowError("A machine id is required.", 400);
@@ -81,14 +81,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (!currentOp.machineId) {
           throw new WorkflowError("This step has no machine yet — a Manager must assign the first one.", 409);
         }
-        const [currentMachine] = await tx.select().from(machines).where(eq(machines.id, currentOp.machineId));
         const [targetMachine] = await tx.select().from(machines).where(eq(machines.id, chosenMachineId));
         if (!targetMachine) throw new WorkflowError("The selected machine no longer exists.", 404);
         if (targetMachine.status === "Maintenance" || targetMachine.status === "Offline") {
           throw new WorkflowError(`${targetMachine.code} is ${targetMachine.status.toLowerCase()} and cannot accept work.`, 409);
         }
-        if (!currentMachine || targetMachine.category !== currentMachine.category) {
-          throw new WorkflowError("Only equivalent machines of the same category can be chosen.", 409);
+        // Same-category equivalents when a machine is already assigned; when the
+        // step has none yet, the Floor Supervisor may give it any active machine.
+        if (currentOp.machineId) {
+          const [currentMachine] = await tx.select().from(machines).where(eq(machines.id, currentOp.machineId));
+          if (currentMachine && targetMachine.category !== currentMachine.category) {
+            throw new WorkflowError(`Only ${currentMachine.category} machines can run this step.`, 409);
+          }
         }
         const assignBom = await tx
           .select({ id: orderMaterials.id })

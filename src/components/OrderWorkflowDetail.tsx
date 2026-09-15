@@ -31,7 +31,7 @@ import jsPDF from "jspdf";
 import QRCode from "qrcode";
 import { QUOTE_STRINGS, type Lang } from "@/lib/i18n";
 import autoTable from "jspdf-autotable";
-import { can } from "@/lib/permissions";
+import { can, canAssignMachines } from "@/lib/permissions";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -166,11 +166,15 @@ export default function OrderWorkflowDetail({
 
   const handleSwapMachine = async (opId: number, machineId: string) => {
     try {
-      await fetch(`/api/operations/${opId}`, {
+      const res = await fetch(`/api/operations/${opId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ machineId: machineId ? Number(machineId) : null }),
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any));
+        setActionError(d.error || "Machine assignment failed.");
+      }
       fetchOrderDetail();
       onRefresh();
     } catch (err) {
@@ -807,14 +811,18 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                             <select
                               value={op.machineId || ""}
                               onChange={(e) => handleSwapMachine(op.id, e.target.value)}
-                              className="bg-transparent font-bold text-white focus:outline-none cursor-pointer text-xs"
+                              disabled={!canAssignMachines(currentUser?.role)}
+                              title={canAssignMachines(currentUser?.role) ? "Assign a machine — only machines of the same type are offered" : "Only the Manager or Floor Supervisor can change the machine"}
+                              className="bg-transparent font-bold text-white focus:outline-none cursor-pointer text-xs disabled:cursor-not-allowed disabled:text-slate-400"
                             >
-                              <option value="">Unassigned</option>
-                              {machines.map(m => (
-                                <option key={m.id} value={m.id} className="bg-slate-900 text-white">
-                                  {m.code} ({m.name})
-                                </option>
-                              ))}
+                              {canAssignMachines(currentUser?.role) && <option value="">Unassigned</option>}
+                              {machines
+                                .filter((m: any) => !op.machineCategory || m.category === op.machineCategory || m.id === op.machineId)
+                                .map((m: any) => (
+                                  <option key={m.id} value={m.id} className="bg-slate-900 text-white">
+                                    {m.code} ({m.name})
+                                  </option>
+                                ))}
                             </select>
                           </div>
 

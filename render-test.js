@@ -495,6 +495,17 @@ check(wall.machines[0].queued === 2 && wall.machines[1].queued === 0, "wallboard
 check(wall.kpis.running === 2 && wall.kpis.down === 1 && wall.kpis.activeOrders === 3, "wallboard: kpis mapped");
 check(wb.buildWallBoard(null).machines.length === 0, "wallboard: empty payload is safe");
 
+// ---- machine assignment permissions ----
+const savedCustomRoles = perms.getCustomRoles();
+perms.registerCustomRoles([...savedCustomRoles, { name: "Line Supervisor", base: "Floor Supervisor" }]);
+check(perms.canAssignMachines("Manager") === true, "machine assign: Manager can assign");
+check(perms.canAssignMachines("Floor Supervisor") === true, "machine assign: Floor Supervisor can assign");
+check(perms.canAssignMachines("Line Supervisor") === true, "machine assign: custom role based on Floor Supervisor can assign");
+check(perms.canAssignMachines("Machine Operator") === false, "machine assign: operator cannot assign");
+check(perms.canAssignMachines("Warehouse Supervisor") === false, "machine assign: warehouse cannot assign");
+check(perms.canAssignMachines(undefined) === false, "machine assign: signed-out cannot assign");
+perms.registerCustomRoles(savedCustomRoles);
+
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");
 const cats = mc.sanitizeCategories(["  Beam Saw ", "beam saw", "CNC", "", null, 42, "x".repeat(60)]);
