@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, "..");
 const STANDALONE = path.join(ROOT, ".next", "standalone");
 
 function log(msg) { console.log(`\n\x1b[36m[build-prod]\x1b[0m ${msg}`); }
-function run(cmd) { log(`> ${cmd}`); execSync(cmd, { stdio: "inherit", cwd: ROOT }); }
+function run(cmd, extraEnv) { log(`> ${cmd}`); execSync(cmd, { stdio: "inherit", cwd: ROOT, ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}) }); }
 
 // If the WoodTek server is still listening, the build cannot replace
 // .next/standalone (EBUSY). Fail fast with the exact fix instead.
@@ -93,7 +93,15 @@ async function main() {
   }
 
   log("Step 1/3: Building Next.js production bundle (standalone)...");
-  run("npx next build");
+  // Stamp the built app with the current git commit so the Settings screen
+  // can show exactly which version is running (support asks this first).
+  let buildSha = "unknown";
+  try {
+    buildSha = execSync("git rev-parse --short HEAD", { cwd: ROOT, encoding: "utf8" }).trim();
+  } catch {
+    /* not a git checkout — fall back to "unknown" */
+  }
+  run("npx next build", { NEXT_PUBLIC_WOODTEK_BUILD: buildSha });
 
   if (!fs.existsSync(STANDALONE)) {
     throw new Error(`Expected standalone build at ${STANDALONE} but it does not exist.`);

@@ -777,6 +777,13 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
       )}
 
+      {/* Build stamp (Manager only) — which version is running on THIS computer */}
+      {isManager && (
+        <div className="text-center text-[10px] font-bold text-slate-600">
+          Build: {process.env.NEXT_PUBLIC_WOODTEK_BUILD || "dev"} — tell this number to support when something looks wrong.
+        </div>
+      )}
+
       {/* Audit log (Manager only) */}
       {isManager && (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
