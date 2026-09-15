@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { baseRoleOf } from "@/lib/permissions";
+import { allowedStages } from "@/lib/materialProgress";
 import { jobLockedByOther } from "@/lib/jobLock";
 import {
   Tablet,
@@ -305,16 +306,22 @@ export default function OperatorStationView({
 
   // One tap: "this material is finished on THIS step" — the server picks
   // the next ladder stage (never a skip). Best-effort; the queue refetches.
-  const advanceMaterial = async (materialId: number) => {
+  // Per-material taps: "▶ Start" moves ONE material into the current step;
+  // "✓ Finished here" lets the server pick the next ladder stage — never a skip.
+  const advanceMaterial = async (materialId: number, stage?: string) => {
     try {
-      await fetch("/api/material-progress", {
+      const res = await fetch("/api/material-progress", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderMaterialsId: materialId, advance: true }),
+        body: JSON.stringify(stage ? { orderMaterialsId: materialId, stage } : { orderMaterialsId: materialId, advance: true }),
       });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({} as any));
+        setActionError(d.error || "Could not update the material.");
+      }
       await fetchMachineQueue();
     } catch {
-      /* ignore */
+      setActionError("Could not update the material.");
     }
   };
 
@@ -628,6 +635,10 @@ export default function OperatorStationView({
                               const mStage: string = mat.stage ?? "";
                               const atThisStep = mStage === op.operationName;
                               const mDone = mStage === "DONE";
+                              const canStartMat =
+                                !mDone && !atThisStep &&
+                                (op.orderSteps ?? []).length > 0 &&
+                                allowedStages(op.orderSteps, mStage).includes(op.operationName);
                               const mWaiting = !mDone && !atThisStep;
                               return (
                                 <div key={mat.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -645,6 +656,15 @@ export default function OperatorStationView({
                                         title="Finished working this material on this step — it moves to the next stage"
                                       >
                                         \u2713 Finished here
+                                      </button>
+                                    )}
+                                    {canStartMat && isRunning && !lockedByMate && (
+                                      <button
+                                        onClick={() => advanceMaterial(mat.id, op.operationName)}
+                                        className="rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300 hover:bg-amber-500/25 active:scale-95 transition"
+                                        title="This material is being worked now — it moves to this step (one stage, never a skip)"
+                                      >
+                                        \u25b6 Start this material
                                       </button>
                                     )}
                                   </span>

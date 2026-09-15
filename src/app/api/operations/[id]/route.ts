@@ -8,7 +8,6 @@ import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
 import { baseRoleOf, canAssignMachines } from "@/lib/permissions";
 import { jobLockedByOther } from "@/lib/jobLock";
-import { autoAdvanceMaterialsForStep } from "@/lib/materialProgress.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -332,14 +331,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return { operation: updatedOp, progressPercent, orderStatus };
     });
 
-    // Materials follow the machine: starting a step pulls every pending
-    // material line into it ("cutting now"); completing pushes them one
-    // stage further. Best-effort — never blocks the operation itself.
-    if (result.operation.status === "In Progress") {
-      await autoAdvanceMaterialsForStep(result.operation.orderId, result.operation.operationName, "start");
-    } else if (result.operation.status === "Completed") {
-      await autoAdvanceMaterialsForStep(result.operation.orderId, result.operation.operationName, "complete");
-    }
     logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
     return NextResponse.json(result);
   } catch (error: unknown) {

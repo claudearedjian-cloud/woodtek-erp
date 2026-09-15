@@ -525,25 +525,6 @@ check(jl.jobLockedByOther({ status: "Ready", operatorId: 7 }, 9, true) === false
 check(jl.jobLockedByOther({ status: "In Progress", operatorId: null }, 9, true) === false, "job lock: no recorded starter = no lock");
 check(jl.jobLockedByOther({ status: "In Progress", operatorId: "7" }, "9", true) === true, "job lock: string ids coerce");
 
-// ---- material auto-advance on step start/complete ----
-const ladder = ["", "Cutting", "Edge Banding", "DONE"];
-const lines = [
-  { id: 1, stage: "" },
-  { id: 2, stage: "Cutting" },
-  { id: 3, stage: "Edge Banding" },
-  { id: 4, stage: "DONE" },
-  { id: 5, stage: "Hand-edited" },
-];
-const mStart = mp.computeAutoAdvance(lines, ladder, "Edge Banding", "start");
-check(JSON.stringify(mStart[1]) === '"Edge Banding"' && JSON.stringify(mStart[2]) === '"Edge Banding"', "auto-advance: start pulls pending and earlier-stage materials into the step");
-check(mStart[3] === undefined && mStart[4] === undefined && mStart[5] === undefined, "auto-advance: ahead/done/custom lines untouched");
-const mDone = mp.computeAutoAdvance([{ id: 1, stage: "Cutting" }, { id: 2, stage: "Edge Banding" }], ladder, "Cutting", "complete");
-check(JSON.stringify(mDone[1]) === '"Edge Banding"' && mDone[2] === undefined, "auto-advance: complete pushes only this step's materials one further");
-const mLast = mp.computeAutoAdvance([{ id: 7, stage: "Edge Banding" }], ladder, "Edge Banding", "complete");
-check(JSON.stringify(mLast[7]) === '"DONE"', "auto-advance: finishing the last step marks materials DONE");
-check(Object.keys(mp.computeAutoAdvance(lines, ladder, "Renamed Step", "start")).length === 0, "auto-advance: unknown step name is a no-op");
-check(mp.ladderIndex(ladder, "Cutting") === 1 && mp.ladderIndex(ladder, "Custom") === -1, "auto-advance: ladder index helper");
-
 // ---- machine assignment permissions ----
 const savedCustomRoles = perms.getCustomRoles();
 perms.registerCustomRoles([...savedCustomRoles, { name: "Line Supervisor", base: "Floor Supervisor" }]);

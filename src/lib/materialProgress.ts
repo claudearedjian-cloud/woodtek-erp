@@ -64,42 +64,6 @@ export function allowedStages(steps: string[], current: string): string[] {
   return Array.from(out);
 }
 
-/** Position of a stage in the ladder (-1 = unknown / custom). */
-export function ladderIndex(ladder: string[], stage: string): number {
-  return ladder.indexOf(sanitizeStage(stage));
-}
-
-export interface MaterialStageLine {
-  id: number;
-  stage: string;
-}
-
-/**
- * Auto-advance when a machine step STARTS or COMPLETES (operator-driven):
- *   start    — every line still BEFORE this step moves into it ("cutting now")
- *   complete — every line AT this step moves one further (next step, or DONE)
- * Lines already ahead, DONE, or on a custom/unknown stage are left alone.
- */
-export function computeAutoAdvance(
-  lines: MaterialStageLine[],
-  ladder: string[],
-  opName: string,
-  mode: "start" | "complete",
-): Record<number, string> {
-  const opIdx = ladder.indexOf(sanitizeStage(opName));
-  if (opIdx === -1) return {};
-  const moves: Record<number, string> = {};
-  for (const line of lines) {
-    const idx = ladderIndex(ladder, line.stage);
-    if (idx === -1) continue;
-    if (mode === "start" && idx < opIdx) moves[line.id] = ladder[opIdx];
-    if (mode === "complete" && idx === opIdx && opIdx + 1 < ladder.length) {
-      moves[line.id] = ladder[opIdx + 1];
-    }
-  }
-  return moves;
-}
-
 export type StageTone = "slate" | "amber" | "emerald";
 
 /** How a stage renders: label + colour tone. */

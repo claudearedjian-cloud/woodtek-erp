@@ -60,6 +60,12 @@ export async function GET(request: Request) {
     // Attach the order's materials with their live production stage so the
     // operator station can show the process per material ("cutting by material").
     const orderIds = Array.from(new Set(filtered.map((o) => o.orderId).filter((id): id is number => typeof id === "number")));
+    const stepsByOrder = new Map<number, string[]>();
+    for (const o of allOps) {
+      const list = stepsByOrder.get(o.orderId) ?? [];
+      if (!list.includes(o.operationName)) list.push(o.operationName);
+      stepsByOrder.set(o.orderId, list);
+    }
     let materialsByOrder = new Map<number, any[]>();
     if (orderIds.length > 0) {
       const [mats, progress] = await Promise.all([
@@ -83,7 +89,7 @@ export async function GET(request: Request) {
         materialsByOrder.set(m.orderId, list);
       }
     }
-    return NextResponse.json(filtered.map((o) => ({ ...o, materials: materialsByOrder.get(o.orderId) ?? [] })));
+    return NextResponse.json(filtered.map((o) => ({ ...o, materials: materialsByOrder.get(o.orderId) ?? [], orderSteps: stepsByOrder.get(o.orderId) ?? [] })));
   } catch (error: any) {
     console.error("GET operations error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch shop floor operations" }, { status: 500 });
