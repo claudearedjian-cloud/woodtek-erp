@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orderOperations, orders, machines, qualityEvents, orderMaterials } from "@/db/schema";
+import { orderOperations, orders, machines, qualityEvents, orderMaterials, users } from "@/db/schema";
 import { readReceived } from "@/lib/bomStatus.server";
 import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
-import { canAssignMachines } from "@/lib/permissions";
+import { baseRoleOf, canAssignMachines } from "@/lib/permissions";
+import { jobLockedByOther } from "@/lib/jobLock";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -66,6 +67,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
         throw new WorkflowError("Unsupported operation status.", 400);
+      }
+      
+      // Crew lock: while a job is running only the operator who started it
+      // (or Manager / supervisor roles) may control it — other machine crew
+      // members are view-only. Mirrors the greyed-out Station Mode buttons.
+      if (requestedStatus && jobLockedByOther(currentOp, user.id, baseRoleOf(user.role) === "Machine Operator")) {
+        const [starter] = await tx.select({ name: users.name }).from(users).where(eq(users.id, currentOp.operatorId as number));
+        throw new WorkflowError(`This job is being run by ${starter?.name ?? "another operator"} — view only for you.`, 403);
       }
 
       // Floor Supervisor machine choice: same-category equivalent machines,

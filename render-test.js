@@ -40,6 +40,7 @@ compile("src/lib/packingQc.ts", "lib/packingQc.js");
 compile("src/lib/orderArchive.ts", "lib/orderArchive.js");
 compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
+compile("src/lib/jobLock.ts", "lib/jobLock.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -494,6 +495,15 @@ check(wall.machines[0].currentStartMs !== null && wall.machines[1].currentStartM
 check(wall.machines[0].queued === 2 && wall.machines[1].queued === 0, "wallboard: queue depth");
 check(wall.kpis.running === 2 && wall.kpis.down === 1 && wall.kpis.activeOrders === 3, "wallboard: kpis mapped");
 check(wb.buildWallBoard(null).machines.length === 0, "wallboard: empty payload is safe");
+
+// ---- crew job lock ----
+const jl = require("./compiled/lib/jobLock.js");
+check(jl.jobLockedByOther({ status: "In Progress", operatorId: 7 }, 9, true) === true, "job lock: crew mate is locked out of a running job");
+check(jl.jobLockedByOther({ status: "In Progress", operatorId: 7 }, 7, true) === false, "job lock: the starter keeps control");
+check(jl.jobLockedByOther({ status: "In Progress", operatorId: 7 }, 9, false) === false, "job lock: managers/supervisors never locked");
+check(jl.jobLockedByOther({ status: "Ready", operatorId: 7 }, 9, true) === false, "job lock: queued jobs free for any crew member");
+check(jl.jobLockedByOther({ status: "In Progress", operatorId: null }, 9, true) === false, "job lock: no recorded starter = no lock");
+check(jl.jobLockedByOther({ status: "In Progress", operatorId: "7" }, "9", true) === true, "job lock: string ids coerce");
 
 // ---- machine assignment permissions ----
 const savedCustomRoles = perms.getCustomRoles();

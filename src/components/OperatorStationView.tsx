@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { baseRoleOf } from "@/lib/permissions";
+import { jobLockedByOther } from "@/lib/jobLock";
 import {
   Tablet,
   Play,
@@ -84,6 +86,8 @@ export default function OperatorStationView({
   const [receivedByOrder, setReceivedByOrder] = useState<Record<number, boolean | null>>({});
   const [receptionStateByOrder, setReceptionStateByOrder] = useState<Record<number, string | null>>({});
   const canApproveReception = !!currentUser && (currentUser.role === "Manager" || currentUser.role === "Floor Supervisor" || currentUser.displayRole === "Floor Supervisor");
+  // Crew job lock: same rule as the API — operators control only their own running jobs.
+  const operatorBasedViewer = baseRoleOf(currentUser?.role ?? "") === "Machine Operator";
   const [loadingOps, setLoadingOps] = useState(false);
   const [actionSuccess, setActionSuccess] = useState("");
   const [actionError, setActionError] = useState("");
@@ -551,6 +555,7 @@ export default function OperatorStationView({
               const isRunning = op.status === "In Progress";
               const isRejecting = rejectingId === op.id;
               const isConfirmingFinish = confirmingFinishId === op.id;
+              const lockedByMate = jobLockedByOther(op, currentUser?.id, operatorBasedViewer);
 
               return (
                 <div
@@ -775,7 +780,7 @@ export default function OperatorStationView({
                       ) : !isRunning ? (
                         <button
                           onClick={() => handleTouchAction(op.id, "In Progress")}
-                          disabled={busyOperationId !== null}
+                          disabled={busyOperationId !== null || lockedByMate}
                           className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
                         >
                           <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
@@ -784,7 +789,7 @@ export default function OperatorStationView({
                       ) : (
                         <button
                           onClick={() => handleFinishTap(op)}
-                          disabled={busyOperationId !== null}
+                          disabled={busyOperationId !== null || lockedByMate}
                           className={`flex items-center justify-center gap-2.5 bg-gradient-to-b px-8 py-5 rounded-2xl text-base shadow-xl transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait ${
                             isConfirmingFinish
                               ? "from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 text-slate-950 font-black animate-pulse shadow-amber-600/30"
@@ -796,10 +801,15 @@ export default function OperatorStationView({
                         </button>
                       )}
 
+                      {lockedByMate && (
+                        <div className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-300">
+                          Run by {op.operatorName || "another operator"} — view only
+                        </div>
+                      )}
                       {!isRejecting && (
                         <button
                           onClick={() => openReject(op.id)}
-                          disabled={busyOperationId !== null}
+                          disabled={busyOperationId !== null || lockedByMate}
                           className="p-5 bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-400 rounded-2xl border-2 border-rose-500/40 font-black text-sm flex items-center gap-2 transition uppercase disabled:opacity-40 disabled:cursor-wait"
                           title="Flag defect or tool wear"
                         >

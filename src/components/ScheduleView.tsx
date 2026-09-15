@@ -219,6 +219,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       setProofForm({ receivedBy: "", notes: "" });
       await fetchDispatch();
       fetchQc();
+      onRefresh();
     } catch {
       /* ignore */
     } finally {
@@ -377,6 +378,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       }
       await fetchDispatch();
       fetchQc();
+      onRefresh();
     } catch {
       /* ignore */
     } finally {
