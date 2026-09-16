@@ -856,7 +856,7 @@ export default function OperatorStationView({
                           </button>
                         )
                       ) : (
-                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs font-black uppercase tracking-wider text-amber-300">
+                        <div className="flex max-w-sm items-center rounded-2xl border border-amber-500/30 bg-amber-500/5 px-5 py-5 text-center text-sm font-black uppercase leading-relaxed tracking-wide text-amber-300">
                           Start / finish each material below — the machine job opens and closes by itself
                         </div>
                       )}
