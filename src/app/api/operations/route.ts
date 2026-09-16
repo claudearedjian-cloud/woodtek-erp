@@ -4,6 +4,7 @@ import { orderOperations, orders, machines, users, orderMaterials, inventoryItem
 import { eq, asc, desc, not, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { readAllProgress } from "@/lib/materialProgress.server";
+import { readAllRoutes } from "@/lib/materialRoutes.server";
 
 export async function GET(request: Request) {
   const { error: authError } = await authorize("orders:read");
@@ -68,7 +69,7 @@ export async function GET(request: Request) {
     }
     let materialsByOrder = new Map<number, any[]>();
     if (orderIds.length > 0) {
-      const [mats, progress] = await Promise.all([
+      const [mats, progress, allRoutes] = await Promise.all([
         db
           .select({
             id: orderMaterials.id,
@@ -82,11 +83,13 @@ export async function GET(request: Request) {
           .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
           .where(inArray(orderMaterials.orderId, orderIds)),
         Promise.resolve(readAllProgress()),
+        Promise.resolve(readAllRoutes()),
       ]);
+      const routes = allRoutes;
       for (const m of mats) {
         const list = materialsByOrder.get(m.orderId) ?? [];
         const p = progress[String(m.id)];
-        list.push({ ...m, stage: p?.stage ?? "", stageAt: p?.at ?? "", stageBy: p?.by ?? "" });
+        list.push({ ...m, stage: p?.stage ?? "", stageAt: p?.at ?? "", stageBy: p?.by ?? "", route: routes[String(m.id)] ?? null });
         materialsByOrder.set(m.orderId, list);
       }
     }

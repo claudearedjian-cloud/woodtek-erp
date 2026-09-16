@@ -9,8 +9,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { orderMaterials, orderOperations } from "@/db/schema";
+import { orderMaterials, orderOperations, machines } from "@/db/schema";
 import { sanitizeProgressMap, sanitizeStage, stageLadder } from "@/lib/materialProgress";
+import { nextInRoute } from "@/lib/materialRoutes";
+import { readAllRoutes } from "@/lib/materialRoutes.server";
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -36,22 +38,27 @@ export function writeAllProgress(progress: Record<string, { stage: string; at: s
 
 /**
  * Called when a machine step is marked Completed: every material still
- * sitting ON that step's stage is carried one stage further (next step, or
- * DONE after the last one) — a forgotten "Finished here" tap can never
- * strand a cut list. Lines already tapped forward/ahead are untouched.
- * NEVER throws.
+ * sitting ON that step is carried one stage further — along ITS OWN route
+ * when it has one (stage = machine category), else along the order's
+ * operation ladder. A forgotten "Finished here" tap can never strand a cut
+ * list. NEVER throws.
  */
-export async function autoCompleteMaterialsForStep(orderId: number, opName: string): Promise<void> {
+export async function autoCompleteMaterialsForStep(orderId: number, machineId: number | null, opName: string): Promise<void> {
   try {
+    let category: string | null = null;
+    if (machineId) {
+      const [m] = await db
+        .select({ category: machines.category })
+        .from(machines)
+        .where(eq(machines.id, machineId));
+      category = m?.category ?? null;
+    }
     const ops = await db
       .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
       .from(orderOperations)
       .where(eq(orderOperations.orderId, orderId));
-    const ladder = stageLadder(ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
-    const target = sanitizeStage(opName);
-    const idx = ladder.indexOf(target);
-    if (idx === -1 || idx >= ladder.length - 1) return;
-    const next = ladder[idx + 1];
+    const orderLadder = stageLadder(ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
+    const routes = readAllRoutes();
     const lines = await db
       .select({ id: orderMaterials.id })
       .from(orderMaterials)
@@ -61,9 +68,26 @@ export async function autoCompleteMaterialsForStep(orderId: number, opName: stri
     let changed = false;
     for (const line of lines) {
       const key = String(line.id);
-      if (sanitizeStage(progress[key]?.stage ?? "") === target) {
-        progress[key] = { stage: next, at: now, by: "auto (step completed)" };
-        changed = true;
+      const stage = sanitizeStage(progress[key]?.stage ?? "");
+      const ownSteps = routes[key];
+      // Custom route: the stage space is machine categories.
+      if (ownSteps) {
+        if (category && stage === category) {
+          const next = nextInRoute(ownSteps, stage);
+          if (next) {
+            progress[key] = { stage: next, at: now, by: "auto (step completed)" };
+            changed = true;
+          }
+        }
+        continue;
+      }
+      // Default: the order's operation ladder.
+      if (stage === sanitizeStage(opName)) {
+        const idx = orderLadder.indexOf(stage);
+        if (idx !== -1 && idx < orderLadder.length - 1) {
+          progress[key] = { stage: orderLadder[idx + 1], at: now, by: "auto (step completed)" };
+          changed = true;
+        }
       }
     }
     if (changed) writeAllProgress(progress);

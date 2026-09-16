@@ -59,12 +59,18 @@ export default function OrderWorkflowDetail({
   // Per-material production stage: where each BOM line is right now
   // ("" = not started, a step name from this order, or DONE).
   const [matProgress, setMatProgress] = useState<Record<string, { stage: string; at: string; by: string }>>({});
+  // Per-material machine routing (New Order wizard; empty = order default).
+  const [matRoutes, setMatRoutes] = useState<Record<string, string[]>>({});
   useEffect(() => {
     if (!order?.id) return;
     let alive = true;
     fetch(`/api/material-progress?orderId=${order.id}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d && d.progress) setMatProgress(d.progress); })
+      .catch(() => {});
+    fetch(`/api/material-routes?orderId=${order.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d && d.routes) setMatRoutes(d.routes); })
       .catch(() => {});
     return () => { alive = false; };
   }, [order?.id]);
@@ -1206,7 +1212,8 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         ? Number(m.itemStockRemaining)
                         : null;
                       const stage = matProgress[String(m.id)]?.stage ?? "";
-                      const stageLadderLine = ["", ...stageSteps, "DONE"];
+                      const lineSteps = matRoutes[String(m.id)] ?? stageSteps;
+                      const stageLadderLine = ["", ...lineSteps, "DONE"];
                       const stagePos = stageLadderLine.indexOf(stage);
                       const stagePct = stagePos <= 0 ? 0 : Math.round((stagePos / (stageLadderLine.length - 1)) * 100);
                       return (
@@ -1224,6 +1231,9 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-mono text-xs font-bold text-amber-400">{m.itemSku ?? "—"}</span>
                               <span className="font-bold text-white text-sm truncate">{m.itemName ?? "Unknown item"}</span>
+                              {matRoutes[String(m.id)] && (
+                                <span className="text-[9px] font-bold text-slate-500">{matRoutes[String(m.id)].join(" \u2192 ")}</span>
+                              )}
                               {m.itemCategory && (
                                 <span className="text-[10px] font-semibold text-slate-500">{m.itemCategory}</span>
                               )}
@@ -1276,7 +1286,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
                                 title="Where is this material in production right now?"
                               >
-                                {allowedStages(stageSteps, stage).map((opt: string, oi: number) => (
+                                {allowedStages(lineSteps, stage).map((opt: string, oi: number) => (
                                   <option key={`${opt}-${oi}`} value={opt}>{opt === "DONE" ? "\u2713 Done" : opt === "" ? "Not started" : opt}</option>
                                 ))}
                               </select>

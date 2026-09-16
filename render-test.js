@@ -42,6 +42,7 @@ compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
+compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 
@@ -515,6 +516,14 @@ check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "DONE")) === JSON.s
 check(mp.allowedStages(["Cutting", "Edging"], "Renamed Step").length === 4, "stage order: unknown/manual stage may go anywhere");
 check(JSON.stringify(mp.allowedStages([], "")) === JSON.stringify(["", "DONE"]), "stage order: order without steps goes straight to done");
 check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "Cutting")).includes("DONE") === false, "stage order: can NOT jump to Done from the middle");
+
+// ---- per-material machine routing ----
+const mr = require("./compiled/lib/materialRoutes.js");
+check(JSON.stringify(mr.sanitizeRouteSteps(["  Beam  Saw ", "", "beam saw", "Edge Banding", "x".repeat(99)])) === JSON.stringify(["Beam Saw", "Edge Banding", "x".repeat(40)]), "material routes: trims, drops empties, collapses consecutive duplicates, caps");
+check(mr.sanitizeRouteSteps("junk").length === 0 && mr.sanitizeRouteSteps([1, 2]).length === 0, "material routes: junk rejected");
+check(JSON.stringify(mr.routeLadder(["Cutting", "Edging"])) === JSON.stringify(["", "Cutting", "Edging", "DONE"]), "material routes: ladder wraps the steps");
+check(mr.nextInRoute(["Cutting", "Edging"], "Cutting") === "Edging" && mr.nextInRoute(["Cutting", "Edging"], "Edging") === "DONE", "material routes: next follows the material's own path");
+check(mr.nextInRoute(["Cutting"], "DONE") === null && mr.nextInRoute(["Cutting"], "Mystery") === null, "material routes: end and unknown are null");
 
 // ---- material stage positioning ----
 const mpxLadder = mp.stageLadder(["Cutting", "Edging"]);

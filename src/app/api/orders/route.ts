@@ -235,6 +235,7 @@ export async function POST(request: Request) {
 
     // Optional BOM lines entered on the new-order form. They land in the same
     // orderMaterials table as manual allocations (warehouse board + BOM tab).
+    let createdMaterials: { id: number }[] = [];
     if (Array.isArray(body.bom) && body.bom.length > 0) {
       const lines = (body.bom as any[])
         .map((b) => ({ itemId: Number(b?.itemId), qty: Math.max(1, Number(b?.quantityUsed) || 1) }))
@@ -256,6 +257,7 @@ export async function POST(request: Request) {
             })),
           )
           .returning({ id: orderMaterials.id });
+        createdMaterials = inserted;
 
         // Materials travel to the FIRST machine of the routing sequence; the
         // warehouse sees it read-only, only a Manager may re-route later.
@@ -272,7 +274,7 @@ export async function POST(request: Request) {
     }
 
         logAudit(user, "order.create", "order", `${newOrder.orderNumber} created for ${title}`, newOrder.id);
-    return NextResponse.json(newOrder, { status: 201 });
+    return NextResponse.json({ ...newOrder, createdMaterials }, { status: 201 });
   } catch (error: any) {
     console.error("POST order error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create order" }, { status: 500 });

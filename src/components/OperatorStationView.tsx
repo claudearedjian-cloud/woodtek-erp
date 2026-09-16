@@ -636,16 +636,18 @@ export default function OperatorStationView({
                           <div className="space-y-2.5">
                             {op.materials.map((mat: any) => {
                               const mStage: string = mat.stage ?? "";
-                              const atThisStep = mStage === op.operationName;
+                              const matSteps: string[] = mat.route ?? op.orderSteps ?? [];
+                              const stepStage = mat.route ? (op.machineCategory || op.operationName) : op.operationName;
+                              const atThisStep = mStage === stepStage;
                               const mDone = mStage === "DONE";
                               const canStartMat =
                                 !mDone && !atThisStep &&
-                                (op.orderSteps ?? []).length > 0 &&
-                                allowedStages(op.orderSteps, mStage).includes(op.operationName);
-                              const matLadder = ["", ...(op.orderSteps ?? []), "DONE"];
+                                matSteps.length > 0 &&
+                                allowedStages(matSteps, mStage).includes(stepStage);
+                              const matLadder = ["", ...matSteps, "DONE"];
                               const matPos = matLadder.indexOf(mStage);
                               const matPct = matPos <= 0 ? 0 : Math.round((matPos / (matLadder.length - 1)) * 100);
-                              const matChip = mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${op.operationName}` : mStage ? `At ${mStage}` : "Not started";
+                              const matChip = mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${stepStage}` : mStage ? `At ${mStage}` : "Not started";
                               const matTitle = `Stage: ${mStage || "not started"}${mat.stageBy ? ` \u2014 by ${mat.stageBy}` : ""}${mat.stageAt ? ` \u00b7 ${new Date(mat.stageAt).toLocaleString()}` : ""}`;
                               return (
                                 <div key={mat.id} className="text-xs" title={matTitle}>
@@ -668,7 +670,7 @@ export default function OperatorStationView({
                                       )}
                                       {canStartMat && isRunning && !lockedByMate && (
                                         <button
-                                          onClick={() => advanceMaterial(mat.id, op.operationName)}
+                                          onClick={() => advanceMaterial(mat.id, stepStage)}
                                           className="rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300 hover:bg-amber-500/25 active:scale-95 transition"
                                           title="This material is being worked now — it moves to this step (one stage, never a skip)"
                                         >

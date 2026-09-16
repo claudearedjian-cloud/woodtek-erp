@@ -337,7 +337,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     // tap can never strand a cut list). Starting a step moves nothing —
     // materials advance when the operator taps, or when the step completes.
     if (result.operation.status === "Completed") {
-      await autoCompleteMaterialsForStep(result.operation.orderId, result.operation.operationName);
+      await autoCompleteMaterialsForStep(result.operation.orderId, result.operation.machineId, result.operation.operationName);
     }
     logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
     return NextResponse.json(result);

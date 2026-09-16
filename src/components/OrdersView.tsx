@@ -11,6 +11,7 @@ import {
   AlertTriangle, 
   ChevronRight, 
   Layers, 
+  Route, 
   Cpu, 
   User, 
   Calendar, 
@@ -138,6 +139,10 @@ export default function OrdersView({
   const [steps, setSteps] = useState<StepDraft[]>([]);
   // BOM: materials requested for this order (warehouse prepares them).
   const [bom, setBom] = useState<{ itemId: string; qty: string }[]>([]);
+  // Per-material machine routing for the new order (index in bom → steps).
+  const [bomRoutes, setBomRoutes] = useState<Record<number, string[]>>({});
+  const [routeOpenIdx, setRouteOpenIdx] = useState<number | null>(null);
+  const [routePick, setRoutePick] = useState("");
   const [recipeId, setRecipeId] = useState<string>("");
   const [recipeName, setRecipeName] = useState("");
   // New-order modal wizard tab: details -> routing -> materials.
@@ -365,6 +370,13 @@ export default function OrdersView({
 
   const addStep = () => setSteps(s => [...s, blankStep()]);
   const removeStep = (i: number) => setSteps(s => s.filter((_, idx) => idx !== i));
+  const swapRoute = (line: number, a: number, b: number) =>
+    setBomRoutes(m => {
+      const arr = [...(m[line] ?? [])];
+      if (b < 0 || b >= arr.length) return m;
+      [arr[a], arr[b]] = [arr[b], arr[a]];
+      return { ...m, [line]: arr };
+    });
   const moveStep = (i: number, dir: -1 | 1) =>
     setSteps(s => {
       const j = i + dir;
@@ -453,12 +465,34 @@ export default function OrdersView({
         throw new Error(err.error || "Failed to create order");
       }
 
+      // Attach each material's custom machine routing (if any) to the new order.
+      const created = await res.json().catch(() => null as any);
+      const customRoutes: { orderMaterialsId: number; steps: string[] }[] = [];
+      let wi = 0;
+      bom.forEach((b, k) => {
+        if (!b.itemId) return;
+        const mid = created?.createdMaterials?.[wi]?.id;
+        wi++;
+        const rSteps = bomRoutes[k] ?? [];
+        if (mid && rSteps.length > 0) customRoutes.push({ orderMaterialsId: Number(mid), steps: rSteps });
+      });
+      if (created?.id && customRoutes.length > 0) {
+        await fetch("/api/material-routes", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: created.id, routes: customRoutes }),
+        }).catch(() => {});
+      }
+
       setShowNewModal(false);
       setTitle("");
       setTotalValue("");
       setNotes("");
       setSteps([]);
       setBom([]);
+      setBomRoutes({});
+      setRouteOpenIdx(null);
+      setRoutePick("");
       setRecipeId("");
       setRecipeName("");
       onRefresh();
@@ -1263,7 +1297,8 @@ export default function OrdersView({
                     </div>
                   ) : (
                     bom.map((b, i) => (
-                      <div key={i} className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-2">
+                      <React.Fragment key={i}>
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-2">
                         <select
                           value={b.itemId}
                           onChange={e => setBom(list => list.map((x, k) => (k === i ? { ...x, itemId: e.target.value } : x)))}
@@ -1298,10 +1333,66 @@ export default function OrdersView({
                             </span>
                           ) : null;
                         })()}
+                        <button
+                          type="button"
+                          onClick={() => setRouteOpenIdx(routeOpenIdx === i ? null : i)}
+                          className={`p-1.5 transition ${(bomRoutes[i] ?? []).length > 0 ? "text-amber-400" : "text-slate-500 hover:text-amber-300"}`}
+                          title="Machine routing for THIS material (e.g. Cutting → Edge Banding)"
+                        >
+                          <Route className="h-4 w-4" />
+                        </button>
                         <button type="button" onClick={() => setBom(list => list.filter((_, k) => k !== i))} className="p-1.5 text-slate-500 transition hover:text-rose-400">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
+                      {routeOpenIdx === i && (
+                        <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-slate-950 p-2.5">
+                          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">Machine routing for THIS material</span>
+                            <button
+                              type="button"
+                              onClick={() => setBomRoutes(m => { const c = { ...m }; delete c[i]; return c; })}
+                              className="text-[10px] font-bold text-slate-400 hover:text-white"
+                            >
+                              Reset (follow the order's routing)
+                            </button>
+                          </div>
+                          {(bomRoutes[i] ?? []).length === 0 ? (
+                            <div className="mb-2 text-[11px] text-slate-500">Follows the order's routing steps. Add steps below to give this material its own path.</div>
+                          ) : (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {(bomRoutes[i] ?? []).map((sName, si) => (
+                                <span key={si} className="flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-black text-amber-200">
+                                  {si + 1}. {sName}
+                                  <button type="button" onClick={() => setBomRoutes(m => ({ ...m, [i]: (m[i] ?? []).filter((_, k) => k !== si) }))} className="text-rose-300 hover:text-rose-200" title="Remove this step">×</button>
+                                  <button type="button" disabled={si === 0} onClick={() => swapRoute(i, si, si - 1)} className="text-slate-400 disabled:opacity-30" title="Move up">↑</button>
+                                  <button type="button" disabled={si === (bomRoutes[i]?.length ?? 0) - 1} onClick={() => swapRoute(i, si, si + 1)} className="text-slate-400 disabled:opacity-30" title="Move down">↓</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={routePick}
+                              onChange={e => setRoutePick(e.target.value)}
+                              className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-white"
+                            >
+                              <option value="">Choose a machine type…</option>
+                              {machineCategories.map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => { if (!routePick) return; setBomRoutes(m => ({ ...m, [i]: [...(m[i] ?? []), routePick] })); setRoutePick(""); }}
+                              className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-black text-slate-950 hover:bg-amber-400"
+                            >
+                              + Add step
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      </React.Fragment>
                     ))
                   )}
                 </div>
