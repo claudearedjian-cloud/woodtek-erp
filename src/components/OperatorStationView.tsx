@@ -930,7 +930,7 @@ export default function OperatorStationView({
                                     <span className="ml-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matSteps.length}`}</span>
                                   </div>
                                   <div className="mt-3 flex gap-2">
-                                    {canStartMat && !lockedByMate && (
+                                    {(canStartMat || (atThisStep && !isRunning)) && !lockedByMate && (
                                       <button
                                         onClick={() => startMaterial(op, mat.id, stepStage)}
                                         disabled={busyOperationId !== null}

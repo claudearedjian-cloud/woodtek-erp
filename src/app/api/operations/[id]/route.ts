@@ -7,6 +7,10 @@ import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
 import { baseRoleOf, canAssignMachines } from "@/lib/permissions";
+import { stageLadder } from "@/lib/materialProgress";
+import { routeLadder } from "@/lib/materialRoutes";
+import { readAllProgress } from "@/lib/materialProgress.server";
+import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { autoCompleteMaterialsForStep } from "@/lib/materialProgress.server";
 import { jobLockedByOther } from "@/lib/jobLock";
 
@@ -139,7 +143,39 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             ne(orderOperations.status, "Completed")
           ));
         if (incompletePredecessors.length > 0) {
-          throw new WorkflowError("A previous operation is incomplete. Finish the sequence before starting this station.", 409);
+          // Per-material flow: when the order tracks materials, a step may
+          // start once at least ONE material has reached (or passed) this
+          // step — that material\u2019s own stage proves its predecessor work
+          // is done. Orders without materials keep the strict sequence.
+          const materialLines = await tx
+            .select({ id: orderMaterials.id })
+            .from(orderMaterials)
+            .where(eq(orderMaterials.orderId, currentOp.orderId));
+          let materialReady = false;
+          if (materialLines.length > 0) {
+            const opsAll = await tx
+              .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+              .from(orderOperations)
+              .where(eq(orderOperations.orderId, currentOp.orderId));
+            const orderLadder = stageLadder(opsAll.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
+            const [thisMachine] = currentOp.machineId
+              ? await tx.select({ category: machines.category }).from(machines).where(eq(machines.id, currentOp.machineId))
+              : [{ category: null as string | null }];
+            const progress = readAllProgress();
+            const routes = readAllRoutes();
+            materialReady = materialLines.some((line) => {
+              const stage = (progress[String(line.id)]?.stage ?? "").trim();
+              if (!stage) return false;
+              const own = routes[String(line.id)];
+              const lad = own ? routeLadder(own) : orderLadder;
+              const pos = lad.indexOf(stage);
+              const targetPos = own ? lad.indexOf(thisMachine?.category ?? "") : lad.indexOf(currentOp.operationName);
+              return pos !== -1 && targetPos !== -1 && pos >= targetPos;
+            });
+          }
+          if (!materialReady) {
+            throw new WorkflowError("A previous operation is incomplete. Finish the sequence before starting this station.", 409);
+          }
         }
 
         // Material gate: an order with a BOM cannot enter production until the
