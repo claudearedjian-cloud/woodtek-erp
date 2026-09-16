@@ -659,94 +659,6 @@ export default function OperatorStationView({
                           Client: {op.customerCompany || op.customerName}
                         </div>
                       )}
-                      {(op.materials?.length ?? 0) > 0 && (
-                        <div className="mt-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Materials — live progress through the order</span>
-                            <span className="text-[10px] font-bold text-slate-600">tap \u25b6 when a cut list starts \u00b7 \u2713 when it leaves this step</span>
-                          </div>
-                          <div className="space-y-2.5">
-                            {op.materials.map((mat: any) => {
-                              const mStage: string = mat.stage ?? "";
-                              const matSteps: string[] = mat.route ?? op.orderSteps ?? [];
-                              const stepStage = mat.route ? (op.machineCategory || op.operationName) : op.operationName;
-                              const atThisStep = mStage === stepStage;
-                              const mDone = mStage === "DONE";
-                              const canStartMat =
-                                !mDone && !atThisStep &&
-                                matSteps.length > 0 &&
-                                allowedStages(matSteps, mStage).includes(stepStage);
-                              const matLadder = ["", ...matSteps, "DONE"];
-                              const matPos = matLadder.indexOf(mStage);
-                              const matPct = matPos <= 0 ? 0 : Math.round((matPos / (matLadder.length - 1)) * 100);
-                              const matChip = mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${stepStage}` : mStage ? `At ${mStage}` : "Not started";
-                              const matTitle = `Stage: ${mStage || "not started"}${mat.stageBy ? ` \u2014 by ${mat.stageBy}` : ""}${mat.stageAt ? ` \u00b7 ${new Date(mat.stageAt).toLocaleString()}` : ""}`;
-                              return (
-                                <div key={mat.id} className="rounded-xl border border-slate-800 bg-slate-900/80 p-2.5" title={matTitle}>
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="min-w-0 truncate font-bold text-slate-200">
-                                      <span className="font-mono text-amber-400">{mat.itemSku ?? "\u2014"}</span> \u00b7 {mat.itemName} \u00d7 {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
-                                    </span>
-                                    <span className={`shrink-0 rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
-                                      mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
-                                    }`}>{matChip}</span>
-                                  </div>
-                                  {/* the material\u2019s own machine path, position highlighted */}
-                                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                                    {matSteps.map((sName: string, si: number) => {
-                                      const sPos = si + 1;
-                                      const sDone = matPos > sPos || mDone;
-                                      const sCurrent = !mDone && sName === mStage;
-                                      return (
-                                        <span
-                                          key={si}
-                                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide border ${
-                                            sCurrent ? "border-amber-400 bg-amber-500/20 text-amber-200" : sDone ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-slate-700 bg-slate-950 text-slate-500"
-                                          }`}
-                                        >
-                                          {sDone ? "\u2713 " : ""}{sName}
-                                        </span>
-                                      );
-                                    })}
-                                    <span className="ml-1 text-[9px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matSteps.length}`}</span>
-                                  </div>
-                                  {/* BIG per-material controls */}
-                                  <div className="mt-2 flex gap-2">
-                                    {canStartMat && !lockedByMate && (
-                                      <button
-                                        onClick={() => startMaterial(op, mat.id, stepStage)}
-                                        disabled={busyOperationId !== null}
-                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-4 py-3 rounded-xl text-sm shadow-lg shadow-amber-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
-                                        title="Start THIS material on this machine \u2014 opens the machine job if it is not running yet"
-                                      >
-                                        <Play className="w-4 h-4 fill-slate-950 stroke-[2.5]" /> START
-                                      </button>
-                                    )}
-                                    {atThisStep && isRunning && !lockedByMate && (
-                                      <button
-                                        onClick={() => finishMaterial(op, mat.id, stepStage)}
-                                        disabled={busyOperationId !== null}
-                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 active:scale-95 text-slate-950 font-black px-4 py-3 rounded-xl text-sm shadow-lg shadow-emerald-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
-                                        title="Finished THIS material here \u2014 it moves to its next stage; the machine job closes when the last one leaves"
-                                      >
-                                        <CheckCircle2 className="w-4 h-4 stroke-[3]" /> FINISH
-                                      </button>
-                                    )}
-                                    {lockedByMate && (
-                                      <span className="flex flex-1 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-400">Run by another operator</span>
-                                    )}
-                                  </div>
-                                  <div className="mt-1.5 flex items-center gap-2">
-                                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
-                                      <div className={`h-full rounded-full transition-all ${mDone ? "bg-emerald-500" : matPos > 0 ? "bg-amber-500/70" : ""}`} style={{ width: `${matPct}%` }} />
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
 
                       <div className="flex items-center gap-4 text-xs font-semibold text-slate-400 pt-1">
                         <span className="flex items-center gap-1">
@@ -945,7 +857,7 @@ export default function OperatorStationView({
                         )
                       ) : (
                         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs font-black uppercase tracking-wider text-amber-300">
-                          Start / finish each material below \u2014 the machine job opens and closes by itself
+                          Start / finish each material below — the machine job opens and closes by itself
                         </div>
                       )}
 
@@ -967,6 +879,92 @@ export default function OperatorStationView({
                       )}
                     </div>
                   </div>
+                      {(op.materials?.length ?? 0) > 0 && (
+                        <div className="mt-4 w-full border-t border-slate-800 pt-3">
+                          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">Materials — start & finish each cut list</span>
+                            <span className="text-[11px] font-bold text-slate-500">the machine job opens and closes by itself</span>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                            {op.materials.map((mat: any) => {
+                              const mStage: string = mat.stage ?? "";
+                              const matSteps: string[] = mat.route ?? op.orderSteps ?? [];
+                              const stepStage = mat.route ? (op.machineCategory || op.operationName) : op.operationName;
+                              const atThisStep = mStage === stepStage;
+                              const mDone = mStage === "DONE";
+                              const canStartMat =
+                                !mDone && !atThisStep &&
+                                matSteps.length > 0 &&
+                                allowedStages(matSteps, mStage).includes(stepStage);
+                              const matLadder = ["", ...matSteps, "DONE"];
+                              const matPos = matLadder.indexOf(mStage);
+                              const matPct = matPos <= 0 ? 0 : Math.round((matPos / (matLadder.length - 1)) * 100);
+                              const matChip = mDone ? "✓ Done" : atThisStep ? `→ ${stepStage}` : mStage ? `At ${mStage}` : "Not started";
+                              const matTitle = `Stage: ${mStage || "not started"}${mat.stageBy ? ` — by ${mat.stageBy}` : ""}${mat.stageAt ? ` · ${new Date(mat.stageAt).toLocaleString()}` : ""}`;
+                              return (
+                                <div key={mat.id} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4" title={matTitle}>
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="min-w-0 truncate text-sm font-black text-white">
+                                      <span className="font-mono text-amber-400">{mat.itemSku ?? "—"}</span> · {mat.itemName} × {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
+                                    </span>
+                                    <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold uppercase border ${
+                                      mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
+                                    }`}>{matChip}</span>
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                    {matSteps.map((sName: string, si: number) => {
+                                      const sPos = si + 1;
+                                      const sDone = matPos > sPos || mDone;
+                                      const sCurrent = !mDone && sName === mStage;
+                                      return (
+                                        <span
+                                          key={si}
+                                          className={`rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-wide border ${
+                                            sCurrent ? "border-amber-400 bg-amber-500/20 text-amber-200" : sDone ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-slate-700 bg-slate-950 text-slate-500"
+                                          }`}
+                                        >
+                                          {sDone ? "✓ " : ""}{sName}
+                                        </span>
+                                      );
+                                    })}
+                                    <span className="ml-1 text-[10px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matSteps.length}`}</span>
+                                  </div>
+                                  <div className="mt-3 flex gap-2">
+                                    {canStartMat && !lockedByMate && (
+                                      <button
+                                        onClick={() => startMaterial(op, mat.id, stepStage)}
+                                        disabled={busyOperationId !== null}
+                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-6 py-4 rounded-xl text-base shadow-lg shadow-amber-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
+                                        title="Start THIS material on this machine — opens the machine job if it is not running yet"
+                                      >
+                                        <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" /> START
+                                      </button>
+                                    )}
+                                    {atThisStep && isRunning && !lockedByMate && (
+                                      <button
+                                        onClick={() => finishMaterial(op, mat.id, stepStage)}
+                                        disabled={busyOperationId !== null}
+                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 active:scale-95 text-slate-950 font-black px-6 py-4 rounded-xl text-base shadow-lg shadow-emerald-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
+                                        title="Finished THIS material here — it moves to its next stage; the machine job closes when the last one leaves"
+                                      >
+                                        <CheckCircle2 className="w-5 h-5 stroke-[3]" /> FINISH
+                                      </button>
+                                    )}
+                                    {lockedByMate && (
+                                      <span className="flex flex-1 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-4 text-[11px] font-black uppercase tracking-wider text-slate-400">Run by another operator</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-800">
+                                      <div className={`h-full rounded-full transition-all ${mDone ? "bg-emerald-500" : matPos > 0 ? "bg-amber-500/70" : ""}`} style={{ width: `${matPct}%` }} />
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                 </div>
               );
             })}
