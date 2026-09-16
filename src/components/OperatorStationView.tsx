@@ -629,8 +629,11 @@ export default function OperatorStationView({
                       )}
                       {(op.materials?.length ?? 0) > 0 && (
                         <div className="mt-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="mb-1.5 text-[10px] font-black uppercase tracking-wider text-slate-500">Materials on this step — live progress</div>
-                          <div className="space-y-1.5">
+                          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Materials — live progress through the order</span>
+                            <span className="text-[10px] font-bold text-slate-600">tap \u25b6 when a cut list starts \u00b7 \u2713 when it leaves this step</span>
+                          </div>
+                          <div className="space-y-2.5">
                             {op.materials.map((mat: any) => {
                               const mStage: string = mat.stage ?? "";
                               const atThisStep = mStage === op.operationName;
@@ -639,35 +642,47 @@ export default function OperatorStationView({
                                 !mDone && !atThisStep &&
                                 (op.orderSteps ?? []).length > 0 &&
                                 allowedStages(op.orderSteps, mStage).includes(op.operationName);
-                              const mWaiting = !mDone && !atThisStep;
+                              const matLadder = ["", ...(op.orderSteps ?? []), "DONE"];
+                              const matPos = matLadder.indexOf(mStage);
+                              const matPct = matPos <= 0 ? 0 : Math.round((matPos / (matLadder.length - 1)) * 100);
+                              const matChip = mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${op.operationName}` : mStage ? `At ${mStage}` : "Not started";
+                              const matTitle = `Stage: ${mStage || "not started"}${mat.stageBy ? ` \u2014 by ${mat.stageBy}` : ""}${mat.stageAt ? ` \u00b7 ${new Date(mat.stageAt).toLocaleString()}` : ""}`;
                               return (
-                                <div key={mat.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                  <span className="min-w-0 truncate font-bold text-slate-200">
-                                    <span className="font-mono text-amber-400">{mat.itemSku ?? "\u2014"}</span> \u00b7 {mat.itemName} \u00d7 {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
-                                  </span>
-                                  <span className="flex items-center gap-1.5">
-                                    <span className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
-                                      mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
-                                    }`}>{mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${op.operationName}` : "Waiting"}</span>
-                                    {atThisStep && isRunning && !lockedByMate && (
-                                      <button
-                                        onClick={() => advanceMaterial(mat.id)}
-                                        className="rounded-lg bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-300 hover:bg-emerald-500/25 active:scale-95 transition"
-                                        title="Finished working this material on this step — it moves to the next stage"
-                                      >
-                                        \u2713 Finished here
-                                      </button>
-                                    )}
-                                    {canStartMat && isRunning && !lockedByMate && (
-                                      <button
-                                        onClick={() => advanceMaterial(mat.id, op.operationName)}
-                                        className="rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300 hover:bg-amber-500/25 active:scale-95 transition"
-                                        title="This material is being worked now — it moves to this step (one stage, never a skip)"
-                                      >
-                                        \u25b6 Start this material
-                                      </button>
-                                    )}
-                                  </span>
+                                <div key={mat.id} className="text-xs" title={matTitle}>
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="min-w-0 truncate font-bold text-slate-200">
+                                      <span className="font-mono text-amber-400">{mat.itemSku ?? "\u2014"}</span> \u00b7 {mat.itemName} \u00d7 {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                      <span className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
+                                        mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
+                                      }`}>{matChip}</span>
+                                      {atThisStep && isRunning && !lockedByMate && (
+                                        <button
+                                          onClick={() => advanceMaterial(mat.id)}
+                                          className="rounded-lg bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-300 hover:bg-emerald-500/25 active:scale-95 transition"
+                                          title="Finished working this material on this step — it moves to the next stage"
+                                        >
+                                          \u2713 Finished here
+                                        </button>
+                                      )}
+                                      {canStartMat && isRunning && !lockedByMate && (
+                                        <button
+                                          onClick={() => advanceMaterial(mat.id, op.operationName)}
+                                          className="rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300 hover:bg-amber-500/25 active:scale-95 transition"
+                                          title="This material is being worked now — it moves to this step (one stage, never a skip)"
+                                        >
+                                          \u25b6 Start this material
+                                        </button>
+                                      )}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 flex items-center gap-2">
+                                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+                                      <div className={`h-full rounded-full transition-all ${mDone ? "bg-emerald-500" : matPos > 0 ? "bg-amber-500/70" : ""}`} style={{ width: `${matPct}%` }} />
+                                    </div>
+                                    <span className="w-16 text-right text-[9px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matLadder.length - 1}`}</span>
+                                  </div>
                                 </div>
                               );
                             })}

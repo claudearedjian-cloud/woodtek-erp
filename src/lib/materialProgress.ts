@@ -53,6 +53,11 @@ export function stageLadder(steps: string[]): string[] {
  * An unknown current stage (renamed step, hand-edited file) may go anywhere
  * so it stays correctable.
  */
+/** Position of a stage in the ladder (-1 = unknown / custom). */
+export function ladderIndex(ladder: string[], stage: string): number {
+  return ladder.indexOf(sanitizeStage(stage));
+}
+
 export function allowedStages(steps: string[], current: string): string[] {
   const ladder = stageLadder(steps);
   const idx = ladder.indexOf(sanitizeStage(current));

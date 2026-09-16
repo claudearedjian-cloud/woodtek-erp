@@ -7,6 +7,7 @@ import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
 import { baseRoleOf, canAssignMachines } from "@/lib/permissions";
+import { autoCompleteMaterialsForStep } from "@/lib/materialProgress.server";
 import { jobLockedByOther } from "@/lib/jobLock";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
@@ -331,6 +332,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return { operation: updatedOp, progressPercent, orderStatus };
     });
 
+    // Comprehensive flow: completing a machine step carries every material
+    // still sitting on it one stage further (a forgotten "Finished here"
+    // tap can never strand a cut list). Starting a step moves nothing —
+    // materials advance when the operator taps, or when the step completes.
+    if (result.operation.status === "Completed") {
+      await autoCompleteMaterialsForStep(result.operation.orderId, result.operation.operationName);
+    }
     logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
     return NextResponse.json(result);
   } catch (error: unknown) {

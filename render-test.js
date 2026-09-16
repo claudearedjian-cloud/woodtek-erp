@@ -516,6 +516,10 @@ check(mp.allowedStages(["Cutting", "Edging"], "Renamed Step").length === 4, "sta
 check(JSON.stringify(mp.allowedStages([], "")) === JSON.stringify(["", "DONE"]), "stage order: order without steps goes straight to done");
 check(JSON.stringify(mp.allowedStages(["Cutting", "Edging"], "Cutting")).includes("DONE") === false, "stage order: can NOT jump to Done from the middle");
 
+// ---- material stage positioning ----
+const mpxLadder = mp.stageLadder(["Cutting", "Edging"]);
+check(mp.ladderIndex(mpxLadder, "Cutting") === 1 && mp.ladderIndex(mpxLadder, "DONE") === 3 && mp.ladderIndex(mpxLadder, "Custom") === -1, "stage order: ladderIndex locates stages");
+
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");
 check(jl.jobLockedByOther({ status: "In Progress", operatorId: 7 }, 9, true) === true, "job lock: crew mate is locked out of a running job");

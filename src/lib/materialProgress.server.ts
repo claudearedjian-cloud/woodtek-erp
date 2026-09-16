@@ -7,7 +7,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { sanitizeProgressMap } from "@/lib/materialProgress";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { orderMaterials, orderOperations } from "@/db/schema";
+import { sanitizeProgressMap, sanitizeStage, stageLadder } from "@/lib/materialProgress";
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -30,3 +33,41 @@ export function writeAllProgress(progress: Record<string, { stage: string; at: s
 }
 
 
+
+/**
+ * Called when a machine step is marked Completed: every material still
+ * sitting ON that step's stage is carried one stage further (next step, or
+ * DONE after the last one) — a forgotten "Finished here" tap can never
+ * strand a cut list. Lines already tapped forward/ahead are untouched.
+ * NEVER throws.
+ */
+export async function autoCompleteMaterialsForStep(orderId: number, opName: string): Promise<void> {
+  try {
+    const ops = await db
+      .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+      .from(orderOperations)
+      .where(eq(orderOperations.orderId, orderId));
+    const ladder = stageLadder(ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
+    const target = sanitizeStage(opName);
+    const idx = ladder.indexOf(target);
+    if (idx === -1 || idx >= ladder.length - 1) return;
+    const next = ladder[idx + 1];
+    const lines = await db
+      .select({ id: orderMaterials.id })
+      .from(orderMaterials)
+      .where(eq(orderMaterials.orderId, orderId));
+    const progress = readAllProgress();
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const line of lines) {
+      const key = String(line.id);
+      if (sanitizeStage(progress[key]?.stage ?? "") === target) {
+        progress[key] = { stage: next, at: now, by: "auto (step completed)" };
+        changed = true;
+      }
+    }
+    if (changed) writeAllProgress(progress);
+  } catch (e) {
+    console.warn("material completion carry-over skipped:", e instanceof Error ? e.message : e);
+  }
+}

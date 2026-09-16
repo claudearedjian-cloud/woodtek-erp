@@ -85,7 +85,8 @@ export async function GET(request: Request) {
       ]);
       for (const m of mats) {
         const list = materialsByOrder.get(m.orderId) ?? [];
-        list.push({ ...m, stage: progress[String(m.id)]?.stage ?? "" });
+        const p = progress[String(m.id)];
+        list.push({ ...m, stage: p?.stage ?? "", stageAt: p?.at ?? "", stageBy: p?.by ?? "" });
         materialsByOrder.set(m.orderId, list);
       }
     }

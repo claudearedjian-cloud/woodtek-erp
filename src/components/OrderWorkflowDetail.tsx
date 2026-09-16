@@ -1206,6 +1206,9 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         ? Number(m.itemStockRemaining)
                         : null;
                       const stage = matProgress[String(m.id)]?.stage ?? "";
+                      const stageLadderLine = ["", ...stageSteps, "DONE"];
+                      const stagePos = stageLadderLine.indexOf(stage);
+                      const stagePct = stagePos <= 0 ? 0 : Math.round((stagePos / (stageLadderLine.length - 1)) * 100);
                       return (
                         <li
                           key={m.id}
@@ -1237,6 +1240,12 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                               ) : (
                                 <span className="text-[10px] font-extrabold uppercase bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">Not started</span>
                               )}
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <div className="h-1 flex-1 overflow-hidden rounded-full bg-slate-800">
+                                <div className={`h-full rounded-full ${stage === "DONE" ? "bg-emerald-500" : stage !== "" ? "bg-amber-500/70" : ""}`} style={{ width: `${stagePct}%` }} />
+                              </div>
+                              <span className="text-[9px] font-black uppercase tracking-wider text-slate-600">{stage === "DONE" ? "complete" : stagePos <= 0 ? "queued" : `${stagePos}/${stageSteps.length + 1}`}</span>
                             </div>
                             {remaining !== null && !isReleased && (
                               <p className="mt-1 text-[11px] text-slate-500">
