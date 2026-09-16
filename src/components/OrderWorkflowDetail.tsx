@@ -1232,7 +1232,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                               <span className="font-mono text-xs font-bold text-amber-400">{m.itemSku ?? "—"}</span>
                               <span className="font-bold text-white text-sm truncate">{m.itemName ?? "Unknown item"}</span>
                               {matRoutes[String(m.id)] && (
-                                <span className="text-[9px] font-bold text-slate-500">{matRoutes[String(m.id)].join(" \u2192 ")}</span>
+                                <span className="text-[10px] font-bold text-amber-400/90">{`Route: ${matRoutes[String(m.id)].join(" \u2192 ")}`}</span>
                               )}
                               {m.itemCategory && (
                                 <span className="text-[10px] font-semibold text-slate-500">{m.itemCategory}</span>

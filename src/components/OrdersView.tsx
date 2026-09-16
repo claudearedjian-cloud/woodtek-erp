@@ -1345,6 +1345,20 @@ export default function OrdersView({
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setRouteOpenIdx(routeOpenIdx === i ? null : i)}
+                        className={`flex w-full items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left text-[11px] font-bold transition ${
+                          (bomRoutes[i] ?? []).length > 0
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                            : "border-slate-800 bg-slate-950/60 text-slate-400 hover:text-amber-300"
+                        }`}
+                      >
+                        <Route className="h-3 w-3 shrink-0" />
+                        {(bomRoutes[i] ?? []).length > 0
+                          ? `Route: ${(bomRoutes[i] ?? []).join(" \u2192 ")} \u2014 tap to edit`
+                          : "Route: follows the order\u2019s routing \u2014 tap to give this material its own machine path"}
+                      </button>
                       {routeOpenIdx === i && (
                         <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-slate-950 p-2.5">
                           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">

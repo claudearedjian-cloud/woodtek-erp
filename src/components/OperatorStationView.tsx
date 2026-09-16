@@ -324,6 +324,38 @@ export default function OperatorStationView({
       setActionError("Could not update the material.");
     }
   };
+  // START on a material line: opens the machine job if needed, then moves
+  // that ONE material into the step. FINISH on a line sends it to its next
+  // stage; when the last material leaves, the machine job completes itself.
+  const startMaterial = async (op0: any, matId: number, targetStage: string) => {
+    if (busyOperationId !== null) return;
+    try {
+      if (op0.status !== "In Progress") {
+        const res = await fetch(`/api/operations/${op0.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "In Progress", operatorId: currentUser?.id ? Number(currentUser.id) : undefined }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({} as any));
+          setActionError(d.error || "Could not start the machine job.");
+          return;
+        }
+      }
+      await advanceMaterial(matId, targetStage);
+    } catch {
+      setActionError("Could not start this material.");
+    }
+  };
+
+  const finishMaterial = async (op0: any, matId: number, stepStage: string) => {
+    await advanceMaterial(matId);
+    const others = (op0.materials ?? []).filter((m2: any) => m2.id !== matId && (m2.stage ?? "") === stepStage);
+    if (others.length === 0) {
+      await handleTouchAction(op0.id, "Completed");
+    }
+  };
+
 
   // C4 — finish requires a second tap within 3s
   const handleFinishTap = (op: any) => {
@@ -650,40 +682,64 @@ export default function OperatorStationView({
                               const matChip = mDone ? "\u2713 Done" : atThisStep ? `\u2192 ${stepStage}` : mStage ? `At ${mStage}` : "Not started";
                               const matTitle = `Stage: ${mStage || "not started"}${mat.stageBy ? ` \u2014 by ${mat.stageBy}` : ""}${mat.stageAt ? ` \u00b7 ${new Date(mat.stageAt).toLocaleString()}` : ""}`;
                               return (
-                                <div key={mat.id} className="text-xs" title={matTitle}>
+                                <div key={mat.id} className="rounded-xl border border-slate-800 bg-slate-900/80 p-2.5" title={matTitle}>
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <span className="min-w-0 truncate font-bold text-slate-200">
                                       <span className="font-mono text-amber-400">{mat.itemSku ?? "\u2014"}</span> \u00b7 {mat.itemName} \u00d7 {mat.quantityUsed}{mat.itemUnit ? ` ${mat.itemUnit}` : ""}
                                     </span>
-                                    <span className="flex items-center gap-1.5">
-                                      <span className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
-                                        mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
-                                      }`}>{matChip}</span>
-                                      {atThisStep && isRunning && !lockedByMate && (
-                                        <button
-                                          onClick={() => advanceMaterial(mat.id)}
-                                          className="rounded-lg bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-300 hover:bg-emerald-500/25 active:scale-95 transition"
-                                          title="Finished working this material on this step — it moves to the next stage"
-                                        >
-                                          \u2713 Finished here
-                                        </button>
-                                      )}
-                                      {canStartMat && isRunning && !lockedByMate && (
-                                        <button
-                                          onClick={() => advanceMaterial(mat.id, stepStage)}
-                                          className="rounded-lg bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300 hover:bg-amber-500/25 active:scale-95 transition"
-                                          title="This material is being worked now — it moves to this step (one stage, never a skip)"
-                                        >
-                                          \u25b6 Start this material
-                                        </button>
-                                      )}
-                                    </span>
+                                    <span className={`shrink-0 rounded-lg px-2 py-0.5 text-[10px] font-extrabold uppercase border ${
+                                      mDone ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : atThisStep ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-slate-800 text-slate-400 border-slate-700"
+                                    }`}>{matChip}</span>
                                   </div>
-                                  <div className="mt-1 flex items-center gap-2">
+                                  {/* the material\u2019s own machine path, position highlighted */}
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                    {matSteps.map((sName: string, si: number) => {
+                                      const sPos = si + 1;
+                                      const sDone = matPos > sPos || mDone;
+                                      const sCurrent = !mDone && sName === mStage;
+                                      return (
+                                        <span
+                                          key={si}
+                                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide border ${
+                                            sCurrent ? "border-amber-400 bg-amber-500/20 text-amber-200" : sDone ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-slate-700 bg-slate-950 text-slate-500"
+                                          }`}
+                                        >
+                                          {sDone ? "\u2713 " : ""}{sName}
+                                        </span>
+                                      );
+                                    })}
+                                    <span className="ml-1 text-[9px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matSteps.length}`}</span>
+                                  </div>
+                                  {/* BIG per-material controls */}
+                                  <div className="mt-2 flex gap-2">
+                                    {canStartMat && !lockedByMate && (
+                                      <button
+                                        onClick={() => startMaterial(op, mat.id, stepStage)}
+                                        disabled={busyOperationId !== null}
+                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-4 py-3 rounded-xl text-sm shadow-lg shadow-amber-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
+                                        title="Start THIS material on this machine \u2014 opens the machine job if it is not running yet"
+                                      >
+                                        <Play className="w-4 h-4 fill-slate-950 stroke-[2.5]" /> START
+                                      </button>
+                                    )}
+                                    {atThisStep && isRunning && !lockedByMate && (
+                                      <button
+                                        onClick={() => finishMaterial(op, mat.id, stepStage)}
+                                        disabled={busyOperationId !== null}
+                                        className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 active:scale-95 text-slate-950 font-black px-4 py-3 rounded-xl text-sm shadow-lg shadow-emerald-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
+                                        title="Finished THIS material here \u2014 it moves to its next stage; the machine job closes when the last one leaves"
+                                      >
+                                        <CheckCircle2 className="w-4 h-4 stroke-[3]" /> FINISH
+                                      </button>
+                                    )}
+                                    {lockedByMate && (
+                                      <span className="flex flex-1 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-[10px] font-black uppercase tracking-wider text-slate-400">Run by another operator</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1.5 flex items-center gap-2">
                                     <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
                                       <div className={`h-full rounded-full transition-all ${mDone ? "bg-emerald-500" : matPos > 0 ? "bg-amber-500/70" : ""}`} style={{ width: `${matPct}%` }} />
                                     </div>
-                                    <span className="w-16 text-right text-[9px] font-black uppercase tracking-wider text-slate-600">{matPos <= 0 ? "queued" : mDone ? "complete" : `${matPos}/${matLadder.length - 1}`}</span>
                                   </div>
                                 </div>
                               );
@@ -863,28 +919,34 @@ export default function OperatorStationView({
                             </button>
                           </div>
                         </div>
-                      ) : !isRunning ? (
-                        <button
-                          onClick={() => handleTouchAction(op.id, "In Progress")}
-                          disabled={busyOperationId !== null || lockedByMate}
-                          className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
-                        >
-                          <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
-                          <span>START MACHINING</span>
-                        </button>
+                      ) : (op.materials?.length ?? 0) === 0 ? (
+                        !isRunning ? (
+                          <button
+                            onClick={() => handleTouchAction(op.id, "In Progress")}
+                            disabled={busyOperationId !== null || lockedByMate}
+                            className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
+                          >
+                            <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
+                            <span>START MACHINING</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleFinishTap(op)}
+                            disabled={busyOperationId !== null || lockedByMate}
+                            className={`flex items-center justify-center gap-2.5 bg-gradient-to-b px-8 py-5 rounded-2xl text-base shadow-xl transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait ${
+                              isConfirmingFinish
+                                ? "from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 text-slate-950 font-black animate-pulse shadow-amber-600/30"
+                                : "from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 text-slate-950 font-black shadow-emerald-600/30"
+                            }`}
+                          >
+                            <CheckCircle2 className="w-6 h-6 stroke-[3]" />
+                            <span>{isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : "FINISH & PASS NEXT"}</span>
+                          </button>
+                        )
                       ) : (
-                        <button
-                          onClick={() => handleFinishTap(op)}
-                          disabled={busyOperationId !== null || lockedByMate}
-                          className={`flex items-center justify-center gap-2.5 bg-gradient-to-b px-8 py-5 rounded-2xl text-base shadow-xl transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait ${
-                            isConfirmingFinish
-                              ? "from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 text-slate-950 font-black animate-pulse shadow-amber-600/30"
-                              : "from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 text-slate-950 font-black shadow-emerald-600/30"
-                          }`}
-                        >
-                          <CheckCircle2 className="w-6 h-6 stroke-[3]" />
-                          <span>{isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : "FINISH & PASS NEXT"}</span>
-                        </button>
+                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs font-black uppercase tracking-wider text-amber-300">
+                          Start / finish each material below \u2014 the machine job opens and closes by itself
+                        </div>
                       )}
 
                       {lockedByMate && (
