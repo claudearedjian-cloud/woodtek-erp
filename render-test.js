@@ -525,6 +525,15 @@ check(JSON.stringify(mr.routeLadder(["Cutting", "Edging"])) === JSON.stringify([
 check(mr.nextInRoute(["Cutting", "Edging"], "Cutting") === "Edging" && mr.nextInRoute(["Cutting", "Edging"], "Edging") === "DONE", "material routes: next follows the material's own path");
 check(mr.nextInRoute(["Cutting"], "DONE") === null && mr.nextInRoute(["Cutting"], "Mystery") === null, "material routes: end and unknown are null");
 
+// ---- recipe-derived material routes ----
+check(JSON.stringify(mr.recipeRouteSteps([
+  { machineCategory: "Beam Saw", operationName: "Cutting", estimatedMinutes: 30 },
+  { machineCategory: "Beam Saw", operationName: "Cutting 2" },
+  { machineCategory: "Edge Banding", operationName: "Edging" },
+])) === JSON.stringify(["Beam Saw", "Edge Banding"]), "recipe routes: categories deduped in order");
+check(mr.recipeRouteSteps([{ operationName: "Assembly", machineCategory: "" }])[0] === "Assembly", "recipe routes: falls back to operation name");
+check(mr.recipeRouteSteps("junk").length === 0, "recipe routes: junk rejected");
+
 // ---- material stage positioning ----
 const mpxLadder = mp.stageLadder(["Cutting", "Edging"]);
 check(mp.ladderIndex(mpxLadder, "Cutting") === 1 && mp.ladderIndex(mpxLadder, "DONE") === 3 && mp.ladderIndex(mpxLadder, "Custom") === -1, "stage order: ladderIndex locates stages");

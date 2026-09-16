@@ -26,6 +26,23 @@ export function sanitizeRouteSteps(raw: unknown): string[] {
   return out;
 }
 
+/**
+ * Machine-category route derived from a routing recipe (operation template):
+ * the recipe's machine categories in step order, duplicates collapsed.
+ */
+export function recipeRouteSteps(defaultStepsJson: unknown): string[] {
+  if (!Array.isArray(defaultStepsJson)) return [];
+  const out: string[] = [];
+  for (const s of defaultStepsJson) {
+    if (!s || typeof s !== "object") continue;
+    const cat = sanitizeStage((s as any).machineCategory) || sanitizeStage((s as any).operationName);
+    if (!cat) continue;
+    if (out.some((x) => x.toLowerCase() === cat.toLowerCase())) continue;
+    out.push(cat);
+  }
+  return sanitizeRouteSteps(out);
+}
+
 /** The material's stage ladder: not started → its steps → done. */
 export function routeLadder(steps: string[]): string[] {
   return ["", ...steps, "DONE"];

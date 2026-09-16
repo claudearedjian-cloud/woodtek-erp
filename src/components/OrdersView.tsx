@@ -31,6 +31,7 @@ import {
 import { DEFAULT_PROJECT_TYPES } from "@/lib/projectTypes";
 import { Archive } from "lucide-react";
 import { mergeBomKit, stockShortfall, type BomKit } from "@/lib/bomKits";
+import { recipeRouteSteps } from "@/lib/materialRoutes";
 
 interface OrdersViewProps {
   orders: any[];
@@ -141,8 +142,40 @@ export default function OrdersView({
   const [bom, setBom] = useState<{ itemId: string; qty: string }[]>([]);
   // Per-material machine routing for the new order (index in bom → steps).
   const [bomRoutes, setBomRoutes] = useState<Record<number, string[]>>({});
+  const [bomRecipeSel, setBomRecipeSel] = useState<Record<number, string>>({});
   const [routeOpenIdx, setRouteOpenIdx] = useState<number | null>(null);
   const [routePick, setRoutePick] = useState("");
+  // Resolved route for a material line: its recipe, its custom steps, or none
+  // (follows the order's routing).
+  const routeForLine = (line: number): { steps: string[]; recipeName: string } => {
+    const rid = bomRecipeSel[line];
+    if (rid) {
+      const tpl = templates.find((t: any) => String(t.id) === rid);
+      return { steps: tpl ? recipeRouteSteps(tpl.defaultStepsJson) : [], recipeName: tpl?.name ?? "" };
+    }
+    return { steps: bomRoutes[line] ?? [], recipeName: "" };
+  };
+  const removeBomLine = (line: number) => {
+    setBom(list => list.filter((_, k) => k !== line));
+    setBomRoutes(m => {
+      const next: Record<number, string[]> = {};
+      for (const [k, v] of Object.entries(m)) {
+        const idx = Number(k);
+        if (idx === line) continue;
+        next[idx > line ? idx - 1 : idx] = v;
+      }
+      return next;
+    });
+    setBomRecipeSel(m => {
+      const next: Record<number, string> = {};
+      for (const [k, v] of Object.entries(m)) {
+        const idx = Number(k);
+        if (idx === line) continue;
+        next[idx > line ? idx - 1 : idx] = v;
+      }
+      return next;
+    });
+  };
   const [recipeId, setRecipeId] = useState<string>("");
   const [recipeName, setRecipeName] = useState("");
   // New-order modal wizard tab: details -> routing -> materials.
@@ -425,9 +458,29 @@ export default function OrdersView({
       setErrorMsg("Please select a customer and provide a project title.");
       return;
     }
-    const validSteps = steps.filter(s => s.operationName.trim());
+    let validSteps = steps.filter(s => s.operationName.trim());
+    // Materials-first: when no order routing was entered, derive it from the
+    // materials' recipes/custom routes (union, first-appearance order).
     if (validSteps.length === 0) {
-      setErrorMsg("Add at least one routing step (or pick a recipe).");
+      const union: string[] = [];
+      bom.forEach((b, k) => {
+        if (!b.itemId) return;
+        for (const cat of routeForLine(k).steps) {
+          if (!union.some((x) => x.toLowerCase() === cat.toLowerCase())) union.push(cat);
+        }
+      });
+      if (union.length > 0) {
+        validSteps = union.map(cat => ({
+          operationName: cat,
+          machineId: "",
+          machineCategory: cat,
+          estimatedMinutes: "60",
+          auto: true,
+        }));
+      }
+    }
+    if (validSteps.length === 0) {
+      setErrorMsg("Add at least one routing step, or give each material a recipe in the Materials tab.");
       return;
     }
     setIsSubmitting(true);
@@ -473,7 +526,7 @@ export default function OrdersView({
         if (!b.itemId) return;
         const mid = created?.createdMaterials?.[wi]?.id;
         wi++;
-        const rSteps = bomRoutes[k] ?? [];
+        const rSteps = routeForLine(k).steps;
         if (mid && rSteps.length > 0) customRoutes.push({ orderMaterialsId: Number(mid), steps: rSteps });
       });
       if (created?.id && customRoutes.length > 0) {
@@ -491,6 +544,7 @@ export default function OrdersView({
       setSteps([]);
       setBom([]);
       setBomRoutes({});
+      setBomRecipeSel({});
       setRouteOpenIdx(null);
       setRoutePick("");
       setRecipeId("");
@@ -859,7 +913,7 @@ export default function OrdersView({
                   <Sparkles className="w-5 h-5 text-amber-400" />
                   <span>New Production Order & Routing</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Define customer project details and choose a manufacturing machine flow.</p>
+                <p className="text-xs text-slate-400 mt-0.5">1 · Order info — 2 · pick materials and a routing recipe for each — 3 · check the default order routing.</p>
               </div>
               <button
                 onClick={() => setShowNewModal(false)}
@@ -872,7 +926,7 @@ export default function OrdersView({
             <form
               onSubmit={(e) => {
                 if (!customerId || !title.trim()) { e.preventDefault(); setOrderTab("details"); handleCreateOrder(e); return; }
-                if (steps.filter(s => s.operationName.trim()).length === 0) { e.preventDefault(); setOrderTab("routing"); handleCreateOrder(e); return; }
+                if (steps.filter(s => s.operationName.trim()).length === 0 && !bom.some((b, k) => b.itemId && routeForLine(k).steps.length > 0)) { e.preventDefault(); setOrderTab("routing"); handleCreateOrder(e); return; }
                 handleCreateOrder(e);
               }}
               className="p-6 space-y-5 max-h-[75vh] overflow-y-auto custom-scrollbar"
@@ -889,11 +943,11 @@ export default function OrdersView({
                 <button type="button" onClick={() => setOrderTab("details")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "details" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
                   1 · Order Details
                 </button>
-                <button type="button" onClick={() => setOrderTab("routing")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "routing" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
-                  2 · Machine Routing
-                </button>
                 <button type="button" onClick={() => setOrderTab("materials")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "materials" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
-                  3 · Materials ({bom.length})
+                  2 · Materials & Routing ({bom.length})
+                </button>
+                <button type="button" onClick={() => setOrderTab("routing")} className={`flex-1 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wider transition ${orderTab === "routing" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"}`}>
+                  3 · Order Routing (default)
                 </button>
               </div>
 
@@ -1049,9 +1103,9 @@ export default function OrdersView({
                 <div className="mb-3">
                   <label className="block text-sm font-black text-white flex items-center gap-2">
                     <Layers className="w-4 h-4 text-amber-500" />
-                    <span>Machine Routing</span>
+                    <span>Order Routing (default)</span>
                   </label>
-                  <p className="text-[11px] text-slate-400">Pick a recipe, then confirm the exact machine per step. Each step is tracked individually on the floor.</p>
+                  <p className="text-[11px] text-slate-400">The default machine flow for materials WITHOUT their own recipe (set per material in tab 2). Leave empty and it will be built automatically from the materials' recipes.</p>
                 </div>
 
                 {/* Recipe chips */}
@@ -1341,7 +1395,7 @@ export default function OrdersView({
                         >
                           <Route className="h-4 w-4" />
                         </button>
-                        <button type="button" onClick={() => setBom(list => list.filter((_, k) => k !== i))} className="p-1.5 text-slate-500 transition hover:text-rose-400">
+                        <button type="button" onClick={() => removeBomLine(i)} className="p-1.5 text-slate-500 transition hover:text-rose-400">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -1355,22 +1409,43 @@ export default function OrdersView({
                         }`}
                       >
                         <Route className="h-3 w-3 shrink-0" />
-                        {(bomRoutes[i] ?? []).length > 0
-                          ? `Route: ${(bomRoutes[i] ?? []).join(" \u2192 ")} \u2014 tap to edit`
-                          : "Route: follows the order\u2019s routing \u2014 tap to give this material its own machine path"}
+                        {(() => {
+                          const r = routeForLine(i);
+                          if (r.recipeName) return `Route (${r.recipeName}): ${r.steps.join(" \u2192 ")} \u2014 tap to change`;
+                          if (r.steps.length > 0) return `Route: ${r.steps.join(" \u2192 ")} \u2014 tap to edit`;
+                          return "Route: follows the order\u2019s routing \u2014 tap to pick a recipe";
+                        })()}
                       </button>
                       {routeOpenIdx === i && (
                         <div className="mt-1.5 rounded-lg border border-amber-500/30 bg-slate-950 p-2.5">
                           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">Machine routing for THIS material</span>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">Routing for THIS material — pick a recipe</span>
                             <button
                               type="button"
-                              onClick={() => setBomRoutes(m => { const c = { ...m }; delete c[i]; return c; })}
+                              onClick={() => { setBomRoutes(m => { const c = { ...m }; delete c[i]; return c; }); setBomRecipeSel(m => { const c = { ...m }; delete c[i]; return c; }); }}
                               className="text-[10px] font-bold text-slate-400 hover:text-white"
                             >
                               Reset (follow the order's routing)
                             </button>
                           </div>
+                          <div className="mb-2 flex flex-wrap gap-1.5">
+                            {templates.map(tpl => (
+                              <button
+                                key={tpl.id}
+                                type="button"
+                                onClick={() => { setBomRecipeSel(m => ({ ...m, [i]: String(tpl.id) })); setBomRoutes(m => { const c = { ...m }; delete c[i]; return c; }); }}
+                                className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black transition ${
+                                  bomRecipeSel[i] === String(tpl.id)
+                                    ? "border-amber-400 bg-amber-500 text-slate-950"
+                                    : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 hover:text-amber-300"
+                                }`}
+                                title={(tpl.defaultStepsJson ?? []).map((s: any) => s.machineCategory || s.operationName).join(" \u2192 ")}
+                              >
+                                {tpl.name}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">or build it by hand:</div>
                           {(bomRoutes[i] ?? []).length === 0 ? (
                             <div className="mb-2 text-[11px] text-slate-500">Follows the order's routing steps. Add steps below to give this material its own path.</div>
                           ) : (
@@ -1418,7 +1493,7 @@ export default function OrdersView({
                   {orderTab !== "details" && (
                     <button
                       type="button"
-                      onClick={() => setOrderTab(orderTab === "materials" ? "routing" : "details")}
+                      onClick={() => setOrderTab(orderTab === "routing" ? "materials" : "details")}
                       className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
                     >
                       ← Back
@@ -1427,7 +1502,7 @@ export default function OrdersView({
                   {orderTab !== "materials" && (
                     <button
                       type="button"
-                      onClick={() => setOrderTab(orderTab === "details" ? "routing" : "materials")}
+                      onClick={() => setOrderTab(orderTab === "details" ? "materials" : "routing")}
                       className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition"
                     >
                       Next →
