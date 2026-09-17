@@ -21,6 +21,8 @@ import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus, type ReceptionState } from "@/lib/bomStatus.server";
 import { logAudit } from "@/lib/audit.server";
+import { findProductionItemByMaterial } from "@/lib/productionPlan";
+import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -99,6 +101,16 @@ export async function GET() {
 
     const overlay = readBomStatus().entries;
     const receivedMap = readReceived();
+    const planStore = readProductionPlanStore();
+    const plannedMaterials = new Map<number, any>();
+    const plannedOperations = new Map<number, any>();
+    for (const plan of Object.values(planStore.orders)) {
+      if (!ids.includes(plan.orderId)) continue;
+      for (const item of plan.items) {
+        plannedMaterials.set(item.materialId, item);
+        for (const step of item.steps) plannedOperations.set(step.operationId, { item, step });
+      }
+    }
 
     const byOrder = new Map<number, any>();
     for (const o of openOrders) {
@@ -116,10 +128,13 @@ export async function GET() {
       const order = byOrder.get(m.orderId);
       if (!order) continue;
       const entry = overlay[String(m.id)];
+      const planned = plannedMaterials.get(m.id);
       order.materials.push({
         ...m,
+        productionItemName: planned?.name ?? null,
+        productionRecipeName: planned?.recipeName ?? null,
         status: entry?.status ?? "Requested",
-        machineId: entry?.machineId ?? null,
+        machineId: entry?.machineId ?? planned?.steps?.[0]?.machineId ?? null,
         deliveredQty: entry?.deliveredQty ?? null,
       });
     }
@@ -128,15 +143,15 @@ export async function GET() {
       const order = byOrder.get(op.orderId);
       if (!order) continue;
       const current = op.machineId != null ? machineById.get(op.machineId) : undefined;
-      // Same-category equivalents when a machine is assigned; when none is,
-      // offer every active machine so the Floor Supervisor can make the call.
-      const candidates = current
-        ? machinesAll
-            .filter((m) => m.category === current.category && (m.status === "Active" || m.status === "In-Use"))
-            .map((m) => ({ id: m.id, code: m.code, name: m.name, status: m.status }))
-        : machinesAll
-            .filter((m) => m.status === "Active" || m.status === "In-Use")
-            .map((m) => ({ id: m.id, code: m.code, name: m.name, status: m.status }));
+      const planned = plannedOperations.get(op.id);
+      const requiredCategory = planned?.step.machineCategory || current?.category || null;
+      // Never offer a wrong machine type for a planned material pass.
+      const candidates = machinesAll
+        .filter((machine) =>
+          (!requiredCategory || machine.category.toLowerCase() === String(requiredCategory).toLowerCase()) &&
+          (machine.status === "Active" || machine.status === "In-Use")
+        )
+        .map((machine) => ({ id: machine.id, code: machine.code, name: machine.name, status: machine.status }));
       order.operations.push({
         id: op.id,
         stepOrder: op.stepOrder,
@@ -144,6 +159,8 @@ export async function GET() {
         status: op.status,
         machineId: op.machineId,
         machineCode: op.machineCode,
+        machineCategory: requiredCategory,
+        productionItemName: planned?.item.name ?? null,
         candidates,
       });
     }
@@ -226,25 +243,39 @@ export async function PUT(request: Request) {
     // keeps the line in "Prepared" with a tally. Undo to Requested clears it.
     let deliveredQty: number | null = null;
     const [line] = await db
-      .select({ id: orderMaterials.id, quantityUsed: orderMaterials.quantityUsed })
+      .select({ id: orderMaterials.id, orderId: orderMaterials.orderId, quantityUsed: orderMaterials.quantityUsed })
       .from(orderMaterials)
       .where(eq(orderMaterials.id, allocationId));
-    if (line) {
-      if (status === "Delivered") {
-        deliveredQty = line.quantityUsed;
-      } else if (body.deliverQty != null && body.deliverQty !== "") {
-        const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(body.deliverQty) || 0)));
-        deliveredQty = n > 0 ? n : null;
-      }
+    if (!line) {
+      return NextResponse.json({ error: "This material allocation no longer exists." }, { status: 404 });
+    }
+    if (status === "Delivered") {
+      deliveredQty = line.quantityUsed;
+    } else if (body.deliverQty != null && body.deliverQty !== "") {
+      const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(body.deliverQty) || 0)));
+      deliveredQty = n > 0 ? n : null;
     }
     // Only a Manager may change the target machine; everyone else keeps the
-    // machine the routing assigned (or the last manager-chosen one).
+    // machine the routing assigned (or the last manager-chosen one). A v2 line
+    // always follows the first pass of its linked production chain.
     const existing = readBomStatus().entries[String(allocationId)];
     const mayRoute = can(user.role, "users:manage");
     const wantsMachine = body.machineId != null && body.machineId !== "";
+    const plannedItem = findProductionItemByMaterial(readOrderProductionPlan(line.orderId), allocationId);
+    const linkedTarget = existing?.machineId ?? plannedItem?.steps?.[0]?.machineId ?? null;
+    if (
+      wantsMachine &&
+      Number(body.machineId) !== Number(linkedTarget) &&
+      plannedItem
+    ) {
+      return NextResponse.json(
+        { error: "Change the first production pass assignment; this warehouse destination follows it automatically." },
+        { status: 409 },
+      );
+    }
     const machineId = mayRoute && wantsMachine
       ? Number(body.machineId)
-      : (existing?.machineId ?? null);
+      : linkedTarget;
     setBomStatus(allocationId, status, machineId, deliveredQty);
     logAudit(user, status === "Delivered" ? "bom.deliver" : `bom.${status.toLowerCase()}`, "bom_line", `BOM line -> ${status}${deliveredQty != null && deliveredQty < (line?.quantityUsed ?? 0) ? ` (${deliveredQty}/${line?.quantityUsed} sent)` : ""}`, allocationId);
     return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty });

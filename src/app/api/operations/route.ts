@@ -5,6 +5,8 @@ import { eq, asc, desc, not, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
+import { routeStageKeys } from "@/lib/productionPlan";
+import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 
 export async function GET(request: Request) {
   const { error: authError } = await authorize("orders:read");
@@ -67,6 +69,15 @@ export async function GET(request: Request) {
       if (!list.includes(o.operationName)) list.push(o.operationName);
       stepsByOrder.set(o.orderId, list);
     }
+
+    const planStore = readProductionPlanStore();
+    const operationBindings = new Map<number, { item: any; step: any }>();
+    for (const plan of Object.values(planStore.orders)) {
+      if (!orderIds.includes(plan.orderId)) continue;
+      for (const item of plan.items) {
+        for (const step of item.steps) operationBindings.set(step.operationId, { item, step });
+      }
+    }
     let materialsByOrder = new Map<number, any[]>();
     if (orderIds.length > 0) {
       const [mats, progress, allRoutes] = await Promise.all([
@@ -86,14 +97,47 @@ export async function GET(request: Request) {
         Promise.resolve(readAllRoutes()),
       ]);
       const routes = allRoutes;
+      const plannedMaterials = new Map<number, any>();
+      for (const plan of Object.values(planStore.orders)) {
+        for (const item of plan.items) plannedMaterials.set(item.materialId, item);
+      }
       for (const m of mats) {
         const list = materialsByOrder.get(m.orderId) ?? [];
         const p = progress[String(m.id)];
-        list.push({ ...m, stage: p?.stage ?? "", stageAt: p?.at ?? "", stageBy: p?.by ?? "", route: routes[String(m.id)] ?? null });
+        const planned = plannedMaterials.get(m.id);
+        list.push({
+          ...m,
+          stage: p?.stage ?? "",
+          stageAt: p?.at ?? "",
+          stageBy: p?.by ?? "",
+          route: planned ? routeStageKeys(planned) : (routes[String(m.id)] ?? null),
+          productionItemName: planned?.name ?? null,
+        });
         materialsByOrder.set(m.orderId, list);
       }
     }
-    return NextResponse.json(filtered.map((o) => ({ ...o, materials: materialsByOrder.get(o.orderId) ?? [], orderSteps: stepsByOrder.get(o.orderId) ?? [] })));
+    return NextResponse.json(filtered.map((o) => {
+      const binding = operationBindings.get(o.id);
+      const allMaterials = materialsByOrder.get(o.orderId) ?? [];
+      if (!binding) {
+        return { ...o, materials: allMaterials, orderSteps: stepsByOrder.get(o.orderId) ?? [] };
+      }
+      return {
+        ...o,
+        machineCategory: o.machineCategory || binding.step.machineCategory,
+        materials: allMaterials.filter((material: any) => material.id === binding.item.materialId),
+        orderSteps: routeStageKeys(binding.item),
+        productionItem: {
+          materialId: binding.item.materialId,
+          name: binding.item.name,
+          recipeName: binding.item.recipeName,
+          routeSource: binding.item.routeSource,
+          routePosition: binding.step.position,
+          routeLength: binding.item.steps.length,
+          steps: binding.item.steps,
+        },
+      };
+    }));
   } catch (error: any) {
     console.error("GET operations error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch shop floor operations" }, { status: 500 });
@@ -111,6 +155,13 @@ export async function POST(request: Request) {
 
     if (!orderId || !operationName) {
       return NextResponse.json({ error: "Order ID and Operation Name are required" }, { status: 400 });
+    }
+
+    if (readOrderProductionPlan(Number(orderId))) {
+      return NextResponse.json(
+        { error: "Add or change passes through the material production plan, not as a loose order step." },
+        { status: 409 },
+      );
     }
 
     const existingOps = await db.select().from(orderOperations).where(eq(orderOperations.orderId, Number(orderId))).orderBy(asc(orderOperations.stepOrder));

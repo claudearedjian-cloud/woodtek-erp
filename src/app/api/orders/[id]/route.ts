@@ -5,6 +5,7 @@ import { eq, asc, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { isFloorRole } from "@/lib/dataAccess";
+import { readOrderProductionPlan, deleteOrderProductionPlan } from "@/lib/productionPlan.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, error: authError } = await authorize("orders:read");
@@ -96,12 +97,47 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     // Technician): hide order quote value + material costs.
     const isFloor = isFloorRole(user);
 
+    // V2 plans make the formerly flat operation list understandable: every
+    // operation and BOM line carries its named material job and private route.
+    const productionPlan = readOrderProductionPlan(orderId);
+    const operationPlan = new Map<number, any>();
+    const materialPlan = new Map<number, any>();
+    for (const item of productionPlan?.items ?? []) {
+      materialPlan.set(item.materialId, item);
+      for (const step of item.steps) {
+        operationPlan.set(step.operationId, { item, step });
+      }
+    }
+    const enrichedOps = ops.map((operation) => {
+      const hit = operationPlan.get(operation.id);
+      return hit ? {
+        ...operation,
+        machineCategory: operation.machineCategory || hit.step.machineCategory,
+        productionMaterialId: hit.item.materialId,
+        productionItemName: hit.item.name,
+        productionRoutePosition: hit.step.position,
+        productionRouteLength: hit.item.steps.length,
+        productionRoute: hit.item.steps,
+      } : operation;
+    });
+    const enrichedMats = mats.map((material) => {
+      const item = materialPlan.get(material.id);
+      return item ? {
+        ...material,
+        productionItemName: item.name,
+        productionRouteSource: item.routeSource,
+        productionRecipeName: item.recipeName,
+        productionRoute: item.steps,
+      } : material;
+    });
+
     return NextResponse.json({
       ...order,
       totalValue: isFloor ? null : order.totalValue,
-      operations: ops,
-      materials: isFloor ? mats.map(m => ({ ...m, costPerUnit: null })) : mats,
+      operations: enrichedOps,
+      materials: isFloor ? enrichedMats.map(m => ({ ...m, costPerUnit: null })) : enrichedMats,
       materialsTotalCost: isFloor ? null : materialsTotalCost.toFixed(2),
+      productionPlan,
     });
   } catch (error: any) {
     console.error("GET order details error:", error);
@@ -216,10 +252,15 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       );
     }
 
-    // Delete related records first due to constraints
-    await db.delete(orderMaterials).where(eq(orderMaterials.orderId, orderId));
-    await db.delete(orderOperations).where(eq(orderOperations.orderId, orderId));
-    await db.delete(orders).where(eq(orders.id, orderId));
+    // Delete the relational rows and the v2 route binding as one logical unit.
+    // A plan-file failure aborts the database transaction rather than leaving
+    // an overlay that points at deleted material and operation ids.
+    await db.transaction(async (tx) => {
+      await tx.delete(orderMaterials).where(eq(orderMaterials.orderId, orderId));
+      await tx.delete(orderOperations).where(eq(orderOperations.orderId, orderId));
+      await tx.delete(orders).where(eq(orders.id, orderId));
+      deleteOrderProductionPlan(orderId);
+    });
 
     logAudit(user, "order.delete", "order", `Order #${orderId} deleted`, orderId);
     return NextResponse.json({ success: true, message: "Order and workflow operations deleted." });

@@ -12,6 +12,7 @@ import { canAssignMachines } from "@/lib/permissions";
 type Line = {
   id: number;
   itemName?: string | null;
+  productionItemName?: string | null;
   itemSku?: string | null;
   quantityUsed?: number;
   itemUnit?: string | null;
@@ -36,6 +37,7 @@ type OpInfo = {
   id: number;
   stepOrder: number;
   operationName: string;
+  productionItemName?: string | null;
   status: string;
   machineId: number | null;
   machineCode?: string | null;
@@ -286,7 +288,7 @@ export default function FloorReceptionView({
                     {lines.map((l) => (
                       <div key={l.id} className="flex items-center justify-between gap-2 text-xs">
                         <span className="truncate font-bold text-slate-200">
-                          {l.quantityUsed} {l.itemUnit || "pcs"} — {l.itemName || l.itemSku}
+                          {l.productionItemName ? `${l.productionItemName} · ` : ""}{l.quantityUsed} {l.itemUnit || "pcs"} — {l.itemName || l.itemSku}
                         </span>
                         <span
                           className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${
@@ -324,7 +326,7 @@ export default function FloorReceptionView({
                         .map((op) => (
                           <div key={op.id} className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs font-bold text-slate-200 truncate">
-                              #{op.stepOrder} {op.operationName}
+                              {op.productionItemName ? `${op.productionItemName} · ` : ""}#{op.stepOrder} {op.operationName}
                               <span className="text-slate-500"> · now: {op.machineCode || "—"}</span>
                             </span>
                             {o.received === true ? (

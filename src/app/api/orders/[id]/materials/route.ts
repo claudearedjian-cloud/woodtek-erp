@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { orderMaterials, inventoryItems, orders } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { applyMaterialsStatus, computeAvailability } from "@/lib/materials";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 
 /**
  * Bill-of-materials allocation. The stock is RESERVED (not deducted) on
@@ -69,6 +70,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const [orderRow] = await db.select({ id: orders.id }).from(orders).where(eq(orders.id, orderId));
     if (!orderRow) return NextResponse.json({ error: "Order not found." }, { status: 404 });
+    if (readOrderProductionPlan(orderId)) {
+      return NextResponse.json(
+        { error: "This order uses linked material jobs, so its stock rows cannot be edited separately. Clone and recreate the order to change its plan." },
+        { status: 409 },
+      );
+    }
 
     // Block allocation if the order is already Completed or Cancelled
     if (orderRow.id && (await isTerminal(orderId))) {
@@ -173,6 +180,12 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const url = new URL(request.url);
     const allocationId = Number(url.searchParams.get("allocationId"));
 
+    if (readOrderProductionPlan(orderId)) {
+      return NextResponse.json(
+        { error: "A routed material job cannot be released separately from its production operations." },
+        { status: 409 },
+      );
+    }
     if (!Number.isInteger(allocationId) || allocationId <= 0) {
       return NextResponse.json({ error: "Allocation ID is required." }, { status: 400 });
     }

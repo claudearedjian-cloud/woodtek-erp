@@ -43,12 +43,16 @@ compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
+compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
+compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
+compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
 
 const React = require("react");
 const { renderToString } = require("react-dom/server");
 const Sidebar = require("./compiled/components/Sidebar.js").default;
+const NewOrderWizard = require("./compiled/components/NewOrderWizard.js").default;
 
 let fails = 0;
 const check = (cond, name) => {
@@ -70,6 +74,25 @@ const props = (role, menuConfig = null, lang) => ({
   onClose: () => {},
   lang,
 });
+
+const wizard = renderToString(React.createElement(NewOrderWizard, {
+  open: true,
+  onClose: () => {},
+  onCreated: () => {},
+  customers: [{ id: 1, company: "Test Joinery", name: "Owner" }],
+  templates: [{ id: 9, name: "Saw + Press + Saw", defaultStepsJson: [
+    { stepOrder: 1, operationName: "First Saw", machineCategory: "Beam Saw", estimatedMinutes: 60 },
+    { stepOrder: 2, operationName: "Press", machineCategory: "Press", estimatedMinutes: 90 },
+    { stepOrder: 3, operationName: "Second Saw", machineCategory: "Beam Saw", estimatedMinutes: 45 },
+  ] }],
+  machines: [{ id: 1, code: "BEAM-01", name: "Beam Saw", category: "Beam Saw" }],
+  inventoryItems: [{ id: 1, name: "Oak MDF", sku: "MDF-01", stockQuantity: 10, unit: "sheets" }],
+  currentUser: { role: "Manager" },
+}));
+check(wizard.includes("Production Order Builder"), "new order v2: wide production builder renders");
+check(wizard.includes("Default route") && wizard.includes("Material jobs") && wizard.includes("Review"), "new order v2: four explicit planning stages render");
+check(wizard.includes("Each named material batch receives its own complete, independent machine job chain"), "new order v2: independent-job rule is visible");
+check(!wizard.includes("Order Routing (default)"), "new order v2: conflicting legacy order-routing tab is gone");
 
 const op = renderToString(React.createElement(Sidebar, props("Machine Operator")));
 const mgr = renderToString(React.createElement(Sidebar, props("Manager")));
@@ -537,6 +560,52 @@ check(mr.recipeRouteSteps("junk").length === 0, "recipe routes: junk rejected");
 // ---- material stage positioning ----
 const mpxLadder = mp.stageLadder(["Cutting", "Edging"]);
 check(mp.ladderIndex(mpxLadder, "Cutting") === 1 && mp.ladderIndex(mpxLadder, "DONE") === 3 && mp.ladderIndex(mpxLadder, "Custom") === -1, "stage order: ladderIndex locates stages");
+
+// ---- v2 independent material production plans ----
+const pp = require("./compiled/lib/productionPlan.js");
+const repeatedRecipe = pp.productionRouteFromTemplate([
+  { stepOrder: 1, operationName: "First Saw", machineCategory: "Beam Saw", estimatedMinutes: 90 },
+  { stepOrder: 2, operationName: "Press", machineCategory: "Press", estimatedMinutes: 240 },
+  { stepOrder: 3, operationName: "Second Saw", machineCategory: "Beam Saw", estimatedMinutes: 60 },
+  { stepOrder: 4, operationName: "Final Edge", machineCategory: "Edge Bander", estimatedMinutes: 80 },
+]);
+check(repeatedRecipe.length === 4, "production plan: repeated machine visits are never deleted");
+check(repeatedRecipe[0].operationName === "First Saw" && repeatedRecipe[2].operationName === "Second Saw", "production plan: real operation names survive recipe snapshot");
+check(repeatedRecipe[1].estimatedMinutes === 240 && repeatedRecipe[3].estimatedMinutes === 80, "production plan: recipe estimates survive unchanged");
+const exactPasses = pp.sanitizeProductionRoute([
+  { operationName: "Saw pass", machineCategory: "Beam Saw", estimatedMinutes: 0, auto: true },
+  { operationName: "Saw pass", machineCategory: "Beam Saw", estimatedMinutes: 99999, auto: false, machineId: 7 },
+]);
+check(exactPasses.length === 2, "production plan: even identical consecutive passes remain distinct");
+check(exactPasses[0].estimatedMinutes === 1 && exactPasses[1].estimatedMinutes === 1440, "production plan: estimates clamp to safe limits");
+check(exactPasses[1].auto === false && exactPasses[1].machineId === 7, "production plan: exact machine assignment survives sanitising");
+const productionItems = pp.sanitizeProductionItems([
+  { clientKey: "doors", name: " Kitchen doors ", itemId: 12, quantityUsed: 8, routeSource: "recipe", recipeId: 3, recipeName: "Cut + edge", steps: repeatedRecipe },
+]);
+check(productionItems.length === 1 && productionItems[0].name === "Kitchen doors" && productionItems[0].quantityUsed === 8, "production plan: named material batch + stock quantity sanitise together");
+check(pp.sanitizeProductionItems([{ name: "Missing route", itemId: 1, steps: [] }]).length === 0, "production plan: incomplete material job is rejected");
+check(pp.productionStageKey(1, "Saw") !== pp.productionStageKey(3, "Saw"), "production plan: repeated operation names receive unique stage keys");
+const samplePlan = {
+  orderId: 22,
+  createdAt: "2026-09-16T10:00:00.000Z",
+  defaultSteps: repeatedRecipe,
+  items: [{
+    materialId: 71,
+    itemId: 12,
+    name: "Kitchen doors",
+    quantityUsed: 8,
+    routeSource: "recipe",
+    recipeId: 3,
+    recipeName: "Cut + edge",
+    steps: repeatedRecipe.map((step, index) => ({ ...step, operationId: 800 + index, position: index + 1, stageKey: pp.productionStageKey(index + 1, step.operationName) })),
+  }],
+};
+check(pp.findProductionItemByMaterial(samplePlan, 71).name === "Kitchen doors", "production plan: material resolves to its private chain");
+check(pp.findProductionStepByOperation(samplePlan, 802).index === 2, "production plan: operation resolves to its material and pass position");
+check(pp.previousProductionOperationId(samplePlan, 802) === 801 && pp.nextProductionOperationId(samplePlan, 802) === 803, "production plan: predecessor/next stay inside one material chain");
+check(pp.routeStageKeys(samplePlan.items[0]).length === 4 && new Set(pp.routeStageKeys(samplePlan.items[0])).size === 4, "production plan: progress ladder preserves all repeated passes");
+const cleanPlanStore = pp.sanitizeProductionPlanStore({ version: 99, orders: { 22: samplePlan, bad: {}, 23: { orderId: 99, items: [] } } });
+check(Object.keys(cleanPlanStore.orders).length === 1 && cleanPlanStore.orders["22"].items.length === 1, "production plan: stored overlay rejects malformed and mismatched orders");
 
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");

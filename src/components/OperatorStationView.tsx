@@ -24,6 +24,7 @@ import {
   Trash2,
   RefreshCcw,
   ScanLine,
+  Package,
 } from "lucide-react";
 
 interface OperatorStationViewProps {
@@ -308,7 +309,7 @@ export default function OperatorStationView({
   // the next ladder stage (never a skip). Best-effort; the queue refetches.
   // Per-material taps: "▶ Start" moves ONE material into the current step;
   // "✓ Finished here" lets the server pick the next ladder stage — never a skip.
-  const advanceMaterial = async (materialId: number, stage?: string) => {
+  const advanceMaterial = async (materialId: number, stage?: string): Promise<boolean> => {
     try {
       const res = await fetch("/api/material-progress", {
         method: "PUT",
@@ -318,10 +319,14 @@ export default function OperatorStationView({
       if (!res.ok) {
         const d = await res.json().catch(() => ({} as any));
         setActionError(d.error || "Could not update the material.");
+        await fetchMachineQueue();
+        return false;
       }
       await fetchMachineQueue();
+      return true;
     } catch {
       setActionError("Could not update the material.");
+      return false;
     }
   };
   // START on a material line: opens the machine job if needed, then moves
@@ -349,9 +354,19 @@ export default function OperatorStationView({
   };
 
   const finishMaterial = async (op0: any, matId: number, stepStage: string) => {
-    await advanceMaterial(matId);
-    const others = (op0.materials ?? []).filter((m2: any) => m2.id !== matId && (m2.stage ?? "") === stepStage);
-    if (others.length === 0) {
+    if (!(await advanceMaterial(matId))) return;
+    // Legacy shared jobs close only after every material that needs this step
+    // has reached and passed it. Merely having no material here at this exact
+    // moment used to close the job before upstream materials arrived.
+    const stillNeedsThisPass = (op0.materials ?? []).some((material: any) => {
+      if (material.id === matId || material.stage === "DONE") return false;
+      const route: string[] = material.route ?? op0.orderSteps ?? [];
+      const target = route.indexOf(stepStage);
+      if (target === -1) return false;
+      const current = material.stage ? route.indexOf(material.stage) : -1;
+      return current <= target;
+    });
+    if (!stillNeedsThisPass) {
       await handleTouchAction(op0.id, "Completed");
     }
   };
@@ -633,8 +648,8 @@ export default function OperatorStationView({
                         <span className="font-mono text-lg font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
                           {op.orderNumber}
                         </span>
-                        <span className="text-xs text-slate-400 font-bold bg-slate-800 px-2.5 py-1 rounded-xl">
-                          Step #{op.stepOrder}
+<span className="text-xs text-slate-400 font-bold bg-slate-800 px-2.5 py-1 rounded-xl">
+                          {op.productionItem ? `Pass ${op.productionItem.routePosition}/${op.productionItem.routeLength}` : `Step #${op.stepOrder}`}
                         </span>
                         {isRunning && (
                           <span className="flex items-center gap-1.5 text-xs font-black bg-slate-950 border border-amber-500/40 px-2.5 py-1 rounded-xl text-amber-300">
@@ -650,6 +665,12 @@ export default function OperatorStationView({
                         <span>{op.operationName}</span>
                         <ArrowRight className="w-5 h-5 text-slate-500 inline" />
                       </h4>
+
+                      {op.productionItem && (
+                        <div className="inline-flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-base font-black text-amber-200">
+                          <Package className="h-4 w-4" /> Material job: {op.productionItem.name}
+                        </div>
+                      )}
 
                       <div className="text-base font-extrabold text-white truncate">
                         Project: {op.orderTitle}
@@ -831,7 +852,7 @@ export default function OperatorStationView({
                             </button>
                           </div>
                         </div>
-                      ) : (op.materials?.length ?? 0) === 0 ? (
+) : (op.productionItem || (op.materials?.length ?? 0) === 0) ? (
                         !isRunning ? (
                           <button
                             onClick={() => handleTouchAction(op.id, "In Progress")}
@@ -839,7 +860,7 @@ export default function OperatorStationView({
                             className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
                           >
                             <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
-                            <span>START MACHINING</span>
+                            <span>{op.productionItem ? "START MATERIAL JOB" : "START MACHINING"}</span>
                           </button>
                         ) : (
                           <button
@@ -852,7 +873,7 @@ export default function OperatorStationView({
                             }`}
                           >
                             <CheckCircle2 className="w-6 h-6 stroke-[3]" />
-                            <span>{isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : "FINISH & PASS NEXT"}</span>
+                            <span>{isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : op.productionItem ? "FINISH MATERIAL PASS" : "FINISH & PASS NEXT"}</span>
                           </button>
                         )
                       ) : (
@@ -878,8 +899,35 @@ export default function OperatorStationView({
                         </button>
                       )}
                     </div>
-                  </div>
-                      {(op.materials?.length ?? 0) > 0 && (
+                    </div>
+                      {op.productionItem && (
+                        <div className="mt-4 w-full border-t border-slate-800 pt-3">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">Independent route for {op.productionItem.name}</span>
+                            <span className="text-[10px] font-bold text-slate-500">Only this material job is controlled by the buttons above</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                            {(op.productionItem.steps ?? []).map((step: any, stepIndex: number) => {
+                              const isCurrent = step.operationId === op.id;
+                              const passed = step.position < op.productionItem.routePosition;
+                              return (
+                                <React.Fragment key={step.operationId}>
+                                  <span className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide ${isCurrent ? "border-amber-400 bg-amber-500/20 text-amber-200" : passed ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-slate-700 bg-slate-900 text-slate-500"}`}>
+                                    {passed ? "✓ " : ""}{step.position}. {step.operationName}
+                                  </span>
+                                  {stepIndex < op.productionItem.steps.length - 1 && <ArrowRight className="h-3 w-3 text-slate-600" />}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                          {(op.materials ?? []).map((material: any) => (
+                            <div key={material.id} className="mt-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs font-bold text-slate-300">
+                              <span className="font-mono text-amber-400">{material.itemSku ?? "—"}</span> · {material.itemName} × {material.quantityUsed}{material.itemUnit ? ` ${material.itemUnit}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {(op.materials?.length ?? 0) > 0 && !op.productionItem && (
                         <div className="mt-4 w-full border-t border-slate-800 pt-3">
                           <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                             <span className="text-xs font-black uppercase tracking-wider text-slate-400">Materials — start & finish each cut list</span>

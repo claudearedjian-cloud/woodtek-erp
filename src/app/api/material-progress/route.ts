@@ -16,25 +16,28 @@ import { db } from "@/db";
 import { orderMaterials, orderOperations } from "@/db/schema";
 import { nextInRoute, routeLadder } from "@/lib/materialRoutes";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
+import { findProductionItemByMaterial } from "@/lib/productionPlan";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 import { getSessionUser } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { baseRoleOf, can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
 import { STAGE_DONE, allowedStages, sanitizeStage, stageLadder } from "@/lib/materialProgress";
 import { readAllProgress, writeAllProgress } from "@/lib/materialProgress.server";
 
 function canSetStage(role: string): boolean {
+  const base = baseRoleOf(role);
   return (
-    can(role, "operations:update-status") ||
-    can(role, "quality:write") ||
-    can(role, "orders:write") ||
-    can(role, "inventory:write")
+    can(base, "operations:update-status") ||
+    can(base, "quality:write") ||
+    can(base, "orders:write") ||
+    can(base, "inventory:write")
   );
 }
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "You are signed out." }, { status: 401 });
-  if (!can(user.role, "orders:read")) {
+  if (!can(baseRoleOf(user.role), "orders:read")) {
     return NextResponse.json({ error: "You cannot view material stages." }, { status: 403 });
   }
   const orderId = Number(new URL(request.url).searchParams.get("orderId"));
@@ -77,16 +80,28 @@ export async function PUT(request: Request) {
     if (!line) {
       return NextResponse.json({ error: "This material line no longer exists." }, { status: 404 });
     }
+    const ops = await db
+      .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+      .from(orderOperations)
+      .where(eq(orderOperations.orderId, line.orderId));
+    const orderSteps = ops.sort((a, b) => a.stepOrder - b.stepOrder).map((operation) => operation.name);
+    const productionItem = findProductionItemByMaterial(readOrderProductionPlan(line.orderId), materialId);
+    if (productionItem) {
+      return NextResponse.json(
+        { error: "This material stage is controlled by its independent station jobs." },
+        { status: 409 },
+      );
+    }
+    const legacyOwnRoute = readAllRoutes()[String(materialId)];
+    const steps = legacyOwnRoute ?? orderSteps;
+    const all = readAllProgress();
+    const current = all[String(materialId)]?.stage ?? "";
+
     let stage: string;
     if (body?.advance === true) {
-      // One-tap "finished here" from the operator station: the server picks
-      // the NEXT ladder position — the client cannot send a wrong stage.
-      const ops = await db
-        .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
-        .from(orderOperations)
-        .where(eq(orderOperations.orderId, line.orderId));
-      const ladder = stageLadder(ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
-      const current = readAllProgress()[String(materialId)]?.stage ?? "";
+      // One tap always follows THIS material's private ladder. This fixes the
+      // legacy endpoint that imported routes but still advanced on the order route.
+      const ladder = legacyOwnRoute ? routeLadder(steps) : stageLadder(steps);
       const idx = ladder.indexOf(sanitizeStage(current));
       if (idx === -1 || idx >= ladder.length - 1) {
         return NextResponse.json({ error: "This material is already at the last stage." }, { status: 409 });
@@ -95,15 +110,8 @@ export async function PUT(request: Request) {
     } else {
       stage = sanitizeStage(body?.stage);
     }
-    const all = readAllProgress();
-    // The rule: a material moves ONE stage at a time along the order's steps —
-    // no jumping to Edge Banding before Cutting, no straight to Done early.
-    const ops = await db
-      .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
-      .from(orderOperations)
-      .where(eq(orderOperations.orderId, line.orderId));
-    const steps = ops.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name);
-    const current = all[String(materialId)]?.stage ?? "";
+
+    // No skipping: validate against the same private route used above.
     const allowed = allowedStages(steps, current);
     if (!allowed.includes(stage)) {
       const label = (s: string) => (s === STAGE_DONE ? "Done" : s === "" ? "Not started" : `"${s}"`);

@@ -700,6 +700,8 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                   totalValue: order.totalValue != null ? String(order.totalValue) : "",
                   dueDate: order.dueDate ? new Date(order.dueDate).toISOString().split("T")[0] : "",
                   notes: order.notes || "",
+                  defaultSteps: order.productionPlan?.defaultSteps ?? [],
+                  productionItems: order.productionPlan?.items ?? [],
                   steps: (order.operations ?? []).map((op: any) => ({
                     operationName: op.operationName,
                     machineId: op.machineId != null ? String(op.machineId) : "",
@@ -793,16 +795,45 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
       {activeTab === "workflow" ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Sequential Manufacturing Operations</h3>
-            <button
-              onClick={() => setShowAddStep(true)}
-              className="bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs px-3.5 py-1.5 rounded-xl border border-slate-700 transition flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" /> Insert Operation Step
-            </button>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">{order.productionPlan ? "Independent Material Job Chains" : "Sequential Manufacturing Operations"}</h3>
+            {!order.productionPlan && (
+              <button
+                onClick={() => setShowAddStep(true)}
+                className="bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs px-3.5 py-1.5 rounded-xl border border-slate-700 transition flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> Insert Operation Step
+              </button>
+            )}
           </div>
 
-          <div className="space-y-4 relative before:absolute before:left-6 before:top-4 before:bottom-4 before:w-0.5 before:bg-slate-800">
+          {order.productionPlan && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {order.productionPlan.items.map((item: any) => {
+                const liveSteps = item.steps.map((step: any) => order.operations?.find((operation: any) => operation.id === step.operationId));
+                const completed = liveSteps.filter((step: any) => step?.status === "Completed").length;
+                return (
+                  <div key={item.materialId} className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-black text-white">{item.name}</div>
+                      <span className="rounded-lg bg-slate-950 px-2 py-1 text-[10px] font-black uppercase text-amber-300">{completed}/{item.steps.length} passes done</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {item.steps.map((step: any, index: number) => (
+                        <React.Fragment key={step.operationId}>
+                          <span className={`rounded-lg border px-2 py-1 text-[10px] font-bold ${liveSteps[index]?.status === "Completed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : liveSteps[index]?.status === "In Progress" ? "border-amber-400 bg-amber-500/20 text-amber-200" : "border-slate-700 bg-slate-950 text-slate-400"}`}>
+                            {index + 1}. {step.operationName}
+                          </span>
+                          {index < item.steps.length - 1 && <span className="text-slate-600">→</span>}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className={`space-y-4 relative ${order.productionPlan ? "" : "before:absolute before:left-6 before:top-4 before:bottom-4 before:w-0.5 before:bg-slate-800"}`}>
             {order.operations?.map((op: any, index: number) => {
               const isCompleted = op.status === "Completed";
               const isRunning = op.status === "In Progress";
@@ -823,7 +854,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                     isReady ? "bg-blue-500 border-blue-400 text-white" :
                     "bg-slate-900 border-slate-700 text-slate-500"
                   }`}>
-                    {isCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : index + 1}
+                    {isCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : (op.productionRoutePosition || index + 1)}
                   </div>
 
                   {/* Operation Card */}
@@ -841,7 +872,10 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                           <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase ${getStatusBadge(op.status)}`}>
                             {op.status}
                           </span>
-                          <span className="text-xs text-slate-500 font-medium">Step #{op.stepOrder}</span>
+                          <span className="text-xs text-slate-500 font-medium">{op.productionItemName ? `Pass ${op.productionRoutePosition}/${op.productionRouteLength}` : `Step #${op.stepOrder}`}</span>
+                          {op.productionItemName && (
+                            <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black uppercase text-amber-300">Material: {op.productionItemName}</span>
+                          )}
                         </div>
                         <h4 className={`text-base font-extrabold tracking-tight ${
                           isRunning ? "text-amber-300 font-black" : isCompleted ? "text-emerald-300" : "text-white"
@@ -964,7 +998,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         >
                           <AlertTriangle className="w-4 h-4" />
                         </button>
-                        {currentUser?.role === "Manager" && (op.status === "Pending" || op.status === "Ready" || op.status === "Rejected/Rework") && (
+                        {currentUser?.role === "Manager" && !order.productionPlan && (op.status === "Pending" || op.status === "Ready" || op.status === "Rejected/Rework") && (
                           <button
                             onClick={() => handleDeleteOperation(op)}
                             className="p-2 bg-slate-950 hover:bg-rose-500/15 text-slate-500 hover:text-rose-400 rounded-xl border border-slate-700 transition"
@@ -1112,7 +1146,11 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                   </div>
                 )}
 
-                {inventoryItems.length === 0 ? (
+                {order.productionPlan ? (
+                  <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-3 text-[11px] font-bold text-sky-200">
+                    These stock rows are linked to independent material jobs and cannot be changed separately. Clone and recreate the order if its production plan must change.
+                  </div>
+                ) : inventoryItems.length === 0 ? (
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-6 text-center text-xs text-slate-400">
                     <Package className="w-8 h-8 mx-auto mb-2 text-slate-600 stroke-[1.5]" />
                     No stock items are registered yet — add materials in the Wood &amp; Edge Stock tab first.
@@ -1212,7 +1250,10 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         ? Number(m.itemStockRemaining)
                         : null;
                       const stage = matProgress[String(m.id)]?.stage ?? "";
-                      const lineSteps = matRoutes[String(m.id)] ?? stageSteps;
+                      const plannedSteps: any[] = Array.isArray(m.productionRoute) ? m.productionRoute : [];
+                      const lineSteps = plannedSteps.length > 0
+                        ? plannedSteps.map((step: any) => step.stageKey)
+                        : (matRoutes[String(m.id)] ?? stageSteps);
                       const stageLadderLine = ["", ...lineSteps, "DONE"];
                       const stagePos = stageLadderLine.indexOf(stage);
                       const stagePct = stagePos <= 0 ? 0 : Math.round((stagePos / (stageLadderLine.length - 1)) * 100);
@@ -1230,9 +1271,10 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-mono text-xs font-bold text-amber-400">{m.itemSku ?? "—"}</span>
-                              <span className="font-bold text-white text-sm truncate">{m.itemName ?? "Unknown item"}</span>
-                              {matRoutes[String(m.id)] && (
-                                <span className="text-[10px] font-bold text-amber-400/90">{`Route: ${matRoutes[String(m.id)].join(" \u2192 ")}`}</span>
+                              <span className="font-bold text-white text-sm truncate">{m.productionItemName || m.itemName || "Unknown item"}</span>
+                              {m.productionItemName && <span className="text-[10px] font-semibold text-slate-500">Stock: {m.itemName}</span>}
+                              {(plannedSteps.length > 0 || matRoutes[String(m.id)]) && (
+                                <span className="text-[10px] font-bold text-amber-400/90">Route: {plannedSteps.length > 0 ? plannedSteps.map((step: any) => step.operationName).join(" → ") : matRoutes[String(m.id)].join(" → ")}</span>
                               )}
                               {m.itemCategory && (
                                 <span className="text-[10px] font-semibold text-slate-500">{m.itemCategory}</span>
@@ -1255,7 +1297,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                               <div className="h-1 flex-1 overflow-hidden rounded-full bg-slate-800">
                                 <div className={`h-full rounded-full ${stage === "DONE" ? "bg-emerald-500" : stage !== "" ? "bg-amber-500/70" : ""}`} style={{ width: `${stagePct}%` }} />
                               </div>
-                              <span className="text-[9px] font-black uppercase tracking-wider text-slate-600">{stage === "DONE" ? "complete" : stagePos <= 0 ? "queued" : `${stagePos}/${stageSteps.length + 1}`}</span>
+                              <span className="text-[9px] font-black uppercase tracking-wider text-slate-600">{stage === "DONE" ? "complete" : stagePos <= 0 ? "queued" : `${stagePos}/${lineSteps.length}`}</span>
                             </div>
                             {remaining !== null && !isReleased && (
                               <p className="mt-1 text-[11px] text-slate-500">
@@ -1279,7 +1321,10 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 @ ${Number(m.costPerUnit).toFixed(2)} · ${lineTotal.toFixed(2)}
                               </div>
                             </div>
-                            {canSetStage && (
+                            {plannedSteps.length > 0 && (
+                              <span className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-2 py-1.5 text-[10px] font-black uppercase text-sky-300">Controlled by station jobs</span>
+                            )}
+                            {canSetStage && plannedSteps.length === 0 && (
                               <select
                                 value={stage}
                                 onChange={(e) => setMatStage(m.id, e.target.value)}
@@ -1291,7 +1336,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 ))}
                               </select>
                             )}
-                            {canManageBom && !isConsumed && !isReleased && (
+                            {canManageBom && !order.productionPlan && !isConsumed && !isReleased && (
                               <button
                                 type="button"
                                 onClick={() => handleReleaseMaterial(m.id, label)}

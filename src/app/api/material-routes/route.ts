@@ -15,15 +15,17 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orderMaterials } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
-import { can } from "@/lib/permissions";
+import { baseRoleOf, can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
 import { sanitizeRouteSteps } from "@/lib/materialRoutes";
 import { readAllRoutes, writeAllRoutes } from "@/lib/materialRoutes.server";
+import { findProductionItemByMaterial, routeStageKeys } from "@/lib/productionPlan";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "You are signed out." }, { status: 401 });
-  if (!can(user.role, "orders:read")) {
+  if (!can(baseRoleOf(user.role), "orders:read")) {
     return NextResponse.json({ error: "You cannot view material routings." }, { status: 403 });
   }
   const orderId = Number(new URL(request.url).searchParams.get("orderId"));
@@ -36,12 +38,20 @@ export async function GET(request: Request) {
       .from(orderMaterials)
       .where(eq(orderMaterials.orderId, orderId));
     const all = readAllRoutes();
+    const productionPlan = readOrderProductionPlan(orderId);
     const routes: Record<string, string[]> = {};
+    const routeDetails: Record<string, any> = {};
     for (const line of lines) {
+      const planned = findProductionItemByMaterial(productionPlan, line.id);
+      if (planned) {
+        routes[String(line.id)] = routeStageKeys(planned);
+        routeDetails[String(line.id)] = planned;
+        continue;
+      }
       const hit = all[String(line.id)];
       if (hit) routes[String(line.id)] = hit;
     }
-    return NextResponse.json({ routes });
+    return NextResponse.json({ routes, routeDetails });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed to load material routings" }, { status: 500 });
   }
@@ -50,7 +60,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "You are signed out." }, { status: 401 });
-  if (!can(user.role, "orders:write")) {
+  if (!can(baseRoleOf(user.role), "orders:write")) {
     return NextResponse.json({ error: "You cannot set material routings." }, { status: 403 });
   }
   try {
@@ -64,6 +74,14 @@ export async function PUT(request: Request) {
       .from(orderMaterials)
       .where(eq(orderMaterials.orderId, orderId));
     const validIds = new Set(lines.map((l) => l.id));
+    const productionPlan = readOrderProductionPlan(orderId);
+    const plannedIds = new Set((productionPlan?.items ?? []).map((item) => item.materialId));
+    if (body.routes.some((entry: any) => plannedIds.has(Number(entry?.orderMaterialsId)))) {
+      return NextResponse.json(
+        { error: "This order uses independent material jobs. Change its production plan instead of the legacy route overlay." },
+        { status: 409 },
+      );
+    }
 
     const all = readAllRoutes();
     let saved = 0;

@@ -24,6 +24,8 @@ interface Line {
   status: "Requested" | "Prepared" | "Delivered";
   machineId: number | null;
   deliveredQty?: number | null;
+  productionItemName?: string | null;
+  productionRecipeName?: string | null;
 }
 
 interface BoardOrder {
@@ -206,12 +208,14 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                   <div key={line.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-bold text-white">
-                        {line.itemName || `Item #${line.id}`}
+                        {line.productionItemName || line.itemName || `Item #${line.id}`}
                         {line.itemSku && <span className="ml-2 font-mono text-[10px] text-slate-500">{line.itemSku}</span>}
                       </div>
                       <div className="text-[10px] text-slate-500">
+                        {line.productionItemName && <span className="font-bold text-slate-300">Stock: {line.itemName} · </span>}
                         {line.itemCategory || "Material"}
                         {line.stockQuantity != null && ` · ${line.stockQuantity} ${line.itemUnit || ""} in stock`}
+                        {line.productionRecipeName && <span className="ml-1 text-amber-400">· Route: {line.productionRecipeName}</span>}
                       </div>
                     </div>
 
@@ -231,7 +235,16 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                       })()}
                     </div>
 
-                    {isManager ? (
+                    {line.productionItemName ? (
+                      <span
+                        className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-2 py-1.5 text-[11px] font-bold text-sky-200"
+                        title="This destination follows the material job's first production pass"
+                      >
+                        {line.machineId != null
+                          ? `→ ${order.machines.find((m) => m.id === line.machineId)?.code || `Machine #${line.machineId}`}`
+                          : "First station: assign later"}
+                      </span>
+                    ) : isManager ? (
                       order.machines.length > 0 && (
                         <select
                           value={line.machineId ?? ""}

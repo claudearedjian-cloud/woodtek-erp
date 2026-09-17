@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { orderOperations, orders, machines } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { previousProductionOperationId } from "@/lib/productionPlan";
+import { readProductionPlanStore } from "@/lib/productionPlan.server";
 
 // ============================================================================
 // POST /api/operations/auto-schedule
@@ -33,6 +35,13 @@ export async function POST() {
     const now = Date.now();
     const machineById = new Map(machineRows.map((m) => [m.id, m]));
     const orderInfo = new Map(orderRows.map((o) => [o.id, o]));
+    const planStore = readProductionPlanStore();
+    const operationBindings = new Map<number, { plan: any; item: any; step: any }>();
+    for (const plan of Object.values(planStore.orders)) {
+      for (const item of plan.items) {
+        for (const step of item.steps) operationBindings.set(step.operationId, { plan, item, step });
+      }
+    }
 
     // Busy windows per machine (every existing booking).
     const busy = new Map<number, Array<[number, number]>>();
@@ -44,15 +53,20 @@ export async function POST() {
       }
     }
 
-    // Order timeline: nothing may start before the order's latest finished/booked step.
+    // Legacy orders use one order timeline. V2 jobs use only the predecessor
+    // in their own material chain, allowing different materials in parallel.
     const orderEnd = new Map<number, number>();
+    const operationEnd = new Map<number, number>();
     for (const op of allOps) {
       const t = op.scheduledEnd
         ? new Date(op.scheduledEnd).getTime()
         : op.endTime
           ? new Date(op.endTime).getTime()
           : 0;
-      if (t > 0) orderEnd.set(op.orderId, Math.max(orderEnd.get(op.orderId) ?? 0, t));
+      if (t > 0) {
+        operationEnd.set(op.id, t);
+        if (!operationBindings.has(op.id)) orderEnd.set(op.orderId, Math.max(orderEnd.get(op.orderId) ?? 0, t));
+      }
     }
 
     const pending = allOps.filter((op) => PLAN_STATUSES.has(op.status) && !op.scheduledStart);
@@ -91,9 +105,29 @@ export async function POST() {
 
     for (const op of pending) {
       const durationMs = Math.max(1, op.estimatedMinutes || 60) * 60 * 1000;
-      const earliest = Math.max(orderEnd.get(op.orderId) ?? 0, now);
+      const binding = operationBindings.get(op.id);
+      const predecessorId = binding ? previousProductionOperationId(binding.plan, op.id) : null;
+      if (predecessorId && !operationEnd.has(predecessorId)) {
+        skipped.push(`${op.operationName} (${binding?.item.name || "material"}: previous pass is not scheduled)`);
+        continue;
+      }
+      const earliest = Math.max(
+        binding ? (predecessorId ? operationEnd.get(predecessorId)! : now) : (orderEnd.get(op.orderId) ?? 0),
+        now,
+      );
 
-      const candidates = (op.machineId ? [op.machineId] : machineRows.map((m) => m.id)).filter((id) => {
+      let candidateIds: number[];
+      if (op.machineId) {
+        candidateIds = [op.machineId];
+      } else if (binding) {
+        const category = String(binding.step.machineCategory || "").toLowerCase();
+        let matches = machineRows.filter((machine) => machine.category.toLowerCase() === category);
+        if (matches.length === 0) matches = machineRows.filter((machine) => machine.category.toLowerCase().includes(category));
+        candidateIds = matches.map((machine) => machine.id);
+      } else {
+        candidateIds = machineRows.map((machine) => machine.id);
+      }
+      const candidates = candidateIds.filter((id) => {
         const m = machineById.get(id);
         return m && m.status !== "Maintenance" && m.status !== "Offline";
       });
@@ -119,7 +153,8 @@ export async function POST() {
         .where(eq(orderOperations.id, op.id));
 
       busy.set(bestId, [...(busy.get(bestId) ?? []), [bestStart, endMs]]);
-      orderEnd.set(op.orderId, Math.max(orderEnd.get(op.orderId) ?? 0, endMs));
+      operationEnd.set(op.id, endMs);
+      if (!binding) orderEnd.set(op.orderId, Math.max(orderEnd.get(op.orderId) ?? 0, endMs));
       planned += 1;
     }
 

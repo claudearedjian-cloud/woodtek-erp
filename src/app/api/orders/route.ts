@@ -9,6 +9,15 @@ import { logAudit } from "@/lib/audit.server";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { nextOrderNumber } from "@/lib/orderNumbers.server";
 import { getSessionUser } from "@/lib/auth";
+import {
+  productionStageKey,
+  sanitizeProductionItems,
+  sanitizeProductionRoute,
+  type PlannedProductionItem,
+  type ProductionRouteStep,
+} from "@/lib/productionPlan";
+import { saveOrderProductionPlan } from "@/lib/productionPlan.server";
+import { applyMaterialsStatus } from "@/lib/materials";
 
 export async function GET(request: Request) {
   // The auth gate requires a signed-in user with orders:read.
@@ -94,7 +103,9 @@ async function pickFreestMachine(allMachines: typeof machines.$inferSelect[], ca
   if (candidates.length === 0 && cat) {
     candidates = allMachines.filter((m) => String(m.category || "").toLowerCase().includes(cat));
   }
-  if (candidates.length === 0) candidates = allMachines;
+  // A named category must never fall through to an unrelated machine. An
+  // unmatched pass stays unassigned for explicit supervisor correction.
+  if (candidates.length === 0 && !cat) candidates = allMachines;
 
   const healthy = candidates.filter((m) => m.status !== "Maintenance" && m.status !== "Offline");
   if (healthy.length > 0) candidates = healthy;
@@ -122,6 +133,65 @@ async function pickFreestMachine(allMachines: typeof machines.$inferSelect[], ca
     /* load info is best-effort; fall back to id order */
   }
   return chooseFreestMachine(candidates, load);
+}
+
+type PlannedAssignmentStep = ProductionRouteStep & { assignedMachineId: number | null };
+
+/**
+ * Resolve every v2 material-job pass before opening the creation transaction.
+ * Unlike the legacy fallback, a missing category NEVER receives an unrelated
+ * machine. It stays unassigned and is made visible to the supervisor.
+ */
+async function prepareProductionAssignments(
+  allMachines: typeof machines.$inferSelect[],
+  items: ReturnType<typeof sanitizeProductionItems>,
+): Promise<Array<Omit<(typeof items)[number], "steps"> & { steps: PlannedAssignmentStep[] }>> {
+  const load: Record<number, number> = {};
+  try {
+    const rows = await db
+      .select({ machineId: orderOperations.machineId, n: sql<number>`count(*)::int` })
+      .from(orderOperations)
+      .where(and(isNotNull(orderOperations.machineId), inArray(orderOperations.status, ["Pending", "Ready", "In Progress"])))
+      .groupBy(orderOperations.machineId);
+    for (const row of rows) {
+      if (row.machineId != null) load[row.machineId] = Number(row.n) || 0;
+    }
+    const down = await db
+      .select({ machineId: downtimeEvents.machineId })
+      .from(downtimeEvents)
+      .where(isNull(downtimeEvents.endedAt));
+    for (const row of down) load[row.machineId] = (load[row.machineId] ?? 0) + 1_000_000;
+  } catch {
+    /* assignment still works with an empty load map */
+  }
+
+  return items.map((item) => ({
+    ...item,
+    steps: item.steps.map((step) => {
+      if (!step.auto) {
+        if (!step.machineId) return { ...step, assignedMachineId: null };
+        const exact = allMachines.find((machine) => machine.id === step.machineId);
+        if (!exact) throw new Error(`The exact machine selected for “${step.operationName}” no longer exists.`);
+        load[exact.id] = (load[exact.id] ?? 0) + 1;
+        return { ...step, machineCategory: exact.category, assignedMachineId: exact.id };
+      }
+
+      const category = step.machineCategory.toLowerCase();
+      let candidates = allMachines.filter((machine) => machine.category.toLowerCase() === category);
+      if (candidates.length === 0) {
+        candidates = allMachines.filter((machine) => machine.category.toLowerCase().includes(category));
+      }
+      const normalizedCategory = candidates[0]?.category ?? step.machineCategory;
+      candidates = candidates.filter((machine) => machine.status !== "Maintenance" && machine.status !== "Offline");
+      const selected = chooseFreestMachine(candidates, load);
+      if (selected) load[selected.id] = (load[selected.id] ?? 0) + 1;
+      return {
+        ...step,
+        machineCategory: selected?.category ?? normalizedCategory,
+        assignedMachineId: selected?.id ?? null,
+      };
+    }),
+  }));
 }
 
 export async function POST(request: Request) {
@@ -175,6 +245,146 @@ export async function POST(request: Request) {
       user.role === "Sales Coordinator"
         ? user.id
         : (body.assignedSalesId ? Number(body.assignedSalesId) : null);
+
+    // V2 production builder: each named material row owns an independent,
+    // fully snapshotted operation chain. This is one server submission — no
+    // follow-up route request that can fail silently.
+    if (Array.isArray(body.productionItems) && body.productionItems.length > 0) {
+      const cleanItems = sanitizeProductionItems(body.productionItems);
+      const hasPartialRoute = body.productionItems.some((item: any) =>
+        !Array.isArray(item?.steps) || sanitizeProductionRoute(item.steps).length !== item.steps.length
+      );
+      if (cleanItems.length !== body.productionItems.length || hasPartialRoute) {
+        return NextResponse.json(
+          { error: "Every material job needs a batch name, stock item, quantity, and complete route." },
+          { status: 400 },
+        );
+      }
+
+      const requestedItemIds = Array.from(new Set(cleanItems.map((item) => item.itemId)));
+      const stockRows = await db
+        .select({ id: inventoryItems.id, unitCost: inventoryItems.unitCost })
+        .from(inventoryItems)
+        .where(inArray(inventoryItems.id, requestedItemIds));
+      if (stockRows.length !== requestedItemIds.length) {
+        return NextResponse.json({ error: "One or more selected inventory items no longer exist." }, { status: 400 });
+      }
+      const costOf = new Map(stockRows.map((item) => [item.id, item.unitCost]));
+      const allMachines = await db.select().from(machines);
+      const missingExact = cleanItems
+        .flatMap((item) => item.steps)
+        .find((step) => !step.auto && step.machineId && !allMachines.some((machine) => machine.id === step.machineId));
+      if (missingExact) {
+        return NextResponse.json(
+          { error: `The exact machine selected for “${missingExact.operationName}” no longer exists.` },
+          { status: 409 },
+        );
+      }
+      const preparedItems = await prepareProductionAssignments(allMachines, cleanItems);
+      const cleanDefaultSteps = sanitizeProductionRoute(body.defaultSteps);
+      const materialTargets: Array<{ materialId: number; machineId: number | null }> = [];
+
+      const created = await db.transaction(async (tx) => {
+        const [newOrder] = await tx.insert(orders).values({
+          orderNumber: finalOrderNum,
+          customerId: Number(customerId),
+          title,
+          projectType: projectType || "Custom Furniture",
+          priority,
+          status: "Pending",
+          totalValue: String(totalValue),
+          dueDate: new Date(dueDate),
+          progressPercent: 0,
+          notes: notes || null,
+          createdById,
+          assignedSalesId,
+        }).returning();
+
+        const plannedItems: PlannedProductionItem[] = [];
+        const createdMaterials: { id: number }[] = [];
+        let globalStepOrder = 1;
+        for (const item of preparedItems) {
+          const [material] = await tx
+            .insert(orderMaterials)
+            .values({
+              orderId: newOrder.id,
+              itemId: item.itemId,
+              quantityUsed: item.quantityUsed,
+              costPerUnit: costOf.get(item.itemId) ?? "0.00",
+            })
+            .returning({ id: orderMaterials.id });
+          createdMaterials.push(material);
+
+          const plannedSteps: PlannedProductionItem["steps"] = [];
+          for (let index = 0; index < item.steps.length; index++) {
+            const step = item.steps[index];
+            const [operation] = await tx
+              .insert(orderOperations)
+              .values({
+                orderId: newOrder.id,
+                machineId: step.assignedMachineId,
+                stepOrder: globalStepOrder++,
+                operationName: step.operationName,
+                estimatedMinutes: step.estimatedMinutes,
+                status: index === 0 ? "Ready" : "Pending",
+              })
+              .returning({ id: orderOperations.id });
+            plannedSteps.push({
+              operationId: operation.id,
+              position: index + 1,
+              stageKey: productionStageKey(index + 1, step.operationName),
+              operationName: step.operationName,
+              machineCategory: step.machineCategory,
+              estimatedMinutes: step.estimatedMinutes,
+              auto: step.auto,
+              machineId: step.assignedMachineId,
+            });
+          }
+
+          materialTargets.push({ materialId: material.id, machineId: item.steps[0]?.assignedMachineId ?? null });
+          plannedItems.push({
+            materialId: material.id,
+            itemId: item.itemId,
+            name: item.name,
+            quantityUsed: item.quantityUsed,
+            routeSource: item.routeSource,
+            recipeId: item.recipeId,
+            recipeName: item.recipeName,
+            steps: plannedSteps,
+          });
+        }
+
+        // Write before the DB transaction commits. A file-write failure rolls
+        // the relational inserts back instead of returning a route-less order.
+        const productionPlan = {
+          orderId: newOrder.id,
+          createdAt: new Date().toISOString(),
+          defaultSteps: cleanDefaultSteps,
+          items: plannedItems,
+        };
+        saveOrderProductionPlan(productionPlan);
+        return { newOrder, createdMaterials, productionPlan };
+      });
+
+      for (const target of materialTargets) {
+        try {
+          setBomStatus(target.materialId, "Requested", target.machineId);
+        } catch (error) {
+          console.warn("Initial warehouse target could not be written:", error);
+        }
+      }
+      let materialsStatus = created.newOrder.materialsStatus;
+      try {
+        materialsStatus = await applyMaterialsStatus(created.newOrder.id);
+      } catch (error) {
+        console.warn("Initial material availability status could not be computed:", error);
+      }
+      logAudit(user, "order.create", "order", `${created.newOrder.orderNumber} created for ${title} · ${created.productionPlan.items.length} material job(s)`, created.newOrder.id);
+      return NextResponse.json(
+        { ...created.newOrder, materialsStatus, createdMaterials: created.createdMaterials, productionPlan: created.productionPlan },
+        { status: 201 },
+      );
+    }
 
     const [newOrder] = await db.insert(orders).values({
       orderNumber: finalOrderNum,

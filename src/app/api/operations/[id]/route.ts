@@ -11,8 +11,11 @@ import { stageLadder } from "@/lib/materialProgress";
 import { routeLadder } from "@/lib/materialRoutes";
 import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
-import { autoCompleteMaterialsForStep } from "@/lib/materialProgress.server";
+import { autoCompleteMaterialsForStep, markPlannedMaterialAtOperation } from "@/lib/materialProgress.server";
 import { jobLockedByOther } from "@/lib/jobLock";
+import { nextProductionOperationId, previousProductionOperationId } from "@/lib/productionPlan";
+import { readOrderProductionPlan, productionStepForOperation, updateProductionStepMachine } from "@/lib/productionPlan.server";
+import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -68,6 +71,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const result = await db.transaction(async (tx) => {
       const [currentOp] = await tx.select().from(orderOperations).where(eq(orderOperations.id, operationId));
       if (!currentOp) throw new WorkflowError("Operation step not found.", 404);
+      const productionPlan = readOrderProductionPlan(currentOp.orderId);
+      const plannedBinding = productionStepForOperation(currentOp.orderId, currentOp.id);
 
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
@@ -81,6 +86,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         const [starter] = await tx.select({ name: users.name }).from(users).where(eq(users.id, currentOp.operatorId as number));
         throw new WorkflowError(`This job is being run by ${starter?.name ?? "another operator"} — view only for you.`, 403);
       }
+      if (
+        body.machineId !== undefined &&
+        (currentOp.status === "In Progress" || currentOp.status === "Completed") &&
+        (body.machineId ? Number(body.machineId) : null) !== currentOp.machineId
+      ) {
+        throw new WorkflowError("The machine can no longer be changed once work has started.", 409);
+      }
 
       // Floor Supervisor machine choice: same-category equivalent machines,
       // only before work starts, only after reception approval.
@@ -91,9 +103,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
         if (currentOp.status === "In Progress" || currentOp.status === "Completed") {
           throw new WorkflowError("The machine can no longer be changed once work has started.", 409);
-        }
-        if (!currentOp.machineId) {
-          throw new WorkflowError("This step has no machine yet — a Manager must assign the first one.", 409);
         }
         const [targetMachine] = await tx.select().from(machines).where(eq(machines.id, chosenMachineId));
         if (!targetMachine) throw new WorkflowError("The selected machine no longer exists.", 404);
@@ -107,6 +116,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           if (currentMachine && targetMachine.category !== currentMachine.category) {
             throw new WorkflowError(`Only ${currentMachine.category} machines can run this step.`, 409);
           }
+        } else if (plannedBinding && targetMachine.category.toLowerCase() !== plannedBinding.step.machineCategory.toLowerCase()) {
+          throw new WorkflowError(`Only ${plannedBinding.step.machineCategory} machines can run this material pass.`, 409);
         }
         const assignBom = await tx
           .select({ id: orderMaterials.id })
@@ -117,6 +128,23 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
 
+      // Managers retain full assignment access, but a planned pass can never be
+      // sent to a machine from the wrong category (that would break its route).
+      if (body.machineId !== undefined && user.role === "Manager" && plannedBinding && body.machineId) {
+        const chosenMachineId = Number(body.machineId);
+        if (!Number.isInteger(chosenMachineId) || chosenMachineId <= 0) {
+          throw new WorkflowError("A valid machine id is required.", 400);
+        }
+        const [targetMachine] = await tx.select().from(machines).where(eq(machines.id, chosenMachineId));
+        if (!targetMachine) throw new WorkflowError("The selected machine no longer exists.", 404);
+        if (targetMachine.category.toLowerCase() !== plannedBinding.step.machineCategory.toLowerCase()) {
+          throw new WorkflowError(`Only ${plannedBinding.step.machineCategory} machines can run this material pass.`, 409);
+        }
+        if (targetMachine.status === "Maintenance" || targetMachine.status === "Offline") {
+          throw new WorkflowError(`${targetMachine.code} is ${targetMachine.status.toLowerCase()} and cannot accept work.`, 409);
+        }
+      }
+
       const targetMachineId = body.machineId !== undefined
         ? (body.machineId ? Number(body.machineId) : null)
         : currentOp.machineId;
@@ -124,9 +152,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Starting work is intentionally strict: predecessors, station availability,
       // and station capacity are validated atomically inside one transaction.
       if (requestedStatus === "In Progress") {
-        if (currentOp.status === "Pending") {
-          throw new WorkflowError("This step is locked until every previous operation is completed.", 409);
-        }
         if (currentOp.status === "Completed" && body.allowRework !== true) {
           throw new WorkflowError("Completed work requires an explicit rework action before restarting.", 409);
         }
@@ -134,47 +159,60 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           throw new WorkflowError("Assign a machine station before starting this operation.", 409);
         }
 
-        const incompletePredecessors = await tx
-          .select({ id: orderOperations.id })
-          .from(orderOperations)
-          .where(and(
-            eq(orderOperations.orderId, currentOp.orderId),
-            lt(orderOperations.stepOrder, currentOp.stepOrder),
-            ne(orderOperations.status, "Completed")
-          ));
-        if (incompletePredecessors.length > 0) {
-          // Per-material flow: when the order tracks materials, a step may
-          // start once at least ONE material has reached (or passed) this
-          // step — that material\u2019s own stage proves its predecessor work
-          // is done. Orders without materials keep the strict sequence.
-          const materialLines = await tx
-            .select({ id: orderMaterials.id })
-            .from(orderMaterials)
-            .where(eq(orderMaterials.orderId, currentOp.orderId));
-          let materialReady = false;
-          if (materialLines.length > 0) {
-            const opsAll = await tx
-              .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+        if (plannedBinding) {
+          // V2: sequencing belongs to THIS material chain only. Operations for
+          // other materials in the same order are independent and never block it.
+          const predecessorId = previousProductionOperationId(productionPlan, currentOp.id);
+          if (predecessorId) {
+            const [predecessor] = await tx
+              .select({ status: orderOperations.status })
               .from(orderOperations)
-              .where(eq(orderOperations.orderId, currentOp.orderId));
-            const orderLadder = stageLadder(opsAll.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
-            const [thisMachine] = currentOp.machineId
-              ? await tx.select({ category: machines.category }).from(machines).where(eq(machines.id, currentOp.machineId))
-              : [{ category: null as string | null }];
-            const progress = readAllProgress();
-            const routes = readAllRoutes();
-            materialReady = materialLines.some((line) => {
-              const stage = (progress[String(line.id)]?.stage ?? "").trim();
-              if (!stage) return false;
-              const own = routes[String(line.id)];
-              const lad = own ? routeLadder(own) : orderLadder;
-              const pos = lad.indexOf(stage);
-              const targetPos = own ? lad.indexOf(thisMachine?.category ?? "") : lad.indexOf(currentOp.operationName);
-              return pos !== -1 && targetPos !== -1 && pos >= targetPos;
-            });
+              .where(eq(orderOperations.id, predecessorId));
+            if (!predecessor || predecessor.status !== "Completed") {
+              throw new WorkflowError(`Finish the previous job for “${plannedBinding.item.name}” before starting this pass.`, 409);
+            }
           }
-          if (!materialReady) {
-            throw new WorkflowError("A previous operation is incomplete. Finish the sequence before starting this station.", 409);
+        } else {
+          const incompletePredecessors = await tx
+            .select({ id: orderOperations.id })
+            .from(orderOperations)
+            .where(and(
+              eq(orderOperations.orderId, currentOp.orderId),
+              lt(orderOperations.stepOrder, currentOp.stepOrder),
+              ne(orderOperations.status, "Completed")
+            ));
+          if (incompletePredecessors.length > 0) {
+            // Legacy per-material overlay: retain the earlier material-ready
+            // exception for orders that pre-date the v2 production plan.
+            const materialLines = await tx
+              .select({ id: orderMaterials.id })
+              .from(orderMaterials)
+              .where(eq(orderMaterials.orderId, currentOp.orderId));
+            let materialReady = false;
+            if (materialLines.length > 0) {
+              const opsAll = await tx
+                .select({ name: orderOperations.operationName, stepOrder: orderOperations.stepOrder })
+                .from(orderOperations)
+                .where(eq(orderOperations.orderId, currentOp.orderId));
+              const orderLadder = stageLadder(opsAll.sort((a, b) => a.stepOrder - b.stepOrder).map((o) => o.name));
+              const [thisMachine] = currentOp.machineId
+                ? await tx.select({ category: machines.category }).from(machines).where(eq(machines.id, currentOp.machineId))
+                : [{ category: null as string | null }];
+              const progress = readAllProgress();
+              const routes = readAllRoutes();
+              materialReady = materialLines.some((line) => {
+                const stage = (progress[String(line.id)]?.stage ?? "").trim();
+                if (!stage) return false;
+                const own = routes[String(line.id)];
+                const ladder = own ? routeLadder(own) : orderLadder;
+                const position = ladder.indexOf(stage);
+                const targetPosition = own ? ladder.indexOf(thisMachine?.category ?? "") : ladder.indexOf(currentOp.operationName);
+                return position !== -1 && targetPosition !== -1 && position >= targetPosition;
+              });
+            }
+            if (!materialReady) {
+              throw new WorkflowError("A previous operation is incomplete. Finish the sequence before starting this station.", 409);
+            }
           }
         }
 
@@ -190,6 +228,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
         const [station] = await tx.select().from(machines).where(eq(machines.id, targetMachineId));
         if (!station) throw new WorkflowError("The assigned machine no longer exists.", 409);
+        if (plannedBinding && station.category.toLowerCase() !== plannedBinding.step.machineCategory.toLowerCase()) {
+          throw new WorkflowError(`This pass requires a ${plannedBinding.step.machineCategory} machine.`, 409);
+        }
         if (station.status === "Maintenance" || station.status === "Offline") {
           throw new WorkflowError(`${station.code} is ${station.status.toLowerCase()} and cannot accept work.`, 409);
         }
@@ -271,6 +312,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (requestedStatus === "In Progress") {
         updateData.startTime = currentOp.status === "Completed" ? new Date() : (currentOp.startTime || new Date());
         updateData.endTime = null;
+        if (currentOp.status === "Completed") {
+          updateData.actualMinutes = 0;
+          updateData.scheduledStart = null;
+          updateData.scheduledEnd = null;
+        }
       }
       if (requestedStatus === "Completed") updateData.endTime = new Date();
 
@@ -279,6 +325,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .set(updateData)
         .where(eq(orderOperations.id, operationId))
         .returning();
+
+      if (plannedBinding && body.machineId !== undefined) {
+        updateProductionStepMachine(updatedOp.orderId, updatedOp.id, targetMachineId);
+      }
 
       // --- Scrap & rework tracking -------------------------------------
       // A rejection is recorded as a quality event in the same transaction so
@@ -327,14 +377,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
 
-      const allOps = await tx
+      let allOps = await tx
         .select()
         .from(orderOperations)
         .where(eq(orderOperations.orderId, updatedOp.orderId))
         .orderBy(asc(orderOperations.stepOrder));
 
       if (updatedOp.status === "Completed") {
-        const nextStep = allOps.find(o => o.stepOrder > updatedOp.stepOrder && o.status === "Pending");
+        const plannedNextId = nextProductionOperationId(productionPlan, updatedOp.id);
+        const nextStep = plannedBinding
+          ? allOps.find((operation) => operation.id === plannedNextId && operation.status === "Pending")
+          : allOps.find((operation) => operation.stepOrder > updatedOp.stepOrder && operation.status === "Pending");
         if (nextStep) {
           await tx.update(orderOperations)
             .set({ status: "Ready", updatedAt: new Date() })
@@ -342,16 +395,41 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
 
-      // Rework invalidates downstream readiness so parts cannot skip the reopened step.
+      // Rework invalidates only this material's downstream chain in a v2 plan.
       if (updatedOp.status === "In Progress" && currentOp.status === "Completed") {
-        for (const downstream of allOps.filter(o => o.stepOrder > updatedOp.stepOrder && o.status !== "Completed")) {
+        const plannedDownstreamIds = plannedBinding
+          ? new Set(plannedBinding.item.steps.slice(plannedBinding.index + 1).map((step) => step.operationId))
+          : null;
+        for (const downstream of allOps.filter((operation) =>
+          plannedDownstreamIds
+            ? plannedDownstreamIds.has(operation.id)
+            : operation.stepOrder > updatedOp.stepOrder && operation.status !== "Completed"
+        )) {
           await tx.update(orderOperations)
-            .set({ status: "Pending", updatedAt: new Date() })
+            .set(plannedDownstreamIds
+              ? {
+                  status: "Pending",
+                  startTime: null,
+                  endTime: null,
+                  scheduledStart: null,
+                  scheduledEnd: null,
+                  actualMinutes: 0,
+                  operatorId: null,
+                  updatedAt: new Date(),
+                }
+              : { status: "Pending", updatedAt: new Date() })
             .where(eq(orderOperations.id, downstream.id));
         }
       }
 
-      const completedCount = allOps.filter(o => o.id === updatedOp.id ? updatedOp.status === "Completed" : o.status === "Completed").length;
+      // Re-read after readiness/rework changes so order progress reflects the
+      // committed private-chain states rather than the pre-update snapshot.
+      allOps = await tx
+        .select()
+        .from(orderOperations)
+        .where(eq(orderOperations.orderId, updatedOp.orderId))
+        .orderBy(asc(orderOperations.stepOrder));
+      const completedCount = allOps.filter((operation) => operation.status === "Completed").length;
       const progressPercent = allOps.length > 0 ? Math.round((completedCount / allOps.length) * 100) : 0;
       const [currentOrder] = await tx.select().from(orders).where(eq(orders.id, updatedOp.orderId));
 
@@ -368,12 +446,40 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return { operation: updatedOp, progressPercent, orderStatus };
     });
 
+    // Keep the warehouse destination aligned with the first private pass. This
+    // overlay is display/fulfilment context, so a write failure must not undo a
+    // valid operation update.
+    if (body.machineId !== undefined) {
+      const binding = productionStepForOperation(result.operation.orderId, result.operation.id);
+      if (binding?.index === 0) {
+        try {
+          const existing = readBomStatus().entries[String(binding.item.materialId)];
+          setBomStatus(
+            binding.item.materialId,
+            existing?.status ?? "Requested",
+            result.operation.machineId,
+            existing?.deliveredQty ?? null,
+          );
+        } catch (error) {
+          console.warn("Warehouse target sync skipped:", error instanceof Error ? error.message : error);
+        }
+      }
+    }
+
     // Comprehensive flow: completing a machine step carries every material
     // still sitting on it one stage further (a forgotten "Finished here"
     // tap can never strand a cut list). Starting a step moves nothing —
     // materials advance when the operator taps, or when the step completes.
+    if (result.operation.status === "In Progress") {
+      markPlannedMaterialAtOperation(result.operation.orderId, result.operation.id, user.name || user.role);
+    }
     if (result.operation.status === "Completed") {
-      await autoCompleteMaterialsForStep(result.operation.orderId, result.operation.machineId, result.operation.operationName);
+      await autoCompleteMaterialsForStep(
+        result.operation.orderId,
+        result.operation.machineId,
+        result.operation.operationName,
+        result.operation.id,
+      );
     }
     logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
     return NextResponse.json(result);
@@ -397,6 +503,12 @@ export async function POST(request: Request) {
     const { orderId, machineId, operationName, estimatedMinutes = 60, operatorId } = body;
     if (!orderId || !String(operationName || "").trim()) {
       return NextResponse.json({ error: "Order ID and operation name are required." }, { status: 400 });
+    }
+    if (readOrderProductionPlan(Number(orderId))) {
+      return NextResponse.json(
+        { error: "Add or change passes through the material production plan, not as a loose order step." },
+        { status: 409 },
+      );
     }
 
     const existingOps = await db.select().from(orderOperations)
@@ -433,6 +545,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const result = await db.transaction(async (tx) => {
       const [operation] = await tx.select().from(orderOperations).where(eq(orderOperations.id, operationId));
       if (!operation) throw new WorkflowError("Operation step not found.", 404);
+      if (productionStepForOperation(operation.orderId, operation.id)) {
+        throw new WorkflowError("This pass belongs to an independent material route and cannot be deleted by itself.", 409);
+      }
       if (operation.status === "In Progress" || operation.status === "Completed") {
         throw new WorkflowError("Running or completed operations cannot be deleted. Re-plan the order instead.", 409);
       }

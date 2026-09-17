@@ -13,6 +13,8 @@ import { orderMaterials, orderOperations, machines } from "@/db/schema";
 import { sanitizeProgressMap, sanitizeStage, stageLadder } from "@/lib/materialProgress";
 import { nextInRoute } from "@/lib/materialRoutes";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
+import { findProductionStepByOperation } from "@/lib/productionPlan";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -36,15 +38,56 @@ export function writeAllProgress(progress: Record<string, { stage: string; at: s
 
 
 
-/**
- * Called when a machine step is marked Completed: every material still
- * sitting ON that step is carried one stage further — along ITS OWN route
- * when it has one (stage = machine category), else along the order's
- * operation ladder. A forgotten "Finished here" tap can never strand a cut
- * list. NEVER throws.
- */
-export async function autoCompleteMaterialsForStep(orderId: number, machineId: number | null, opName: string): Promise<void> {
+/** Keep a v2 material batch's visible stage synchronized with its operation. */
+export function markPlannedMaterialAtOperation(
+  orderId: number,
+  operationId: number,
+  by: string,
+): void {
   try {
+    const plan = readOrderProductionPlan(orderId);
+    const hit = findProductionStepByOperation(plan, operationId);
+    if (!hit) return;
+    const progress = readAllProgress();
+    progress[String(hit.item.materialId)] = {
+      stage: hit.step.stageKey,
+      at: new Date().toISOString(),
+      by,
+    };
+    writeAllProgress(progress);
+  } catch (error) {
+    console.warn("planned material start tracking skipped:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Called when a machine step is marked Completed. V2 jobs advance exactly one
+ * linked material batch by operation id, so repeated machine visits remain
+ * distinct. Legacy orders retain their former category/name behavior.
+ */
+export async function autoCompleteMaterialsForStep(
+  orderId: number,
+  machineId: number | null,
+  opName: string,
+  operationId?: number,
+): Promise<void> {
+  try {
+    if (operationId) {
+      const plan = readOrderProductionPlan(orderId);
+      const hit = findProductionStepByOperation(plan, operationId);
+      if (hit) {
+        const next = hit.item.steps[hit.index + 1];
+        const progress = readAllProgress();
+        progress[String(hit.item.materialId)] = {
+          stage: next?.stageKey ?? "DONE",
+          at: new Date().toISOString(),
+          by: "auto (job completed)",
+        };
+        writeAllProgress(progress);
+        return;
+      }
+    }
+
     let category: string | null = null;
     if (machineId) {
       const [m] = await db
