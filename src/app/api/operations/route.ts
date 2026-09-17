@@ -4,7 +4,9 @@ import { orderOperations, orderMaterials, inventoryItems } from "@/db/schema";
 import { eq, asc, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { readBomBoardState } from "@/lib/bomStatus.server";
-import { listOperationsForUser } from "@/lib/dataAccess";
+import { listMachinesForUser, listOperationsForUser } from "@/lib/dataAccess";
+import { baseRoleOf } from "@/lib/permissions";
+import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { routeStageKeys } from "@/lib/productionPlan";
@@ -22,6 +24,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "A valid machineId is required." }, { status: 400 });
     }
     const machineId = machineParam === null ? undefined : requestedMachineId;
+    if (machineId && baseRoleOf(user.role) === "Machine Operator") {
+      const assignedStations = await listMachinesForUser(user);
+      if (!assignedStations.some((machine) => machine.id === machineId)) {
+        return NextResponse.json({ error: "You are not assigned to this machine station." }, { status: 403 });
+      }
+    }
     const status = url.searchParams.get("status");
     const activeOnly = url.searchParams.get("activeOnly") === "true";
     const stationMode = url.searchParams.get("station") === "true" || Boolean(machineId && activeOnly);
@@ -36,6 +44,14 @@ export async function GET(request: Request) {
     if (status && status !== "All") {
       filtered = filtered.filter((operation) => operation.status.toLowerCase() === status.toLowerCase());
     }
+    const operationsWithCandidates = filtered.map((operation) => ({
+      ...operation,
+      candidateMachineIds: operationMachineCandidates(
+        operation.id,
+        operation.machineId,
+        operation.status,
+      ),
+    }));
 
     const orderIds = Array.from(new Set(filtered.map((operation) => operation.orderId)));
     if (orderIds.length === 0) return NextResponse.json([]);
@@ -53,7 +69,7 @@ export async function GET(request: Request) {
     // overlays are loaded exclusively for Station Mode, cutting several DB and
     // filesystem reads from every generic operations refresh.
     if (!stationMode) {
-      return NextResponse.json(filtered.map((operation) => {
+      return NextResponse.json(operationsWithCandidates.map((operation) => {
         const binding = operationBindings.get(operation.id);
         return binding ? {
           ...operation,
@@ -132,7 +148,7 @@ export async function GET(request: Request) {
       materialsByOrder.set(material.orderId, list);
     }
 
-    return NextResponse.json(filtered.map((operation) => {
+    return NextResponse.json(operationsWithCandidates.map((operation) => {
       const binding = operationBindings.get(operation.id);
       const orderBom = materialsByOrder.get(operation.orderId) ?? [];
       const reception = receivedEntries[String(operation.orderId)];

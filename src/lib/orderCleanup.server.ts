@@ -14,6 +14,10 @@ import { clearAllBomOrderState, clearBomOrderState } from "@/lib/bomStatus.serve
 import { clearAllMaterialProgress, clearMaterialProgress } from "@/lib/materialProgress.server";
 import { clearAllMaterialRoutes, clearMaterialRoutes } from "@/lib/materialRoutes.server";
 import { clearAllProductionPlans, deleteOrderProductionPlan } from "@/lib/productionPlan.server";
+import {
+  clearAllOperationMachineCandidates,
+  clearOperationMachineCandidates,
+} from "@/lib/operationMachineCandidates.server";
 import { sanitizeArchivedIds } from "@/lib/orderArchive";
 
 function dataDir(): string {
@@ -51,6 +55,23 @@ function removeRecordKey(name: string, field: string, id: number): void {
   writeJson(name, { ...parsed, version: 1, [field]: next });
 }
 
+function removeRecordKeys(name: string, field: string, ids: readonly number[]): void {
+  const parsed = readJson(name);
+  if (!parsed) return;
+  const current = parsed[field];
+  if (!current || typeof current !== "object" || Array.isArray(current)) return;
+  const keys = new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0).map(String));
+  if (keys.size === 0) return;
+  const next = { ...current };
+  let changed = false;
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(next, key)) continue;
+    delete next[key];
+    changed = true;
+  }
+  if (changed) writeJson(name, { ...parsed, version: 2, [field]: next });
+}
+
 function clearArchiveOrder(orderId: number): void {
   const parsed = readJson("order-archive.json");
   if (!parsed) return;
@@ -61,32 +82,34 @@ function clearArchiveOrder(orderId: number): void {
   }
 }
 
-function deliveryPattern(orderId?: number): RegExp {
-  return orderId
-    ? new RegExp(`^delivery-${orderId}-\\d+-\\d+\\.(jpg|png|webp)$`)
-    : /^delivery-\d+-\d+-\d+\.(jpg|png|webp)$/;
-}
-
-function removeDeliveryPhotos(orderId?: number): void {
+function removeDeliveryPhotos(orderId?: number, materialIds: readonly number[] = []): void {
   const parsed = readJson("delivery-photos.json");
   if (parsed) {
-    const current = parsed.orders && typeof parsed.orders === "object" && !Array.isArray(parsed.orders)
-      ? parsed.orders
+    const orders = parsed.orders && typeof parsed.orders === "object" && !Array.isArray(parsed.orders)
+      ? { ...parsed.orders }
+      : {};
+    const batches = parsed.batches && typeof parsed.batches === "object" && !Array.isArray(parsed.batches)
+      ? { ...parsed.batches }
       : {};
     if (orderId == null) {
-      writeJson("delivery-photos.json", { version: 1, orders: {} });
-    } else if (Object.prototype.hasOwnProperty.call(current, String(orderId))) {
-      const next = { ...current };
-      delete next[String(orderId)];
-      writeJson("delivery-photos.json", { ...parsed, version: 1, orders: next });
+      writeJson("delivery-photos.json", { version: 2, orders: {}, batches: {} });
+    } else {
+      delete orders[String(orderId)];
+      for (const materialId of materialIds) delete batches[String(materialId)];
+      writeJson("delivery-photos.json", { ...parsed, version: 2, orders, batches });
     }
   }
 
   const uploads = path.join(dataDir(), "uploads", "delivery");
   if (!fs.existsSync(uploads)) return;
-  const pattern = deliveryPattern(orderId);
+  const batchIds = new Set(materialIds.map(Number).filter((id) => Number.isInteger(id) && id > 0));
   for (const name of fs.readdirSync(uploads)) {
-    if (!pattern.test(name)) continue;
+    const legacyMatch = name.match(/^delivery-(\d+)-\d+-\d+\.(jpg|png|webp)$/);
+    const batchMatch = name.match(/^delivery-batch-(\d+)-\d+-\d+\.(jpg|png|webp)$/);
+    const remove = orderId == null
+      ? Boolean(legacyMatch || batchMatch)
+      : Number(legacyMatch?.[1]) === orderId || batchIds.has(Number(batchMatch?.[1]));
+    if (!remove) continue;
     const file = path.join(uploads, name);
     if (fs.statSync(file).isFile()) fs.unlinkSync(file);
   }
@@ -102,7 +125,11 @@ function attempt(warnings: string[], label: string, action: () => void): void {
 }
 
 /** Remove every JSON state entry owned by one deleted order. */
-export function clearDeletedOrderRuntimeState(orderId: number, materialIds: readonly number[]): string[] {
+export function clearDeletedOrderRuntimeState(
+  orderId: number,
+  materialIds: readonly number[],
+  operationIds: readonly number[] = [],
+): string[] {
   const warnings: string[] = [];
   if (!Number.isInteger(orderId) || orderId <= 0) return ["invalid order id"];
 
@@ -110,10 +137,17 @@ export function clearDeletedOrderRuntimeState(orderId: number, materialIds: read
   attempt(warnings, "material progress", () => clearMaterialProgress(materialIds));
   attempt(warnings, "legacy material routes", () => clearMaterialRoutes(materialIds));
   attempt(warnings, "production plan", () => deleteOrderProductionPlan(orderId));
+  attempt(warnings, "operation candidates", () => clearOperationMachineCandidates(operationIds));
   attempt(warnings, "order archive", () => clearArchiveOrder(orderId));
-  attempt(warnings, "dispatch state", () => removeRecordKey("dispatch-status.json", "stages", orderId));
-  attempt(warnings, "packing QC", () => removeRecordKey("packing-qc.json", "orders", orderId));
-  attempt(warnings, "delivery photos", () => removeDeliveryPhotos(orderId));
+  attempt(warnings, "dispatch state", () => {
+    removeRecordKey("dispatch-status.json", "stages", orderId);
+    removeRecordKeys("dispatch-status.json", "batches", materialIds);
+  });
+  attempt(warnings, "packing QC", () => {
+    removeRecordKey("packing-qc.json", "orders", orderId);
+    removeRecordKeys("packing-qc.json", "batches", materialIds);
+  });
+  attempt(warnings, "delivery photos", () => removeDeliveryPhotos(orderId, materialIds));
   return warnings;
 }
 
@@ -127,9 +161,10 @@ export function clearAllOrderRuntimeState(): string[] {
   attempt(warnings, "material progress", clearAllMaterialProgress);
   attempt(warnings, "legacy material routes", clearAllMaterialRoutes);
   attempt(warnings, "production plans", clearAllProductionPlans);
+  attempt(warnings, "operation candidates", clearAllOperationMachineCandidates);
   attempt(warnings, "order archive", () => writeJson("order-archive.json", { version: 1, archived: [] }));
-  attempt(warnings, "dispatch state", () => writeJson("dispatch-status.json", { version: 1, stages: {} }));
-  attempt(warnings, "packing QC", () => writeJson("packing-qc.json", { version: 1, orders: {} }));
+  attempt(warnings, "dispatch state", () => writeJson("dispatch-status.json", { version: 2, stages: {}, batches: {} }));
+  attempt(warnings, "packing QC", () => writeJson("packing-qc.json", { version: 2, orders: {}, batches: {} }));
   attempt(warnings, "delivery photos", () => removeDeliveryPhotos());
   return warnings;
 }

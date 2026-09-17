@@ -27,9 +27,12 @@ export function validatePhoto(mime: string, size: number): string | null {
   return null;
 }
 
-/** Stored file names are server-generated: delivery-<orderId>-<stamp>-<n>.<ext> */
+/**
+ * Stored names are server-generated. Keep accepting legacy order names and the
+ * new independent material-batch names.
+ */
 export function isSafeStoredPhotoName(name: string): boolean {
-  return /^delivery-\d+-\d+-\d+\.(jpg|png|webp)$/.test(name);
+  return /^(delivery-\d+-\d+-\d+|delivery-batch-\d+-\d+-\d+)\.(jpg|png|webp)$/.test(name);
 }
 
 export interface DeliveryPhotoMeta {

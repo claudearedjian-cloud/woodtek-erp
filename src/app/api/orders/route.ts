@@ -18,6 +18,7 @@ import {
 } from "@/lib/productionPlan";
 import { saveOrderProductionPlan } from "@/lib/productionPlan.server";
 import { applyMaterialsStatus } from "@/lib/materials";
+import { ensureDispatchBatches } from "@/lib/dispatch.server";
 
 export async function GET(request: Request) {
   // The auth gate requires a signed-in user with orders:read.
@@ -373,6 +374,19 @@ export async function POST(request: Request) {
           console.warn("Initial warehouse target could not be written:", error);
         }
       }
+      try {
+        await ensureDispatchBatches({
+          orderId: created.newOrder.id,
+          materialIds: created.createdMaterials.map((material) => material.id),
+          projectType: created.newOrder.projectType,
+          createdAt: created.newOrder.createdAt,
+          orderStatus: created.newOrder.status,
+        });
+      } catch (error) {
+        // GET /api/dispatch self-heals a missed entry, but creation normally
+        // persists every material batch before this response is returned.
+        console.warn("Initial material-batch Dispatch entries could not be written:", error);
+      }
       let materialsStatus = created.newOrder.materialsStatus;
       try {
         materialsStatus = await applyMaterialsStatus(created.newOrder.id);
@@ -483,7 +497,19 @@ export async function POST(request: Request) {
       }
     }
 
-        logAudit(user, "order.create", "order", `${newOrder.orderNumber} created for ${title}`, newOrder.id);
+    try {
+      await ensureDispatchBatches({
+        orderId: newOrder.id,
+        materialIds: createdMaterials.map((material) => material.id),
+        projectType: newOrder.projectType,
+        createdAt: newOrder.createdAt,
+        orderStatus: newOrder.status,
+      });
+    } catch (error) {
+      console.warn("Initial material-batch Dispatch entries could not be written:", error);
+    }
+
+    logAudit(user, "order.create", "order", `${newOrder.orderNumber} created for ${title}`, newOrder.id);
     return NextResponse.json({ ...newOrder, createdMaterials }, { status: 201 });
   } catch (error: any) {
     console.error("POST order error:", error);

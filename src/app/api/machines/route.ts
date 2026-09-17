@@ -5,6 +5,7 @@ import { eq, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { listMachinesForUser, listOperationsForUser, isManager as userIsManager } from "@/lib/dataAccess";
 import { readMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
+import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 
 export async function GET(request: Request) {
   const { user, error: authError } = await authorize("machines:read");
@@ -20,10 +21,16 @@ export async function GET(request: Request) {
     const crews = readMachineOperators();
     const operationsByMachine = new Map<number, typeof scopedOps>();
     for (const operation of scopedOps) {
-      if (operation.machineId == null) continue;
-      const list = operationsByMachine.get(operation.machineId) ?? [];
-      list.push(operation);
-      operationsByMachine.set(operation.machineId, list);
+      const stationIds = operationMachineCandidates(
+        operation.id,
+        operation.machineId,
+        operation.status,
+      );
+      for (const machineId of stationIds) {
+        const list = operationsByMachine.get(machineId) ?? [];
+        list.push(operation);
+        operationsByMachine.set(machineId, list);
+      }
     }
 
     const enriched = scopedMachines.map(m => {

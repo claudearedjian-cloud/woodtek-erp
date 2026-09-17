@@ -4,6 +4,7 @@ import { machines, orderOperations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { removeMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
+import { removeMachineFromOperationCandidates } from "@/lib/operationMachineCandidates.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("machines:read");
@@ -84,6 +85,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     await db.update(orderOperations).set({ machineId: null }).where(eq(orderOperations.machineId, machineId));
     await db.delete(machines).where(eq(machines.id, machineId));
     removeMachineOperators(machineId);
+    removeMachineFromOperationCandidates(machineId);
 
     return NextResponse.json({ success: true, message: "Machine deleted and scheduled operations unassigned." });
   } catch (error: any) {

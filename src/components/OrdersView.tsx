@@ -65,8 +65,13 @@ export default function OrdersView({
   useEffect(() => {
     if (presetStatus) setStatusFilter(presetStatus);
   }, [presetStatus]);
-  // Dispatch pipeline stage per completed order (Orders & Routing stays in sync with delivery).
-  const [dispatchByOrder, setDispatchByOrder] = useState<Record<string, DispatchStage>>({});
+  // Batch-aware Dispatch summary per parent order (one order can have mixed stages).
+  const [dispatchByOrder, setDispatchByOrder] = useState<Record<string, {
+    stage: DispatchStage;
+    mixed: boolean;
+    delivered: number;
+    total: number;
+  }>>({});
   useEffect(() => {
     let alive = true;
     const loadDispatch = () =>
@@ -74,8 +79,21 @@ export default function OrdersView({
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
           if (!alive || !data?.orders) return;
-          const map: Record<string, DispatchStage> = {};
-          data.orders.forEach((o: any) => { map[String(o.id)] = (o.stage || "awaiting_delivery") as DispatchStage; });
+          const grouped = new Map<string, any[]>();
+          data.orders.forEach((row: any) => {
+            const key = String(row.orderId ?? row.id);
+            grouped.set(key, [...(grouped.get(key) ?? []), row]);
+          });
+          const map: Record<string, { stage: DispatchStage; mixed: boolean; delivered: number; total: number }> = {};
+          for (const [key, rows] of grouped) {
+            const stages = Array.from(new Set(rows.map((row) => String(row.stage || "awaiting_delivery"))));
+            map[key] = {
+              stage: (stages[0] || "awaiting_delivery") as DispatchStage,
+              mixed: stages.length > 1,
+              delivered: rows.filter((row) => row.stage === "delivered").length,
+              total: rows.length,
+            };
+          }
           setDispatchByOrder(map);
         })
         .catch(() => {});
@@ -284,7 +302,7 @@ export default function OrdersView({
                     </span>
                     {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                       <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                        Dispatch: {STAGE_LABELS[dispatchByOrder[String(order.id)]]}
+                        Dispatch: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
                       </span>
                     )}
                     {archivedSet.has(order.id) && (
@@ -400,7 +418,7 @@ export default function OrdersView({
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                         <div className="mb-2">
                           <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                            Dispatch: {STAGE_LABELS[dispatchByOrder[String(order.id)]]}
+                            Dispatch: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
                           </span>
                         </div>
                       )}

@@ -4,9 +4,10 @@
 //   • the TEMPLATE (same list for every order) lives in
 //     data/packing-qc-template.json — an empty list disables the gate;
 //     a MISSING file means "factory default template".
-//   • per-order CHECKS live in data/packing-qc.json keyed by order id.
+//   • legacy per-order checks and independent material-batch checks live in
+//     data/packing-qc.json (`orders` + `batches`).
 // No DB migration. Server enforcement in PUT /api/dispatch (packing →
-// awaiting_delivery refuses until every check is ticked).
+// awaiting_delivery refuses until that batch's every check is ticked).
 // ============================================================================
 
 export const MAX_QC_ITEMS = 12;

@@ -55,6 +55,10 @@ function toDateTime(date: string, time: string) {
   return new Date(`${date}T${time}:00`);
 }
 
+function dispatchRowKey(row: any): string {
+  return String(row?.dispatchKey ?? `order:${Number(row?.orderId ?? row?.id)}`);
+}
+
 export default function ScheduleView({ machines = [], currentUser, onRefresh, searchQuery = "" }: ScheduleViewProps) {
   const [operations, setOperations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,15 +74,16 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
 
   const canSchedule = currentUser?.role === "Manager" || currentUser?.role === "Sales Coordinator";
 
-  // ---- Dispatch queue: completed orders awaiting the delivery pipeline ----
+  // ---- Dispatch queue: one row per material batch from order creation ----
   const [dispatchOrders, setDispatchOrders] = useState<any[]>([]);
-  const [dispatchBusy, setDispatchBusy] = useState<number | null>(null);
+  const [dispatchBusy, setDispatchBusy] = useState<string | null>(null);
   const [dispatchError, setDispatchError] = useState("");
 
-  // ---- Packing QC checklist (template + per-order ticks, data/packing-qc.json) ----
+  // ---- Packing QC: legacy order checks + independent material-batch checks ----
   const [qcTemplate, setQcTemplate] = useState<string[]>([]);
   const [qcChecks, setQcChecks] = useState<Record<number, boolean[]>>({});
-  const [qcOpenId, setQcOpenId] = useState<number | null>(null);
+  const [qcBatchChecks, setQcBatchChecks] = useState<Record<number, boolean[]>>({});
+  const [qcOpenId, setQcOpenId] = useState<string | null>(null);
   const [qcBusy, setQcBusy] = useState(false);
 
   const fetchQc = async () => {
@@ -93,84 +98,109 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         if (Array.isArray(value)) map[Number(key)] = value.map(Boolean);
       }
       setQcChecks(map);
+      const batchMap: Record<number, boolean[]> = {};
+      for (const [key, value] of Object.entries(d.batchChecks ?? {})) {
+        if (Array.isArray(value)) batchMap[Number(key)] = value.map(Boolean);
+      }
+      setQcBatchChecks(batchMap);
     } catch {
       /* best effort */
     }
   };
 
-  const checksFor = (orderId: number): boolean[] => {
-    const raw = qcChecks[orderId] ?? [];
-    return qcTemplate.map((_, i) => raw[i] === true);
+  const checksFor = (row: any): boolean[] => {
+    const orderId = Number(row.orderId ?? row.id);
+    const batchId = row.batchId == null ? null : Number(row.batchId);
+    const raw = batchId !== null
+      ? (qcBatchChecks[batchId] ?? qcChecks[orderId] ?? [])
+      : (qcChecks[orderId] ?? []);
+    return qcTemplate.map((_, index) => raw[index] === true);
   };
 
-  const qcCompleteFor = (orderId: number): boolean =>
-    qcTemplate.length === 0 || checklistComplete(checksFor(orderId));
+  const qcCompleteFor = (row: any): boolean =>
+    qcTemplate.length === 0 || checklistComplete(checksFor(row));
 
-  const toggleQcItem = async (orderId: number, index: number) => {
-    const checks = checksFor(orderId).slice();
+  const toggleQcItem = async (row: any, index: number) => {
+    const orderId = Number(row.orderId ?? row.id);
+    const batchId = row.batchId == null ? null : Number(row.batchId);
+    const checks = checksFor(row).slice();
     checks[index] = !checks[index];
-    setQcChecks((m) => ({ ...m, [orderId]: checks }));
+    if (batchId !== null) setQcBatchChecks((current) => ({ ...current, [batchId]: checks }));
+    else setQcChecks((current) => ({ ...current, [orderId]: checks }));
     setQcBusy(true);
     try {
-      await fetch("/api/packing-qc", {
+      const response = await fetch("/api/packing-qc", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, checks }),
+        body: JSON.stringify({ orderId, batchId, checks }),
       });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({} as any));
+        setDispatchError(payload.error || "Could not update this batch's packing checklist.");
+      }
       await fetchQc();
     } catch {
-      /* ignore */
+      setDispatchError("Could not update this batch's packing checklist.");
     } finally {
       setQcBusy(false);
     }
   };
 
-  // ---- Delivery photos (proof pictures, data/uploads/delivery) ----
-  const [photosByOrder, setPhotosByOrder] = useState<Record<number, any[]>>({});
-  const [photosOpenId, setPhotosOpenId] = useState<number | null>(null);
+  // ---- Delivery photos (independent per material batch; legacy fallback) ----
+  const [photosByOrder, setPhotosByOrder] = useState<Record<string, any[]>>({});
+  const [photosOpenId, setPhotosOpenId] = useState<string | null>(null);
   const [photoMsg, setPhotoMsg] = useState("");
 
-  const loadPhotos = async (orderId: number) => {
+  const loadPhotos = async (row: any) => {
+    const key = dispatchRowKey(row);
+    const orderId = Number(row.orderId ?? row.id);
+    const batchQuery = row.batchId == null ? "" : `&batchId=${Number(row.batchId)}`;
     try {
-      const r = await fetch(`/api/delivery-photos?orderId=${orderId}`, { cache: "no-store" });
-      if (!r.ok) return;
-      const d = await r.json();
-      setPhotosByOrder((m) => ({ ...m, [orderId]: Array.isArray(d.photos) ? d.photos : [] }));
+      const response = await fetch(`/api/delivery-photos?orderId=${orderId}${batchQuery}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      setPhotosByOrder((current) => ({ ...current, [key]: Array.isArray(payload.photos) ? payload.photos : [] }));
     } catch {
       /* best effort */
     }
   };
 
-  const openPhotos = (orderId: number) => {
+  const openPhotos = (row: any) => {
+    const key = dispatchRowKey(row);
     setPhotoMsg("");
-    setPhotosOpenId((v) => (v === orderId ? null : orderId));
-    if (!photosByOrder[orderId]) loadPhotos(orderId);
+    setPhotosOpenId((current) => (current === key ? null : key));
+    if (!photosByOrder[key]) void loadPhotos(row);
   };
 
-  const uploadPhotos = async (orderId: number, files: FileList | null) => {
+  const uploadPhotos = async (row: any, files: FileList | null) => {
     if (!files || files.length === 0) return;
+    const key = dispatchRowKey(row);
     const form = new FormData();
-    form.append("orderId", String(orderId));
-    Array.from(files).forEach((f) => form.append("files", f));
+    form.append("orderId", String(row.orderId ?? row.id));
+    if (row.batchId != null) form.append("batchId", String(row.batchId));
+    Array.from(files).forEach((file) => form.append("files", file));
     setPhotoMsg("");
     try {
-      const r = await fetch("/api/delivery-photos", { method: "POST", body: form });
-      const d = await r.json().catch(() => ({} as any));
-      if (!r.ok) {
-        setPhotoMsg(d.error || "Upload failed.");
+      const response = await fetch("/api/delivery-photos", { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({} as any));
+      if (!response.ok) {
+        setPhotoMsg(payload.error || "Upload failed.");
         return;
       }
-      setPhotosByOrder((m) => ({ ...m, [orderId]: d.photos ?? [] }));
+      setPhotosByOrder((current) => ({ ...current, [key]: payload.photos ?? [] }));
     } catch {
       setPhotoMsg("Upload failed.");
     }
   };
 
-  const deletePhoto = async (orderId: number, file: string) => {
+  const deletePhoto = async (row: any, file: string) => {
+    const key = dispatchRowKey(row);
+    const orderId = Number(row.orderId ?? row.id);
+    const batchQuery = row.batchId == null ? "" : `&batchId=${Number(row.batchId)}`;
     try {
-      const r = await fetch(`/api/delivery-photos?orderId=${orderId}&file=${encodeURIComponent(file)}`, { method: "DELETE" });
-      const d = await r.json().catch(() => ({} as any));
-      if (r.ok) setPhotosByOrder((m) => ({ ...m, [orderId]: d.photos ?? [] }));
+      const response = await fetch(`/api/delivery-photos?orderId=${orderId}${batchQuery}&file=${encodeURIComponent(file)}`, { method: "DELETE" });
+      const payload = await response.json().catch(() => ({} as any));
+      if (response.ok) setPhotosByOrder((current) => ({ ...current, [key]: payload.photos ?? [] }));
     } catch {
       /* ignore */
     }
@@ -199,21 +229,23 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   const confirmDelivery = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!proofFor) return;
-    setDispatchBusy(proofFor.id);
+    setDispatchBusy(dispatchRowKey(proofFor));
     setDispatchError("");
     try {
       const res = await fetch("/api/dispatch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          orderId: proofFor.id,
+          orderId: proofFor.orderId ?? proofFor.id,
+          batchId: proofFor.batchId ?? null,
           stage: "delivered",
           proof: { receivedBy: proofForm.receivedBy.trim(), notes: proofForm.notes.trim() },
         }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({} as any));
-        setDispatchError(d.error || "Could not confirm the delivery.");
+        setDispatchError(d.error || "Could not confirm the batch delivery.");
+        return;
       }
       setProofFor(null);
       setProofForm({ receivedBy: "", notes: "" });
@@ -221,7 +253,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       fetchQc();
       onRefresh();
     } catch {
-      /* ignore */
+      setDispatchError("Could not confirm the batch delivery.");
     } finally {
       setDispatchBusy(null);
     }
@@ -257,6 +289,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.setFont("helvetica", "normal");
     if (o.customerCompany) doc.text(`Client: ${o.customerCompany}`, 14, 56);
     if (o.projectType) doc.text(`Category: ${o.projectType}`, 14, 63);
+    if (o.batchId != null) doc.text(`Batch ${o.batchNumber}: ${o.batchName}`, 14, 69);
     if (o.dueDate) doc.text(`Due: ${new Date(o.dueDate).toLocaleDateString()}`, 130, 56);
 
     const rows = (o.materials ?? []).map((m: any, i: number) => [
@@ -287,9 +320,9 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.text("Date: ______________", 130, y + 12);
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
-    doc.text("WoodTek ERP — Furniture Service Center · This slip lists everything allocated to the order.", 14, y + 26);
+    doc.text("WoodTek ERP — Furniture Service Center · This slip covers this Dispatch batch only.", 14, y + 26);
 
-    doc.save(`PackingSlip-${String(o.orderNumber ?? o.id)}.pdf`);
+    doc.save(`PackingSlip-${String(o.orderNumber ?? o.id)}${o.batchId != null ? `-Batch-${o.batchNumber}` : ""}.pdf`);
   };
 
   // Delivery manifest: driver's sheet for every order awaiting delivery.
@@ -301,7 +334,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         String(a.orderNumber ?? "").localeCompare(String(b.orderNumber ?? "")),
       );
     if (stops.length === 0) {
-      setNotice("No orders are awaiting delivery — nothing to put on the manifest.");
+      setNotice("No material batches are awaiting delivery — nothing to put on the manifest.");
       return;
     }
     const doc = new jsPDF();
@@ -319,7 +352,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.setFontSize(9);
     doc.setTextColor(200, 210, 230);
     doc.text(new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }), 196, 11, { align: "right" });
-    doc.text(`${stops.length} stop(s)`, 196, 18, { align: "right" });
+    doc.text(`${stops.length} batch stop(s)`, 196, 18, { align: "right" });
 
     doc.setTextColor(71, 85, 105);
     doc.setFontSize(9);
@@ -338,10 +371,10 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.setTextColor(15, 23, 42);
-      doc.text(`${i + 1}. ${String(o.orderNumber ?? "")}`, 16, y + 1);
+      doc.text(`${i + 1}. ${String(o.orderNumber ?? "")}${o.batchId != null ? ` · Batch ${o.batchNumber}` : ""}`, 16, y + 1);
       doc.setFontSize(9);
       doc.setTextColor(71, 85, 105);
-      doc.text(String(o.customerCompany ?? ""), 16, y + 7);
+      doc.text([String(o.customerCompany ?? ""), o.batchId != null ? String(o.batchName ?? "") : ""].filter(Boolean).join(" — "), 16, y + 7);
       const addr = String(o.customerAddress ?? "").trim();
       if (addr) doc.text(`Addr: ${addr}`, 16, y + 12.5);
       const phone = String(o.customerPhone ?? "").trim();
@@ -363,14 +396,19 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.save(`DeliveryManifest-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
-  const setDispatchStage = async (orderId: number, stage: string) => {
-    setDispatchBusy(orderId);
+  const setDispatchStage = async (row: any, stage: string) => {
+    const key = dispatchRowKey(row);
+    setDispatchBusy(key);
     setDispatchError("");
     try {
       const res = await fetch("/api/dispatch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, stage }),
+        body: JSON.stringify({
+          orderId: row.orderId ?? row.id,
+          batchId: row.batchId ?? null,
+          stage,
+        }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({} as any));
@@ -591,7 +629,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Unscheduled</div>
             <div className={`font-mono text-lg font-black ${unscheduled.length ? "text-amber-400" : "text-emerald-400"}`}>{unscheduled.length}</div>
           </div>
-          <button onClick={() => fetchOperations(true)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-800 text-slate-300 transition hover:border-amber-500/50 hover:text-white" title="Refresh schedule">
+          <button onClick={() => { void fetchOperations(true); void fetchDispatch(); void fetchQc(); }} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-800 text-slate-300 transition hover:border-amber-500/50 hover:text-white" title="Refresh schedule and material Dispatch">
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin text-amber-400" : ""}`} />
           </button>
         </div>
@@ -604,11 +642,11 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         </div>
       )}
 
-      {/* ---- Dispatch queue: completed orders ---- */}
+      {/* ---- Dispatch queue: independent material batches from issue ---- */}
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-black text-white">
-            <Truck className="h-4 w-4 text-emerald-400" /> Dispatch queue — completed orders
+            <Truck className="h-4 w-4 text-emerald-400" /> Dispatch queue — material batches
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -620,7 +658,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
               <Truck className="h-3.5 w-3.5" /> Print manifest
             </button>
             <span className="text-[11px] font-bold text-slate-500">
-              Service orders go straight to awaiting delivery; project orders follow Cleaning → QC → Packing.
+              Every issued material batch has its own row, QC, photos and proof. Production must finish before it can advance.
             </span>
           </div>
         </div>
@@ -628,164 +666,192 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           <div className="mb-2.5 rounded-xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-300">{dispatchError}</div>
         )}
         {dispatchOrders.length === 0 ? (
-          <div className="py-6 text-center text-xs text-slate-500">No completed orders waiting for dispatch.</div>
+          <div className="py-6 text-center text-xs text-slate-500">No issued material batches are available for Dispatch.</div>
         ) : (
           <div className="space-y-2.5">
             {dispatchOrders.map((o: any) => {
+              const rowKey = dispatchRowKey(o);
               const flow = flowFor(o.projectType);
               const nxt = nextStage(o.projectType, o.stage);
               const showQc = flow.includes("packing") && ["packing", "awaiting_delivery"].includes(o.stage);
-              const qcDone = qcCompleteFor(o.id);
+              const qcDone = qcCompleteFor(o);
               const qcBlocked = o.stage === "packing" && nxt === "awaiting_delivery" && templateGates(qcTemplate) && !qcDone;
+              const productionBlocked = !o.productionReady && o.stage !== "delivered";
+              const photoCount = photosByOrder[rowKey]?.length ?? 0;
               return (
-                <React.Fragment key={o.id}>
-                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-base font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
-                      <span className="text-xs font-bold text-white">{o.title}</span>
-                      {o.customerCompany && <span className="text-[11px] text-slate-400">— {o.customerCompany}</span>}
-                    </div>
-                    <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      {isServiceFlow(o.projectType) ? "Service" : "Project"} · {o.projectType}
-                    </div>
-                    {o.stage === "delivered" && o.proof && (
-                      <div className="mt-1 text-[10px] font-bold text-emerald-400">
-                        ✓ Delivered to {o.proof.receivedBy} · {new Date(o.proof.deliveredAt).toLocaleString()}
-                        {o.proof.notes ? ` · ${o.proof.notes}` : ""}
+                <React.Fragment key={rowKey}>
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-base font-black text-amber-400 tracking-tight">{o.orderNumber}</span>
+                        {o.batchId != null && (
+                          <span className="rounded-md border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-[10px] font-black uppercase text-blue-300">
+                            Batch {o.batchNumber}
+                          </span>
+                        )}
+                        <span className="text-xs font-black text-white">{o.batchName}</span>
+                        {o.title && <span className="text-[11px] font-bold text-slate-400">· {o.title}</span>}
+                        {o.customerCompany && <span className="text-[11px] text-slate-400">— {o.customerCompany}</span>}
                       </div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {flow.map((st) => (
-                      <span
-                        key={st}
-                        className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${
-                          st === o.stage
-                            ? st === "delivered"
-                              ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
-                              : "border-amber-500 bg-amber-500/20 text-amber-300"
-                            : flow.indexOf(st) < flow.indexOf(o.stage)
-                              ? "border-emerald-600/40 bg-emerald-500/5 text-emerald-500/70"
-                              : "border-slate-800 bg-slate-900 text-slate-600"
-                        }`}
-                      >
-                        {STAGE_LABELS[st]}
-                      </span>
-                    ))}
-                  </div>
-                  {canDispatch && o.stage !== "delivered" && nxt && (
-                    <button
-                      type="button"
-                      disabled={dispatchBusy === o.id || qcBlocked}
-                      onClick={() => (nxt === "delivered" ? (setProofForm({ receivedBy: "", notes: "" }), setProofFor(o)) : setDispatchStage(o.id, nxt))}
-                      title={qcBlocked ? "Tick every packing QC checklist item first (QC button)" : undefined}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {qcBlocked ? "QC checklist first" : nxt === "delivered" ? "Mark delivered" : `Next: ${STAGE_LABELS[nxt]}`}
-                    </button>
-                  )}
-                  {showQc && qcTemplate.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setQcOpenId((v) => (v === o.id ? null : o.id))}
-                      className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-black ${
-                        qcDone ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300" : "border-amber-500/60 bg-amber-500/10 text-amber-300"
-                      }`}
-                      title="Packing QC checklist — every item must be ticked before the order can leave Packing"
-                    >
-                      <ListChecks className="h-3.5 w-3.5" /> QC {checklistProgress(checksFor(o.id))}/{qcTemplate.length}{qcDone ? " \u2713" : ""}
-                    </button>
-                  )}
-                  {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
-                    <button
-                      type="button"
-                      onClick={() => openPhotos(o.id)}
-                      className="flex items-center gap-1 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20"
-                      title="Delivery photos — proof pictures from packing / the delivery gate"
-                    >
-                      <Camera className="h-3.5 w-3.5" /> Photos{(photosByOrder[o.id]?.length ?? 0) > 0 ? ` (${photosByOrder[o.id].length})` : ""}
-                    </button>
-                  )}
-                  {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
-                    <button
-                      type="button"
-                      onClick={() => generatePackingSlip(o)}
-                      title="Download a printable packing slip PDF with the order's materials and signature lines"
-                      className="flex items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
-                    >
-                      <StickyNote className="h-3.5 w-3.5" /> Packing slip
-                    </button>
-                  )}
-                </div>
-                {qcOpenId === o.id && qcTemplate.length > 0 && (
-                  <div className="w-full rounded-xl border border-amber-500/30 bg-slate-900/80 p-3">
-                    <div className="mb-2 text-[11px] font-black uppercase tracking-wider text-amber-300">
-                      Packing QC — {o.orderNumber} · {checklistProgress(checksFor(o.id))}/{qcTemplate.length} done
-                    </div>
-                    <div className="space-y-1.5">
-                      {qcTemplate.map((item, i) => {
-                        const done = checksFor(o.id)[i] === true;
-                        return (
-                          <label key={i} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold ${done ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : "border-slate-700 bg-slate-950/60 text-slate-300"}`}>
-                            <input
-                              type="checkbox"
-                              checked={done}
-                              disabled={qcBusy || !canDispatch}
-                              onChange={() => toggleQcItem(o.id, i)}
-                              className="h-4 w-4 accent-emerald-500"
-                            />
-                            {item}
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      {!canDispatch && <span className="text-[10px] font-bold text-slate-500">Only Manager / Warehouse / Floor roles can tick items.</span>}
-                      {checklistComplete(checksFor(o.id)) && <span className="text-[10px] font-black text-emerald-400">All checks done — the order can advance to Awaiting Delivery.</span>}
-                      <button type="button" onClick={() => setQcOpenId(null)} className="ml-auto rounded-lg bg-slate-800 px-2.5 py-1 text-[10px] font-black text-slate-300 hover:bg-slate-700">Close</button>
-                    </div>
-                  </div>
-                )}
-                {photosOpenId === o.id && (
-                  <div className="w-full rounded-xl border border-sky-500/30 bg-slate-900/80 p-3">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-[11px] font-black uppercase tracking-wider text-sky-300">Delivery photos — {o.orderNumber}</div>
-                      {canDispatch && (
-                        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20">
-                          <Camera className="h-3.5 w-3.5" /> Add photos
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,image/*"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => { uploadPhotos(o.id, e.target.files); e.currentTarget.value = ""; }}
-                          />
-                        </label>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        <span>{isServiceFlow(o.projectType) ? "Service" : "Project"} · {o.projectType}</span>
+                        {o.itemSku && <span>{o.itemSku} · {o.quantityUsed} {o.itemUnit || "pcs"}</span>}
+                        <span className="text-slate-400">Order batches: {o.deliveredBatchCount}/{o.totalBatchCount} delivered</span>
+                      </div>
+                      {productionBlocked && (
+                        <div className="mt-1 text-[10px] font-black text-blue-300">
+                          <Clock3 className="mr-1 inline h-3 w-3" /> Slot reserved — this batch is still completing its own production route.
+                        </div>
+                      )}
+                      {o.stage === "delivered" && o.proof && (
+                        <div className="mt-1 text-[10px] font-bold text-emerald-400">
+                          ✓ Batch delivered to {o.proof.receivedBy} · {new Date(o.proof.deliveredAt).toLocaleString()}
+                          {o.proof.notes ? ` · ${o.proof.notes}` : ""}
+                        </div>
                       )}
                     </div>
-                    {photoMsg && <div className="mb-2 text-[10px] font-bold text-rose-400">{photoMsg}</div>}
-                    {(photosByOrder[o.id]?.length ?? 0) === 0 ? (
-                      <div className="py-2 text-[11px] text-slate-500">No photos yet. JPG / PNG / WebP, up to 8 MB each, max 12 per order — a phone camera works through the file picker.</div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-                        {photosByOrder[o.id].map((p: any) => (
-                          <div key={p.file} className="group relative overflow-hidden rounded-lg border border-slate-700">
-                            <img src={`/api/delivery-photos?file=${encodeURIComponent(p.file)}`} alt="Delivery proof" className="h-24 w-full object-cover" loading="lazy" />
-                            <div className="absolute inset-x-0 bottom-0 truncate bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-bold text-slate-300">
-                              {p.by}{p.at ? ` · ${new Date(p.at).toLocaleDateString()}` : ""}
-                            </div>
-                            {canDispatch && (
-                              <button type="button" onClick={() => deletePhoto(o.id, p.file)} className="absolute right-1 top-1 hidden rounded bg-rose-600 p-1 text-white hover:bg-rose-500 group-hover:block" title="Delete photo">
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {flow.map((stage) => (
+                        <span
+                          key={stage}
+                          className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${
+                            stage === o.stage
+                              ? stage === "delivered"
+                                ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
+                                : "border-amber-500 bg-amber-500/20 text-amber-300"
+                              : flow.indexOf(stage) < flow.indexOf(o.stage)
+                                ? "border-emerald-600/40 bg-emerald-500/5 text-emerald-500/70"
+                                : "border-slate-800 bg-slate-900 text-slate-600"
+                          }`}
+                        >
+                          {STAGE_LABELS[stage]}
+                        </span>
+                      ))}
+                    </div>
+                    {canDispatch && o.stage !== "delivered" && nxt && (
+                      <button
+                        type="button"
+                        disabled={dispatchBusy === rowKey || qcBlocked || productionBlocked}
+                        onClick={() => (nxt === "delivered"
+                          ? (setProofForm({ receivedBy: "", notes: "" }), setProofFor(o))
+                          : setDispatchStage(o, nxt))}
+                        title={productionBlocked
+                          ? "Finish this material batch's production route first"
+                          : qcBlocked
+                            ? "Tick every batch packing-QC item first"
+                            : undefined}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {productionBlocked
+                          ? "Production pending"
+                          : qcBlocked
+                            ? "QC checklist first"
+                            : nxt === "delivered"
+                              ? "Mark batch delivered"
+                              : `Next: ${STAGE_LABELS[nxt]}`}
+                      </button>
+                    )}
+                    {showQc && qcTemplate.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setQcOpenId((current) => (current === rowKey ? null : rowKey))}
+                        className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-black ${
+                          qcDone ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300" : "border-amber-500/60 bg-amber-500/10 text-amber-300"
+                        }`}
+                        title="This material batch has its own packing QC checklist"
+                      >
+                        <ListChecks className="h-3.5 w-3.5" /> QC {checklistProgress(checksFor(o))}/{qcTemplate.length}{qcDone ? " ✓" : ""}
+                      </button>
+                    )}
+                    {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
+                      <button
+                        type="button"
+                        onClick={() => openPhotos(o)}
+                        className="flex items-center gap-1 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20"
+                        title="Proof pictures for this material batch"
+                      >
+                        <Camera className="h-3.5 w-3.5" /> Photos{photoCount > 0 ? ` (${photoCount})` : ""}
+                      </button>
+                    )}
+                    {["packing", "awaiting_delivery", "delivered"].includes(o.stage) && (
+                      <button
+                        type="button"
+                        onClick={() => generatePackingSlip(o)}
+                        title="Download this material batch's packing slip"
+                        className="flex items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
+                      >
+                        <StickyNote className="h-3.5 w-3.5" /> Batch packing slip
+                      </button>
                     )}
                   </div>
-                )}
+                  {qcOpenId === rowKey && qcTemplate.length > 0 && (
+                    <div className="w-full rounded-xl border border-amber-500/30 bg-slate-900/80 p-3">
+                      <div className="mb-2 text-[11px] font-black uppercase tracking-wider text-amber-300">
+                        Packing QC — {o.orderNumber} · {o.batchName} · {checklistProgress(checksFor(o))}/{qcTemplate.length} done
+                      </div>
+                      <div className="space-y-1.5">
+                        {qcTemplate.map((item, index) => {
+                          const done = checksFor(o)[index] === true;
+                          return (
+                            <label key={index} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold ${done ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200" : "border-slate-700 bg-slate-950/60 text-slate-300"}`}>
+                              <input
+                                type="checkbox"
+                                checked={done}
+                                disabled={qcBusy || !canDispatch}
+                                onChange={() => toggleQcItem(o, index)}
+                                className="h-4 w-4 accent-emerald-500"
+                              />
+                              {item}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        {!canDispatch && <span className="text-[10px] font-bold text-slate-500">Only Manager / Warehouse / Floor roles can tick items.</span>}
+                        {checklistComplete(checksFor(o)) && <span className="text-[10px] font-black text-emerald-400">All checks done — this batch can advance to Awaiting Delivery.</span>}
+                        <button type="button" onClick={() => setQcOpenId(null)} className="ml-auto rounded-lg bg-slate-800 px-2.5 py-1 text-[10px] font-black text-slate-300 hover:bg-slate-700">Close</button>
+                      </div>
+                    </div>
+                  )}
+                  {photosOpenId === rowKey && (
+                    <div className="w-full rounded-xl border border-sky-500/30 bg-slate-900/80 p-3">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[11px] font-black uppercase tracking-wider text-sky-300">Delivery photos — {o.orderNumber} · {o.batchName}</div>
+                        {canDispatch && (
+                          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20">
+                            <Camera className="h-3.5 w-3.5" /> Add photos
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/*"
+                              multiple
+                              className="hidden"
+                              onChange={(event) => { void uploadPhotos(o, event.target.files); event.currentTarget.value = ""; }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      {photoMsg && <div className="mb-2 text-[10px] font-bold text-rose-400">{photoMsg}</div>}
+                      {photoCount === 0 ? (
+                        <div className="py-2 text-[11px] text-slate-500">No photos yet. JPG / PNG / WebP, up to 8 MB each, max 12 per batch.</div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                          {photosByOrder[rowKey].map((photo: any) => (
+                            <div key={photo.file} className="group relative overflow-hidden rounded-lg border border-slate-700">
+                              <img src={`/api/delivery-photos?file=${encodeURIComponent(photo.file)}`} alt="Delivery proof" className="h-24 w-full object-cover" loading="lazy" />
+                              <div className="absolute inset-x-0 bottom-0 truncate bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-bold text-slate-300">
+                                {photo.by}{photo.at ? ` · ${new Date(photo.at).toLocaleDateString()}` : ""}
+                              </div>
+                              {canDispatch && (
+                                <button type="button" onClick={() => void deletePhoto(o, photo.file)} className="absolute right-1 top-1 hidden rounded bg-rose-600 p-1 text-white hover:bg-rose-500 group-hover:block" title="Delete photo">
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </React.Fragment>
               );
             })}
@@ -887,9 +953,9 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           <form onSubmit={confirmDelivery} className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
               <div>
-                <div className="mb-1 font-mono text-xs font-black text-amber-400">{proofFor.orderNumber}</div>
-                <h3 className="text-base font-black text-white flex items-center gap-2"><Truck className="h-4 w-4 text-emerald-400" /> Proof of delivery</h3>
-                <p className="mt-1 text-xs text-slate-400">{proofFor.title}{proofFor.customerCompany ? ` — ${proofFor.customerCompany}` : ""}</p>
+                <div className="mb-1 font-mono text-xs font-black text-amber-400">{proofFor.orderNumber}{proofFor.batchId != null ? ` · Batch ${proofFor.batchNumber}` : ""}</div>
+                <h3 className="text-base font-black text-white flex items-center gap-2"><Truck className="h-4 w-4 text-emerald-400" /> Batch proof of delivery</h3>
+                <p className="mt-1 text-xs text-slate-400">{proofFor.batchName}{proofFor.customerCompany ? ` — ${proofFor.customerCompany}` : ""}</p>
               </div>
               <button type="button" onClick={() => setProofFor(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
             </div>
@@ -916,12 +982,12 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             </div>
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-xs leading-relaxed text-emerald-100">
               <CheckCircle2 className="mr-1 inline h-3.5 w-3.5 text-emerald-300" />
-              The order will be marked <strong>Delivered</strong>, stamped with the date and time, and removed from open production everywhere.
+              This material batch will be stamped <strong>Delivered</strong>. The parent order changes to Delivered only when every current batch has its own delivery proof.
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-800 pt-4">
               <button type="button" onClick={() => setProofFor(null)} className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700">Cancel</button>
-              <button type="submit" disabled={dispatchBusy === proofFor.id} className="rounded-xl bg-emerald-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
-                {dispatchBusy === proofFor.id ? "Saving…" : "Confirm delivery"}
+              <button type="submit" disabled={dispatchBusy === dispatchRowKey(proofFor)} className="rounded-xl bg-emerald-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+                {dispatchBusy === dispatchRowKey(proofFor) ? "Saving…" : "Confirm batch delivery"}
               </button>
             </div>
           </form>

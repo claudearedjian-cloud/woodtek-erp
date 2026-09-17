@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { orderOperations, orders, machines, qualityEvents, orderMaterials, users } from "@/db/schema";
 import { readReceived } from "@/lib/bomStatus.server";
-import { and, asc, eq, gt, isNotNull, lt, ne, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { canUserUpdateOperation } from "@/lib/dataAccess";
@@ -15,6 +15,12 @@ import { autoCompleteMaterialsForStep, markPlannedMaterialAtOperation } from "@/
 import { jobLockedByOther } from "@/lib/jobLock";
 import { findProductionStepByOperation, nextProductionOperationId, previousProductionOperationId } from "@/lib/productionPlan";
 import { readOrderProductionPlan, productionStepForOperation, updateProductionStepMachine } from "@/lib/productionPlan.server";
+import {
+  clearOperationMachineCandidates,
+  operationMachineCandidates,
+  setOperationMachineCandidates,
+} from "@/lib/operationMachineCandidates.server";
+import { candidateStatusIsClaimable, sanitizeCandidateMachineIds } from "@/lib/operationMachineCandidates";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
@@ -32,15 +38,28 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return NextResponse.json({ error: "Invalid operation identifier." }, { status: 400 });
     }
 
-    // Per-record check: non-Managers may only update operations they are
-    // assigned to (as operator, or via the operation's machine assignment).
-    // A machine-assignment-only PATCH from a role holding
-    // operations:assign-machine (Floor Supervisor) skips the per-operator
-    // check; any other field combination still requires it.
-    const machineOnlyRequest = Object.keys(body).every((k) => k === "machineId");
+    if (
+      body.candidateMachineIds !== undefined
+      && Object.keys(body).some((key) => key !== "candidateMachineIds")
+    ) {
+      return NextResponse.json(
+        { error: "Candidate stations must be saved as their own assignment action." },
+        { status: 400 },
+      );
+    }
+
+    // Per-record check: a pure machine/candidate assignment from a role holding
+    // operations:assign-machine bypasses the station-crew check. A station Start
+    // carries stationMachineId so a candidate crew member receives only the
+    // narrow authorization needed to atomically claim that operation.
+    const assignmentOnlyRequest = Object.keys(body).length > 0
+      && Object.keys(body).every((key) => key === "machineId" || key === "candidateMachineIds");
     let check: { allowed: boolean; reason?: string } = { allowed: true };
-    if (!(machineOnlyRequest && canAssignMachines(user.role))) {
-      check = await canUserUpdateOperation(user, operationId);
+    if (!(assignmentOnlyRequest && canAssignMachines(user.role))) {
+      check = await canUserUpdateOperation(user, operationId, {
+        stationMachineId: body.stationMachineId !== undefined ? Number(body.stationMachineId) : undefined,
+        requestedStatus: typeof body.status === "string" ? body.status : undefined,
+      });
     }
     if (!check.allowed) {
       return NextResponse.json({ error: check.reason || "Not authorized for this operation." }, { status: 403 });
@@ -56,6 +75,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Floor Supervisors may move a step between equivalent machines (same
       // category) — validated further inside the transaction below.
       if (body.machineId !== undefined && !canAssignMachines(user.role)) restricted.push("machineId");
+      if (body.candidateMachineIds !== undefined && !canAssignMachines(user.role)) restricted.push("candidateMachineIds");
       if (body.scheduledStart !== undefined) restricted.push("scheduledStart");
       if (body.scheduledEnd !== undefined) restricted.push("scheduledEnd");
       if (body.operatorId !== undefined && Number(body.operatorId) !== Number(user.id)) restricted.push("operatorId");
@@ -66,6 +86,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           { status: 403 },
         );
       }
+    }
+    if (
+      body.stationMachineId !== undefined
+      && (!Number.isInteger(Number(body.stationMachineId)) || Number(body.stationMachineId) <= 0)
+    ) {
+      return NextResponse.json({ error: "A valid stationMachineId is required." }, { status: 400 });
+    }
+    if (body.stationMachineId !== undefined && body.status !== "In Progress") {
+      return NextResponse.json({ error: "stationMachineId is accepted only when starting work." }, { status: 400 });
     }
 
     const result = await db.transaction(async (tx) => {
@@ -78,7 +107,58 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
         throw new WorkflowError("Unsupported operation status.", 400);
       }
-      
+
+      let requestedCandidateMachineIds: number[] | null = null;
+      if (body.candidateMachineIds !== undefined) {
+        if (!Array.isArray(body.candidateMachineIds)) {
+          throw new WorkflowError("Candidate stations must be an array of machine ids.", 400);
+        }
+        requestedCandidateMachineIds = sanitizeCandidateMachineIds(body.candidateMachineIds);
+        if (
+          requestedCandidateMachineIds.length === 0
+          || requestedCandidateMachineIds.length !== body.candidateMachineIds.length
+        ) {
+          throw new WorkflowError("Choose one or more valid, non-duplicate candidate stations.", 400);
+        }
+        if (!candidateStatusIsClaimable(currentOp.status)) {
+          throw new WorkflowError("Candidate stations can be changed only before this operation first starts.", 409);
+        }
+
+        const assignBom = await tx
+          .select({ id: orderMaterials.id })
+          .from(orderMaterials)
+          .where(eq(orderMaterials.orderId, currentOp.orderId));
+        if (assignBom.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+          throw new WorkflowError("Candidate stations can be chosen only after the Floor Supervisor approves reception.", 409);
+        }
+
+        const selectedMachines = await tx
+          .select()
+          .from(machines)
+          .where(inArray(machines.id, requestedCandidateMachineIds));
+        if (selectedMachines.length !== requestedCandidateMachineIds.length) {
+          throw new WorkflowError("One or more candidate stations no longer exist.", 404);
+        }
+        const [currentMachine] = currentOp.machineId
+          ? await tx.select().from(machines).where(eq(machines.id, currentOp.machineId))
+          : [undefined];
+        const requiredCategory = plannedBinding?.step.machineCategory
+          ?? currentMachine?.category
+          ?? selectedMachines[0]?.category;
+        const wrongCategory = selectedMachines.find((machine) =>
+          machine.category.toLowerCase() !== String(requiredCategory ?? "").toLowerCase()
+        );
+        if (wrongCategory) {
+          throw new WorkflowError(`Only ${requiredCategory} machines can be candidates for this step.`, 409);
+        }
+        const unavailable = selectedMachines.find((machine) =>
+          machine.status === "Maintenance" || machine.status === "Offline"
+        );
+        if (unavailable) {
+          throw new WorkflowError(`${unavailable.code} is ${unavailable.status.toLowerCase()} and cannot be a candidate.`, 409);
+        }
+      }
+
       // Crew lock: while a job is running only the operator who started it
       // (or Manager / supervisor roles) may control it — other machine crew
       // members are view-only. Mirrors the greyed-out Station Mode buttons.
@@ -145,9 +225,29 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
 
-      const targetMachineId = body.machineId !== undefined
-        ? (body.machineId ? Number(body.machineId) : null)
-        : currentOp.machineId;
+      const stationMachineId = body.stationMachineId !== undefined
+        ? Number(body.stationMachineId)
+        : null;
+      const firstStartClaim = requestedStatus === "In Progress" && candidateStatusIsClaimable(currentOp.status);
+      const currentCandidates = operationMachineCandidates(currentOp.id, currentOp.machineId, currentOp.status);
+      if (firstStartClaim && stationMachineId && !currentCandidates.includes(stationMachineId)) {
+        throw new WorkflowError("This operation was already claimed at another candidate station. Refresh the station queue.", 409);
+      }
+      if (!firstStartClaim && stationMachineId && stationMachineId !== currentOp.machineId) {
+        throw new WorkflowError("This operation is running at another machine station. Refresh the station queue.", 409);
+      }
+      const candidatePrimaryMachineId = requestedCandidateMachineIds
+        ? (currentOp.machineId && requestedCandidateMachineIds.includes(currentOp.machineId)
+            ? currentOp.machineId
+            : requestedCandidateMachineIds[0])
+        : null;
+      const targetMachineId = stationMachineId && firstStartClaim
+        ? stationMachineId
+        : requestedCandidateMachineIds
+          ? candidatePrimaryMachineId
+          : body.machineId !== undefined
+            ? (body.machineId ? Number(body.machineId) : null)
+            : currentOp.machineId;
 
       // Starting work is intentionally strict: predecessors, station availability,
       // and station capacity are validated atomically inside one transaction.
@@ -313,7 +413,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
       if (requestedStatus !== undefined) updateData.status = requestedStatus;
-      if (body.machineId !== undefined) updateData.machineId = targetMachineId;
+      if (body.machineId !== undefined || requestedCandidateMachineIds || firstStartClaim) {
+        updateData.machineId = targetMachineId;
+      }
       if (body.scheduledStart !== undefined || body.scheduledEnd !== undefined) {
         updateData.scheduledStart = scheduledStart;
         updateData.scheduledEnd = scheduledEnd;
@@ -335,13 +437,40 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
       if (requestedStatus === "Completed") updateData.endTime = new Date();
 
+      // Compare-and-set makes the first candidate Start the only winner. Two
+      // stations may read the same Ready card, but only one can still match the
+      // original status + machine tuple when PostgreSQL performs this UPDATE.
+      const compareWaitingAssignment = !firstStartClaim
+        && candidateStatusIsClaimable(currentOp.status)
+        && (requestedCandidateMachineIds !== null || body.machineId !== undefined);
+      const claimWhere = firstStartClaim || compareWaitingAssignment
+        ? and(
+            eq(orderOperations.id, operationId),
+            eq(orderOperations.status, currentOp.status),
+            currentOp.machineId === null
+              ? isNull(orderOperations.machineId)
+              : eq(orderOperations.machineId, currentOp.machineId),
+          )
+        : eq(orderOperations.id, operationId);
       const [updatedOp] = await tx
         .update(orderOperations)
         .set(updateData)
-        .where(eq(orderOperations.id, operationId))
+        .where(claimWhere)
         .returning();
+      if (!updatedOp) {
+        throw new WorkflowError(
+          firstStartClaim
+            ? "Another station claimed this operation first. Refresh the station queue."
+            : "This waiting operation changed while stations were being saved. Refresh and try again.",
+          409,
+        );
+      }
 
-      if (plannedBinding && body.machineId !== undefined) {
+      const persistedMachineChanged = updatedOp.machineId !== currentOp.machineId;
+      if (
+        plannedBinding
+        && (body.machineId !== undefined || requestedCandidateMachineIds || persistedMachineChanged)
+      ) {
         updateProductionStepMachine(updatedOp.orderId, updatedOp.id, targetMachineId);
       }
 
@@ -453,13 +582,39 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .set({ progressPercent, status: orderStatus })
         .where(eq(orders.id, updatedOp.orderId));
 
-      return { operation: updatedOp, progressPercent, orderStatus };
+      return {
+        operation: updatedOp,
+        progressPercent,
+        orderStatus,
+        machineClaimed: firstStartClaim,
+        requestedCandidateMachineIds,
+        persistedMachineChanged,
+      };
     });
+
+    // Candidate storage is advisory before Start. As soon as one station wins,
+    // collapse the overlay to that persisted machine; queue visibility already
+    // collapses atomically from the relational status + machine update above.
+    try {
+      if (result.requestedCandidateMachineIds) {
+        setOperationMachineCandidates(
+          result.operation.id,
+          result.requestedCandidateMachineIds,
+          user.id,
+        );
+      } else if (result.machineClaimed || body.machineId !== undefined) {
+        if (result.operation.machineId) {
+          setOperationMachineCandidates(result.operation.id, [result.operation.machineId], user.id);
+        }
+      }
+    } catch (error) {
+      console.warn("Candidate station overlay sync skipped:", error instanceof Error ? error.message : error);
+    }
 
     // Keep the warehouse destination aligned with the first private pass. This
     // overlay is display/fulfilment context, so a write failure must not undo a
     // valid operation update.
-    if (body.machineId !== undefined) {
+    if (body.machineId !== undefined || result.requestedCandidateMachineIds || result.persistedMachineChanged) {
       const binding = productionStepForOperation(result.operation.orderId, result.operation.id);
       if (binding?.index === 0) {
         try {
@@ -491,7 +646,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         result.operation.id,
       );
     }
-    logAudit(user, "operation.update", "operation", `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}${body.machineId !== undefined ? " · machine reassigned" : ""}`, result.operation.id);
+    logAudit(
+      user,
+      "operation.update",
+      "operation",
+      `${result.operation.operationName}: ${String(body.status ?? result.operation.status)}`
+        + `${body.machineId !== undefined ? " · machine reassigned" : ""}`
+        + `${result.requestedCandidateMachineIds ? ` · ${result.requestedCandidateMachineIds.length} candidate station(s)` : ""}`
+        + `${result.machineClaimed ? ` · claimed machine ${result.operation.machineId}` : ""}`,
+      result.operation.id,
+    );
     return NextResponse.json(result);
   } catch (error: unknown) {
     if (error instanceof WorkflowError) {
@@ -585,6 +749,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
       return { success: true, progressPercent };
     });
+    clearOperationMachineCandidates([operationId]);
     return NextResponse.json(result);
   } catch (error: unknown) {
     if (error instanceof WorkflowError) return NextResponse.json({ error: error.message }, { status: error.status });

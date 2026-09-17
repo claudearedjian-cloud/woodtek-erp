@@ -77,13 +77,65 @@ function ElapsedTimer({ startTime }: { startTime: string | null | undefined }) {
 }
 
 export default function OperatorStationView({
-  machines = [],
+  machines: shellMachines = [],
   currentUser,
   onRefresh,
   onSelectOrder,
 }: OperatorStationViewProps) {
+  // Machine crews can be changed remotely from the Machines workspace. Keep a
+  // live station roster here instead of waiting for a full-page hard refresh.
+  const [machines, setMachines] = useState<any[]>(shellMachines);
+  const assignedMachineRef = useRef<number | null>(null);
   const [selectedMachineId, setSelectedMachineId] = useState<number | null>(null);
   const [operations, setOperations] = useState<any[]>([]);
+
+  useEffect(() => {
+    setMachines(shellMachines);
+  }, [shellMachines]);
+
+  useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+    const refreshMachineRoster = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        const response = await fetch("/api/machines?summary=true", { cache: "no-store" });
+        if (!response.ok) return;
+        const next = await response.json();
+        if (alive && Array.isArray(next)) {
+          setMachines((current) => {
+            const fingerprint = (list: any[]) => JSON.stringify(list.map((machine) => ({
+              id: machine.id,
+              status: machine.status,
+              assignedOperatorId: machine.assignedOperatorId,
+              assignedOperatorIds: machine.assignedOperatorIds,
+              code: machine.code,
+              name: machine.name,
+              category: machine.category,
+              location: machine.location,
+              queueCount: machine.queueCount,
+              readyQueueCount: machine.readyQueueCount,
+              activeJobId: machine.activeJob?.id ?? null,
+            })));
+            return fingerprint(current) === fingerprint(next) ? current : next;
+          });
+        }
+      } catch {
+        // The existing roster remains usable during a transient refresh failure.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refreshMachineRoster();
+    const interval = setInterval(refreshMachineRoster, 10000);
+    document.addEventListener("visibilitychange", refreshMachineRoster);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshMachineRoster);
+    };
+  }, []);
   const [bomByOrder, setBomByOrder] = useState<Record<number, any[]>>({});
   const [receivedByOrder, setReceivedByOrder] = useState<Record<number, boolean | null>>({});
   const [receptionStateByOrder, setReceptionStateByOrder] = useState<Record<number, string | null>>({});
@@ -160,13 +212,24 @@ export default function OperatorStationView({
     ? machines.find((m: any) => opIdsOf(m).includes(Number(currentUser.id)))?.id ?? null
     : null;
 
-  // C2 (option A) — auto-select the operator's assigned machine on open,
-  // but the operator can still switch to any other station afterwards.
+  // Auto-select the operator's assigned station on open. If a supervisor moves
+  // the operator to another crew, the live roster switches once; ordinary
+  // manual station choices remain untouched while the assignment is stable.
   useEffect(() => {
-    if (selectedMachineId) return; // keep the operator's manual choice
-    if (machines.length === 0) return;
-    const mine = machines.find((m: any) => opIdsOf(m).includes(Number(currentUser?.id)));
-    setSelectedMachineId(mine ? mine.id : machines[0].id);
+    const mine = machines.find((machine: any) => opIdsOf(machine).includes(Number(currentUser?.id)));
+    const mineId = mine?.id ?? null;
+    const assignmentChanged = assignedMachineRef.current !== mineId;
+    assignedMachineRef.current = mineId;
+
+    if (mineId && (!selectedMachineId || assignmentChanged)) {
+      setSelectedMachineId(mineId);
+      return;
+    }
+    if (selectedMachineId && !machines.some((machine: any) => machine.id === selectedMachineId)) {
+      setSelectedMachineId(machines[0]?.id ?? null);
+      return;
+    }
+    if (!selectedMachineId && machines.length > 0) setSelectedMachineId(machines[0].id);
   }, [machines, currentUser, selectedMachineId]);
 
   // One scoped station request now carries operation, material/BOM and receipt
@@ -314,6 +377,7 @@ export default function OperatorStationView({
           status,
           rejectReason: reason?.trim() || undefined,
           operatorId: currentUser?.id ? Number(currentUser.id) : undefined,
+          ...(status === "In Progress" && selectedMachineId ? { stationMachineId: selectedMachineId } : {}),
           ...(extra || {}),
         }),
       });
@@ -334,6 +398,7 @@ export default function OperatorStationView({
       if (beforeRequest) void fetchMachineQueue({ force: true });
       const message = error instanceof Error ? error.message : "Touch action failed.";
       setActionError(message);
+      void fetchMachineQueue({ force: true });
       setTimeout(() => setActionError(""), 6000);
     } finally {
       actionInFlight.current = false;
@@ -398,11 +463,16 @@ export default function OperatorStationView({
         const res = await fetch(`/api/operations/${op0.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "In Progress", operatorId: currentUser?.id ? Number(currentUser.id) : undefined }),
+          body: JSON.stringify({
+            status: "In Progress",
+            operatorId: currentUser?.id ? Number(currentUser.id) : undefined,
+            stationMachineId: selectedMachineId ?? undefined,
+          }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({} as any));
           setActionError(data.error || "Could not start the machine job.");
+          await fetchMachineQueue({ force: true });
           return;
         }
       }

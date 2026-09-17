@@ -210,21 +210,28 @@ export default function OrderWorkflowDetail({
     }
   };
 
-  const handleSwapMachine = async (opId: number, machineId: string) => {
+  const handleSaveCandidateStations = async (opId: number, machineIds: number[]) => {
+    if (busyOperationId !== null) return;
+    if (machineIds.length === 0) {
+      setActionError("Choose at least one candidate station.");
+      return;
+    }
+    setBusyOperationId(opId);
+    setActionError("");
     try {
       const res = await fetch(`/api/operations/${opId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ machineId: machineId ? Number(machineId) : null }),
+        body: JSON.stringify({ candidateMachineIds: machineIds }),
       });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({} as any));
-        setActionError(d.error || "Machine assignment failed.");
-      }
-      fetchOrderDetail();
+      const payload = await res.json().catch(() => ({} as any));
+      if (!res.ok) throw new Error(payload.error || "Candidate station assignment failed.");
+      await fetchOrderDetail();
       onRefresh();
-    } catch (err) {
-      console.error("Failed to swap machine", err);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Candidate station assignment failed.");
+    } finally {
+      setBusyOperationId(null);
     }
   };
 
@@ -806,6 +813,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             )}
           </div>
 
+          {canAssignMachines(currentUser?.role) && (
+            <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-xs leading-relaxed text-blue-100">
+              <Cpu className="mr-1.5 inline h-4 w-4 text-blue-300" />
+              <strong>Candidate stations:</strong> select one or more active machines of the required category on any waiting pass. The first operator to press Start claims that pass atomically; it then disappears from every unchosen station.
+            </div>
+          )}
+
           {order.productionPlan && (
             <div className="grid gap-3 md:grid-cols-2">
               {order.productionPlan.items.map((item: any) => {
@@ -839,6 +853,14 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
               const isRunning = op.status === "In Progress";
               const isReady = op.status === "Ready";
               const isEditing = editingOpId === op.id;
+              const candidateMachineIds: number[] = Array.isArray(op.candidateMachineIds)
+                ? op.candidateMachineIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0)
+                : op.machineId ? [Number(op.machineId)] : [];
+              const equivalentMachines = machines.filter((machine: any) =>
+                (!op.machineCategory || machine.category === op.machineCategory || machine.id === op.machineId)
+                && (!["Maintenance", "Offline"].includes(machine.status) || candidateMachineIds.includes(machine.id))
+              );
+              const candidateSelectionLocked = !["Pending", "Ready"].includes(op.status);
 
               return (
                 <div 
@@ -883,27 +905,51 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                           {op.operationName}
                         </h4>
 
-                        {/* Assigned Station Swap Dropdown */}
+                        {/* Multi-station candidates; the database machine is claimed on first Start. */}
                         <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-400">
-                          <div className="flex items-center gap-1 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
-                            <Cpu className="w-3.5 h-3.5 text-amber-400" />
-                            <span className="text-slate-500 font-semibold">Station:</span>
-                            <select
-                              value={op.machineId || ""}
-                              onChange={(e) => handleSwapMachine(op.id, e.target.value)}
-                              disabled={!canAssignMachines(currentUser?.role)}
-                              title={canAssignMachines(currentUser?.role) ? "Assign a machine — only machines of the same type are offered" : "Only the Manager or Floor Supervisor can change the machine"}
-                              className="bg-transparent font-bold text-white focus:outline-none cursor-pointer text-xs disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              {canAssignMachines(currentUser?.role) && <option value="">Unassigned</option>}
-                              {machines
-                                .filter((m: any) => !op.machineCategory || m.category === op.machineCategory || m.id === op.machineId)
-                                .map((m: any) => (
-                                  <option key={m.id} value={m.id} className="bg-slate-900 text-white">
-                                    {m.code} ({m.name})
-                                  </option>
-                                ))}
-                            </select>
+                          <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/80 px-2.5 py-1.5">
+                            <Cpu className="h-3.5 w-3.5 text-amber-400" />
+                            <span className="font-semibold text-slate-500">
+                              {candidateSelectionLocked ? "Claimed station:" : "Candidate stations:"}
+                            </span>
+                            {equivalentMachines.length === 0 && (
+                              <span className="font-bold text-rose-300">No active matching station</span>
+                            )}
+                            {equivalentMachines.map((machine: any) => {
+                              const selected = candidateMachineIds.includes(machine.id);
+                              const unavailable = ["Maintenance", "Offline"].includes(machine.status);
+                              const canEditCandidates = canAssignMachines(currentUser?.role) && !candidateSelectionLocked;
+                              return (
+                                <label
+                                  key={machine.id}
+                                  title={unavailable ? `${machine.code} is ${machine.status}` : candidateSelectionLocked ? "The first Start has fixed this station" : "Toggle this equivalent candidate station"}
+                                  className={`flex items-center gap-1 rounded-md border px-2 py-1 font-black ${
+                                    selected
+                                      ? candidateSelectionLocked
+                                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                                        : "border-blue-500/50 bg-blue-500/10 text-blue-200"
+                                      : "border-slate-700 bg-slate-900 text-slate-500"
+                                  } ${canEditCandidates && (!unavailable || selected) ? "cursor-pointer hover:border-blue-400" : "cursor-not-allowed opacity-80"}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selected}
+                                    disabled={!canEditCandidates || (unavailable && !selected) || busyOperationId !== null}
+                                    onChange={() => {
+                                      const next = selected
+                                        ? candidateMachineIds.filter((id) => id !== machine.id)
+                                        : [...candidateMachineIds, machine.id];
+                                      void handleSaveCandidateStations(op.id, next);
+                                    }}
+                                    className="h-3.5 w-3.5 accent-blue-500"
+                                  />
+                                  {machine.code}
+                                </label>
+                              );
+                            })}
+                            {!candidateSelectionLocked && candidateMachineIds.length > 1 && (
+                              <span className="font-bold text-blue-300">First Start claims one</span>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1 text-slate-400">

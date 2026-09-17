@@ -30,6 +30,11 @@ import {
 } from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { readMachineOperators } from "@/lib/machineOperators.server";
+import {
+  candidateOperationIdsForMachine,
+  operationMachineCandidates,
+} from "@/lib/operationMachineCandidates.server";
+import { CANDIDATE_CLAIMABLE_STATUSES } from "@/lib/operationMachineCandidates";
 import type { SessionUser } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
 
@@ -129,34 +134,55 @@ async function allowedOrderIdsSubquery(user: SessionUser) {
   }
 
   if (user.role === "Machine Operator") {
-    // Operators see orders they're actively working OR that are routed to
-    // a machine they're assigned to.
+    // Operators see orders they're actively working OR that are routed/offered
+    // to a machine they crew. Candidate grants are operation-specific and are
+    // added explicitly; an empty assignment set remains deny-by-default.
     const directOps = db
       .select({ id: orderOperations.orderId })
       .from(orderOperations)
       .where(eq(orderOperations.operatorId, user.id));
 
-    // Multi-operator: a crew member sees orders routed to any machine they
-    // belong to (overlay crew list), not only their primary machine.
     const crewMachineIds = Object.entries(readMachineOperators())
       .filter(([, ids]) => (ids || []).includes(user.id))
       .map(([mid]) => Number(mid))
       .filter((n) => Number.isInteger(n) && n > 0);
+    const primaryMachineRows = await db
+      .select({ id: machines.id })
+      .from(machines)
+      .where(eq(machines.assignedOperatorId, user.id));
+    const assignedMachineIds = Array.from(new Set([
+      ...crewMachineIds,
+      ...primaryMachineRows.map((row) => row.id),
+    ]));
+
     const machineOps = db
       .select({ id: orderOperations.orderId })
       .from(orderOperations)
       .innerJoin(machines, eq(orderOperations.machineId, machines.id))
       .where(
-        crewMachineIds.length > 0
-          ? or(eq(machines.assignedOperatorId, user.id), inArray(machines.id, crewMachineIds))
-          : eq(machines.assignedOperatorId, user.id),
+        assignedMachineIds.length > 0
+          ? inArray(machines.id, assignedMachineIds)
+          : eq(machines.id, -1),
       );
 
-    const directIds = await directOps;
-    const machineIds = await machineOps;
-    const all = Array.from(new Set([...directIds, ...machineIds].map(r => r.id))).filter((n): n is number => typeof n === "number");
+    const candidateOperationIds = Array.from(new Set(
+      assignedMachineIds.flatMap((machineId) => candidateOperationIdsForMachine(machineId)),
+    ));
+    const candidateOps = candidateOperationIds.length > 0
+      ? await db
+          .select({ id: orderOperations.orderId })
+          .from(orderOperations)
+          .where(and(
+            inArray(orderOperations.id, candidateOperationIds),
+            inArray(orderOperations.status, [...CANDIDATE_CLAIMABLE_STATUSES]),
+          ))
+      : [];
+
+    const [directIds, machineIds] = await Promise.all([directOps, machineOps]);
+    const all = Array.from(new Set([...directIds, ...machineIds, ...candidateOps].map((row) => row.id)))
+      .filter((n): n is number => typeof n === "number");
     if (all.length === 0) {
-      // Force zero results via a sentinel id that cannot exist
+      // Force zero results via a sentinel id that cannot exist.
       return db.select({ id: orders.id }).from(orders).where(eq(orders.id, -1));
     }
     return db.select({ id: orders.id }).from(orders).where(inArray(orders.id, all));
@@ -186,11 +212,21 @@ async function allowedCustomerIdsSubquery(user: SessionUser) {
 async function allowedMachineIdsSubquery(user: SessionUser) {
   if (isManager(user)) return undefined;
   if (user.role === "Machine Operator") {
-    // Operator sees only machines they are assigned to
+    // Operator sees every station they crew, including secondary assignments
+    // stored in the no-migration crew overlay. An empty crew still falls back
+    // to the relational primary assignment and never broadens to all machines.
+    const crewMachineIds = Object.entries(readMachineOperators())
+      .filter(([, ids]) => (ids || []).includes(user.id))
+      .map(([machineId]) => Number(machineId))
+      .filter((machineId) => Number.isInteger(machineId) && machineId > 0);
     return db
       .select({ id: machines.id })
       .from(machines)
-      .where(eq(machines.assignedOperatorId, user.id));
+      .where(
+        crewMachineIds.length > 0
+          ? or(eq(machines.assignedOperatorId, user.id), inArray(machines.id, crewMachineIds))
+          : eq(machines.assignedOperatorId, user.id),
+      );
   }
   if (user.role === "Technician") {
     // Technicians see all machines (CMMS responsibility)
@@ -386,7 +422,18 @@ export async function listOperationsForUser(
   const whereClauses = [];
   if (ids) whereClauses.push(inArray(orderOperations.orderId, ids));
   if (filters?.orderId) whereClauses.push(eq(orderOperations.orderId, filters.orderId));
-  if (filters?.machineId) whereClauses.push(eq(orderOperations.machineId, filters.machineId));
+  if (filters?.machineId) {
+    const candidateIds = candidateOperationIdsForMachine(filters.machineId);
+    whereClauses.push(candidateIds.length > 0
+      ? or(
+          eq(orderOperations.machineId, filters.machineId),
+          and(
+            inArray(orderOperations.id, candidateIds),
+            inArray(orderOperations.status, [...CANDIDATE_CLAIMABLE_STATUSES]),
+          ),
+        )
+      : eq(orderOperations.machineId, filters.machineId));
+  }
   if (filters?.statuses && filters.statuses.length > 0) {
     whereClauses.push(inArray(orderOperations.status, filters.statuses));
   }
@@ -656,6 +703,7 @@ export async function listDowntimeEventsForUser(
 export async function canUserUpdateOperation(
   user: SessionUser,
   operationId: number,
+  context?: { stationMachineId?: number; requestedStatus?: string },
 ): Promise<{ allowed: boolean; operation?: typeof orderOperations.$inferSelect; reason?: string }> {
   if (isManager(user)) {
     const [op] = await db.select().from(orderOperations).where(eq(orderOperations.id, operationId));
@@ -666,7 +714,32 @@ export async function canUserUpdateOperation(
   const [op] = await db.select().from(orderOperations).where(eq(orderOperations.id, operationId));
   if (!op) return { allowed: false, reason: "Operation not found." };
 
-  // The operator is the assigned operator for this step
+  // A station-context Start is always tied to that station's actual crew — an
+  // operation-level assignment cannot be used to claim an arbitrary candidate.
+  const stationMachineId = Number(context?.stationMachineId);
+  if (
+    context?.requestedStatus === "In Progress"
+    && Number.isInteger(stationMachineId)
+    && stationMachineId > 0
+  ) {
+    const isCandidate = operationMachineCandidates(
+      op.id,
+      op.machineId,
+      op.status,
+    ).includes(stationMachineId);
+    const [station] = await db.select().from(machines).where(eq(machines.id, stationMachineId));
+    const stationCrew = readMachineOperators()[String(stationMachineId)] ?? [];
+    if (isCandidate && station && (station.assignedOperatorId === user.id || stationCrew.includes(user.id))) {
+      return { allowed: true, operation: op };
+    }
+    return {
+      allowed: false,
+      operation: op,
+      reason: "You are not assigned to this candidate machine station.",
+    };
+  }
+
+  // The operator is the assigned operator for this step.
   if (op.operatorId === user.id) return { allowed: true, operation: op };
 
   // Or the operator is on the crew of the machine this step is on

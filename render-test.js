@@ -39,6 +39,8 @@ compile("src/lib/bomKits.ts", "lib/bomKits.js");
 compile("src/lib/packingQc.ts", "lib/packingQc.js");
 compile("src/lib/orderArchive.ts", "lib/orderArchive.js");
 compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
+compile("src/lib/dispatch.ts", "lib/dispatch.js");
+compile("src/lib/operationMachineCandidates.ts", "lib/operationMachineCandidates.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
@@ -73,6 +75,14 @@ const dashboardApiSource = fs.readFileSync("src/app/api/dashboard/route.ts", "ut
 const orderDeleteSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
 const seedSource = fs.readFileSync("src/app/api/seed/route.ts", "utf8");
 const newOrderSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
+const orderCreateSource = fs.readFileSync("src/app/api/orders/route.ts", "utf8");
+const dispatchApiSource = fs.readFileSync("src/app/api/dispatch/route.ts", "utf8");
+const scheduleSource = fs.readFileSync("src/components/ScheduleView.tsx", "utf8");
+const dataAccessSource = fs.readFileSync("src/lib/dataAccess.ts", "utf8");
+const orderWorkflowSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
+const ordersViewSource = fs.readFileSync("src/components/OrdersView.tsx", "utf8");
+const packingApiSource = fs.readFileSync("src/app/api/packing-qc/route.ts", "utf8");
+const deliveryPhotoApiSource = fs.readFileSync("src/app/api/delivery-photos/route.ts", "utf8");
 check(pageSource.includes("dynamic(() => import(\"@/components/OperatorStationView\")"), "performance: application workspaces are code-split");
 check(!pageSource.includes("onRefresh={fetchAllData}"), "performance: actions never launch the whole-app refresh flood");
 check(pageSource.includes("compactStation ? Promise.resolve(null)"), "performance: locked Operator login skips unrelated administration datasets");
@@ -87,6 +97,63 @@ check(
     && pageSource.includes('user.role === "Manager"')
     && pageSource.includes("<MachineDowntimeLoginAlert"),
   "manager login: dedicated active-downtime check drives the warning prompt",
+);
+
+// ---- bundle 27: batch Dispatch + candidate claim + live station crew ----
+check(
+  orderCreateSource.includes("ensureDispatchBatches")
+    && orderCreateSource.includes("created.createdMaterials.map")
+    && dispatchApiSource.includes("dispatchBatchKey(material.id)"),
+  "batch dispatch: every material allocation receives a Dispatch identity at order creation",
+);
+check(
+  dispatchApiSource.includes("batchProductionReady")
+    && dispatchApiSource.includes("allCurrentBatchesDelivered")
+    && dispatchApiSource.includes("parentDelivered"),
+  "batch dispatch: production gate and all-sibling parent roll-up are server enforced",
+);
+check(
+  scheduleSource.includes("Mark batch delivered")
+    && scheduleSource.includes("Order batches:")
+    && scheduleSource.includes("batchId: proofFor.batchId"),
+  "batch dispatch: UI delivers one named batch and shows sibling progress",
+);
+check(
+  ordersViewSource.includes("Batch-aware Dispatch summary")
+    && ordersViewSource.includes("Mixed stages")
+    && ordersViewSource.includes(".delivered}/{dispatchByOrder"),
+  "batch dispatch: Orders view aggregates mixed sibling stages instead of overwriting by order id",
+);
+check(
+  packingApiSource.includes("batchChecks")
+    && deliveryPhotoApiSource.includes("meta.batches")
+    && scheduleSource.includes("This material batch has its own packing QC checklist"),
+  "batch dispatch: QC and delivery photos remain independent per batch",
+);
+check(
+  operationActionSource.includes("const claimWhere = firstStartClaim || compareWaitingAssignment")
+    && operationActionSource.includes("eq(orderOperations.status, currentOp.status)")
+    && operationActionSource.includes("eq(orderOperations.machineId, currentOp.machineId)")
+    && operationActionSource.includes("Another station claimed this operation first"),
+  "candidate claim concurrency: first Start uses a database compare-and-set and losers receive 409",
+);
+check(
+  operationsSource.includes("candidateMachineIds")
+    && dataAccessSource.includes("candidateOperationIdsForMachine")
+    && dataAccessSource.includes("CANDIDATE_CLAIMABLE_STATUSES"),
+  "candidate queues: every selected station can see the waiting operation only before claim",
+);
+check(
+  stationSource.includes("stationMachineId: selectedMachineId")
+    && orderWorkflowSource.includes("candidateMachineIds")
+    && orderWorkflowSource.includes("First Start claims one"),
+  "candidate stations: discoverable multi-select UI sends the actual station on Start",
+);
+check(
+  stationSource.includes('/api/machines?summary=true')
+    && stationSource.includes("assignedMachineRef")
+    && dataAccessSource.includes("crewMachineIds.length > 0"),
+  "station crew refresh: secondary/reassigned operators update without a hard page refresh",
 );
 
 // ---- dashboard batch labels + clean deletion regressions ----
@@ -570,7 +637,7 @@ check(dp.validatePhoto("image/jpeg", 1024) === null, "deliveryPhotos: jpeg accep
 check(dp.validatePhoto("image/heic", 10) !== null, "deliveryPhotos: heic rejected with a reason");
 check(dp.validatePhoto("image/png", dp.MAX_PHOTO_BYTES + 1) !== null, "deliveryPhotos: oversize rejected");
 check(dp.photoExtFor("image/webp") === "webp" && dp.photoExtFor("application/pdf") === null, "deliveryPhotos: mime map");
-check(dp.isSafeStoredPhotoName("delivery-12-1699999999999-1.jpg") && !dp.isSafeStoredPhotoName("../secret.jpg") && !dp.isSafeStoredPhotoName("delivery-1-2-3.exe"), "deliveryPhotos: stored-name pattern blocks traversal");
+check(dp.isSafeStoredPhotoName("delivery-12-1699999999999-1.jpg") && dp.isSafeStoredPhotoName("delivery-batch-71-1699999999999-1.webp") && !dp.isSafeStoredPhotoName("../secret.jpg") && !dp.isSafeStoredPhotoName("delivery-1-2-3.exe"), "deliveryPhotos: legacy + batch stored-name patterns block traversal");
 
 // ---- wall board ----
 const wb = require("./compiled/lib/wallboard.js");
@@ -691,6 +758,20 @@ check(pp.previousProductionOperationId(samplePlan, 802) === 801 && pp.nextProduc
 check(pp.routeStageKeys(samplePlan.items[0]).length === 4 && new Set(pp.routeStageKeys(samplePlan.items[0])).size === 4, "production plan: progress ladder preserves all repeated passes");
 const cleanPlanStore = pp.sanitizeProductionPlanStore({ version: 99, orders: { 22: samplePlan, bad: {}, 23: { orderId: 99, items: [] } } });
 check(Object.keys(cleanPlanStore.orders).length === 1 && cleanPlanStore.orders["22"].items.length === 1, "production plan: stored overlay rejects malformed and mismatched orders");
+
+// ---- batch Dispatch invariants ----
+const dispatch = require("./compiled/lib/dispatch.js");
+check(dispatch.dispatchBatchKey(71) === "batch:71" && dispatch.dispatchLegacyOrderKey(22) === "order:22", "batch dispatch: row keys cannot collide across sibling orders/materials");
+check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "awaiting_delivery" } }) === false, "batch dispatch: one delivered batch never delivers its sibling or parent");
+check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "delivered" } }) === true, "batch dispatch: parent becomes deliverable only after every current batch");
+check(dispatch.allCurrentBatchesDelivered([], {}) === false, "batch dispatch: an empty material set cannot satisfy the all-batches roll-up");
+
+// ---- operation machine candidates ----
+const omc = require("./compiled/lib/operationMachineCandidates.js");
+check(JSON.stringify(omc.sanitizeCandidateMachineIds([2, "1", 2, 0, "bad"])) === JSON.stringify([2, 1]), "machine candidates: ids sanitize, dedupe and preserve supervisor order");
+check(JSON.stringify(omc.effectiveCandidateMachineIds(1, "Ready", { machineIds: [1, 2] })) === JSON.stringify([1, 2]), "machine candidates: waiting operation is actionable at every selected equivalent station");
+check(JSON.stringify(omc.effectiveCandidateMachineIds(2, "In Progress", { machineIds: [1, 2] })) === JSON.stringify([2]), "machine candidates: running operation collapses to the atomically claimed station");
+check(omc.candidateIncludesStation(1, "Ready", { machineIds: [1, 2] }, 2) === true && omc.candidateIncludesStation(1, "Completed", { machineIds: [1, 2] }, 2) === false, "machine candidates: unchosen station loses visibility after first Start");
 
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");

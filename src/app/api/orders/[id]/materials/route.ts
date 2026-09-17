@@ -5,6 +5,7 @@ import { orderMaterials, inventoryItems, orders } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { applyMaterialsStatus, computeAvailability } from "@/lib/materials";
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";
+import { ensureDispatchBatches, removeDispatchBatch } from "@/lib/dispatch.server";
 
 /**
  * Bill-of-materials allocation. The stock is RESERVED (not deducted) on
@@ -68,7 +69,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "Enter a positive whole quantity." }, { status: 400 });
     }
 
-    const [orderRow] = await db.select({ id: orders.id }).from(orders).where(eq(orders.id, orderId));
+    const [orderRow] = await db
+      .select({
+        id: orders.id,
+        projectType: orders.projectType,
+        status: orders.status,
+        createdAt: orders.createdAt,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId));
     if (!orderRow) return NextResponse.json({ error: "Order not found." }, { status: 404 });
     if (readOrderProductionPlan(orderId)) {
       return NextResponse.json(
@@ -94,7 +103,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     //
     // NOTE: stockQuantity is NOT debited here. It is only debited when the
     // order is marked Completed, by the consumeMaterialsForOrder() helper.
-    await db.transaction(async (tx) => {
+    const allocationId = await db.transaction(async (tx) => {
       const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, itemId));
       if (!item) throw Object.assign(new Error("Stock item not found."), { httpStatus: 404 });
 
@@ -145,13 +154,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             .where(eq(orderMaterials.id, existing.id));
         }
       } else {
-        await tx.insert(orderMaterials).values({
+        const [inserted] = await tx.insert(orderMaterials).values({
           orderId,
           itemId,
           quantityUsed: quantity,
           costPerUnit: item.unitCost,
-        });
+        }).returning({ id: orderMaterials.id });
+        return inserted.id;
       }
+      return existing.id;
+    });
+
+    await ensureDispatchBatches({
+      orderId,
+      materialIds: [allocationId],
+      projectType: orderRow.projectType,
+      createdAt: orderRow.createdAt,
+      orderStatus: orderRow.status,
     });
 
     // Recompute the order's materials status
@@ -225,6 +244,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
         await tx.delete(orderMaterials).where(eq(orderMaterials.id, allocationId));
       }
     });
+
+    await removeDispatchBatch(allocationId);
 
     // Recompute the order's materials status
     newStatus = await applyMaterialsStatus(orderId);

@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { orders, customers, orderOperations, orderMaterials, machines, users, inventoryItems, materialConsumptions } from "@/db/schema";
-import { eq, asc, sql } from "drizzle-orm";
+import { and, eq, asc, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { isFloorRole } from "@/lib/dataAccess";
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";
+import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
+import { readDispatchStore } from "@/lib/dispatch.server";
+import { allCurrentBatchesDelivered } from "@/lib/dispatch";
 import { clearDeletedOrderRuntimeState } from "@/lib/orderCleanup.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -111,15 +114,23 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     }
     const enrichedOps = ops.map((operation) => {
       const hit = operationPlan.get(operation.id);
-      return hit ? {
+      const shared = {
         ...operation,
+        candidateMachineIds: operationMachineCandidates(
+          operation.id,
+          operation.machineId,
+          operation.status,
+        ),
+      };
+      return hit ? {
+        ...shared,
         machineCategory: operation.machineCategory || hit.step.machineCategory,
         productionMaterialId: hit.item.materialId,
         productionItemName: hit.item.name,
         productionRoutePosition: hit.step.position,
         productionRouteLength: hit.item.steps.length,
         productionRoute: hit.item.steps,
-      } : operation;
+      } : shared;
     });
     const enrichedMats = mats.map((material) => {
       const item = materialPlan.get(material.id);
@@ -181,6 +192,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.progressPercent !== undefined) updateFields.progressPercent = Number(body.progressPercent);
     if (body.notes !== undefined) updateFields.notes = body.notes;
     if (body.materialsStatus !== undefined) updateFields.materialsStatus = body.materialsStatus;
+
+    // Parent delivery is controlled by independent Dispatch batches. A manual
+    // whole-order status edit cannot let one material silently deliver siblings.
+    if (body.status === "Delivered") {
+      const currentBatches = await db
+        .select({ id: orderMaterials.id })
+        .from(orderMaterials)
+        .where(and(eq(orderMaterials.orderId, orderId), eq(orderMaterials.released, false)));
+      if (
+        currentBatches.length > 0
+        && !allCurrentBatchesDelivered(
+          currentBatches.map((batch) => batch.id),
+          readDispatchStore().batches,
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Deliver each current material batch in Dispatch first. The parent order becomes Delivered only after all batches arrive." },
+          { status: 409 },
+        );
+      }
+    }
 
     // If the caller is trying to mark the order as Completed, run the
     // material-consumption flow first (in the same transaction).
@@ -255,10 +287,16 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
     // Capture allocation ids before the relational delete so every JSON
     // overlay entry owned by this order can be removed afterwards.
-    const materialRows = await db
-      .select({ id: orderMaterials.id })
-      .from(orderMaterials)
-      .where(eq(orderMaterials.orderId, orderId));
+    const [materialRows, operationRows] = await Promise.all([
+      db
+        .select({ id: orderMaterials.id })
+        .from(orderMaterials)
+        .where(eq(orderMaterials.orderId, orderId)),
+      db
+        .select({ id: orderOperations.id })
+        .from(orderOperations)
+        .where(eq(orderOperations.orderId, orderId)),
+    ]);
 
     await db.transaction(async (tx) => {
       await tx.delete(orderMaterials).where(eq(orderMaterials.orderId, orderId));
@@ -272,6 +310,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const cleanupWarnings = clearDeletedOrderRuntimeState(
       orderId,
       materialRows.map((row) => row.id),
+      operationRows.map((row) => row.id),
     );
     if (cleanupWarnings.length > 0) {
       console.warn(`Order ${orderId} deleted, but some overlay cleanup steps need attention:`, cleanupWarnings);

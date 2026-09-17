@@ -1,19 +1,16 @@
 // ============================================================================
 // Packing QC checklist.
-//   GET — {template, templateIsDefault, checks: {orderId: [bool,...]}}
-//         (orders:read — the dispatch cards show progress to everyone)
-//   PUT — two modes:
-//         {orderId, checks:[bool,...]}  tick/untick a checklist
-//              → quality:write OR orders:write OR inventory:write
-//         {template:[...]}              edit the factory checklist
-//              → users:manage (Manager, in Settings)
-// Storage: data/packing-qc-template.json + data/packing-qc.json (no migration).
-// PUT /api/dispatch enforces the gate when an order leaves Packing.
+//   GET — template + legacy order checks + independent material-batch checks
+//   PUT — {orderId, batchId?, checks} or Manager-only {template}
+// Storage: packing-qc-template.json + packing-qc.json (no migration).
 // ============================================================================
 
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { orderMaterials } from "@/db/schema";
 import { getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
@@ -24,7 +21,11 @@ import {
   sanitizeTemplate,
   templateGates,
 } from "@/lib/packingQc";
-import { readChecksFile, readTemplateWithDefault } from "@/lib/packingQc.server";
+import {
+  readPackingChecksStore,
+  readTemplateWithDefault,
+  writePackingChecksStore,
+} from "@/lib/packingQc.server";
 
 function dataDir(): string {
   return process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -34,23 +35,8 @@ function templateLocation(): string {
   return path.join(dataDir(), "packing-qc-template.json");
 }
 
-function checksLocation(): string {
-  return path.join(dataDir(), "packing-qc.json");
-}
-
-/** Saved template; a missing file means "factory default". Empty = disabled. */
-function readTemplate(): { template: string[]; isDefault: boolean } {
-  return readTemplateWithDefault();
-}
-
-function readChecks(): Record<string, boolean[]> {
-  return readChecksFile();
-}
-
-function writeChecks(checks: Record<string, boolean[]>): void {
-  const file = checksLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, orders: checks }, null, 2), "utf8");
+function canWriteChecks(role: string): boolean {
+  return can(role, "quality:write") || can(role, "orders:write") || can(role, "inventory:write");
 }
 
 export async function GET() {
@@ -59,8 +45,14 @@ export async function GET() {
   if (!can(user.role, "orders:read")) {
     return NextResponse.json({ error: "You cannot view the packing checklist." }, { status: 403 });
   }
-  const { template, isDefault } = readTemplate();
-  return NextResponse.json({ template, templateIsDefault: isDefault, checks: readChecks() });
+  const { template, isDefault } = readTemplateWithDefault();
+  const store = readPackingChecksStore();
+  return NextResponse.json({
+    template,
+    templateIsDefault: isDefault,
+    checks: store.orders,
+    batchChecks: store.batches,
+  });
 }
 
 export async function PUT(request: Request) {
@@ -80,7 +72,9 @@ export async function PUT(request: Request) {
       }
       const file = templateLocation();
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ version: 1, template }, null, 2), "utf8");
+      const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(temp, JSON.stringify({ version: 1, template }, null, 2), "utf8");
+      fs.renameSync(temp, file);
       logAudit(
         user,
         "packing.qc.template",
@@ -92,33 +86,47 @@ export async function PUT(request: Request) {
       return NextResponse.json({ ok: true, template });
     }
 
-    // Mode 2: tick/untick an order's checklist (warehouse floor).
-    if (!can(user.role, "quality:write") && !can(user.role, "orders:write") && !can(user.role, "inventory:write")) {
+    if (!canWriteChecks(user.role)) {
       return NextResponse.json({ error: "You cannot tick the packing checklist." }, { status: 403 });
     }
     const orderId = Number(body?.orderId);
+    const batchId = body?.batchId == null ? null : Number(body.batchId);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return NextResponse.json({ error: "A valid orderId is required." }, { status: 400 });
     }
-    const { template } = readTemplate();
+    if (batchId !== null && (!Number.isInteger(batchId) || batchId <= 0)) {
+      return NextResponse.json({ error: "A valid material batch id is required." }, { status: 400 });
+    }
+    if (batchId !== null) {
+      const [material] = await db
+        .select({ id: orderMaterials.id })
+        .from(orderMaterials)
+        .where(and(eq(orderMaterials.id, batchId), eq(orderMaterials.orderId, orderId)));
+      if (!material) return NextResponse.json({ error: "Material batch not found on this order." }, { status: 404 });
+    }
+
+    const { template } = readTemplateWithDefault();
     if (!templateGates(template)) {
       return NextResponse.json({ error: "The packing checklist is disabled (empty template)." }, { status: 409 });
     }
     const checks = normalizeChecks(body?.checks, template.length);
-    const all = readChecks();
-    all[String(orderId)] = checks;
-    writeChecks(all);
+    const store = readPackingChecksStore();
+    if (batchId !== null) store.batches[String(batchId)] = checks;
+    else store.orders[String(orderId)] = checks;
+    writePackingChecksStore(store);
+
     logAudit(
       user,
       "packing.qc",
-      "order",
-      checklistComplete(checks)
-        ? `Packing QC checklist completed (${template.length}/${template.length})`
-        : `Packing QC checklist updated (${checklistProgress(checks)}/${template.length})`,
-      orderId,
+      batchId !== null ? "order_material" : "order",
+      `${batchId !== null ? `Batch ${batchId}` : `Order ${orderId}`} checklist `
+        + (checklistComplete(checks)
+          ? `completed (${template.length}/${template.length})`
+          : `updated (${checklistProgress(checks)}/${template.length})`),
+      batchId ?? orderId,
     );
-    return NextResponse.json({ ok: true, orderId, checks });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to save the packing checklist" }, { status: 500 });
+    return NextResponse.json({ ok: true, orderId, batchId, checks });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message || "Failed to save the packing checklist" }, { status: 500 });
   }
 }
