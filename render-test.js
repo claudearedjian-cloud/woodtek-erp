@@ -48,11 +48,13 @@ compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
+compile("src/components/MachineDowntimeLoginAlert.tsx", "components/MachineDowntimeLoginAlert.js");
 
 const React = require("react");
 const { renderToString } = require("react-dom/server");
 const Sidebar = require("./compiled/components/Sidebar.js").default;
 const NewOrderWizard = require("./compiled/components/NewOrderWizard.js").default;
+const MachineDowntimeLoginAlert = require("./compiled/components/MachineDowntimeLoginAlert.js").default;
 
 let fails = 0;
 const check = (cond, name) => {
@@ -80,6 +82,12 @@ check((stationSource.match(/<ElapsedTimer/g) || []).length === 1, "performance: 
 check(operationsSource.includes("listOperationsForUser(user") && operationsSource.includes("statuses: activeOnly ? activeStatuses"), "performance: operation filtering stays scoped and runs in SQL");
 check(operationActionSource.includes("One compact order snapshot") && !operationActionSource.includes("Re-read after readiness"), "performance: station action avoids duplicate full-order reads");
 check(machinesSource.includes("summaryOnly") && machinesSource.includes("operationsByMachine"), "performance: machine summaries avoid repeated scans and queue payloads");
+check(
+  pageSource.includes("/api/downtime?activeOnly=true")
+    && pageSource.includes('user.role === "Manager"')
+    && pageSource.includes("<MachineDowntimeLoginAlert"),
+  "manager login: dedicated active-downtime check drives the warning prompt",
+);
 
 // ---- dashboard batch labels + clean deletion regressions ----
 check(
@@ -107,6 +115,19 @@ check(
     && !newOrderSource.includes("new Set([...projectTypes, projectType])"),
   "new order: an intentionally empty/deleted project-category list stays empty",
 );
+
+// ---- Manager login machine-downtime warning ----
+const downtimeWarning = renderToString(React.createElement(MachineDowntimeLoginAlert, {
+  events: [
+    { id: 1, machineCode: "BEAM-01", machineName: "Beam Saw", reason: "Mechanical Failure", startedAt: "2026-09-17T08:00:00Z", orderNumber: "PO-0042/2026", operatorName: "Maroun", notes: "Clamp fault", endedAt: null },
+    { id: 2, machineCode: "OLD-01", machineName: "Old event", reason: "Closed", startedAt: "2026-09-16T08:00:00Z", endedAt: "2026-09-16T09:00:00Z" },
+  ],
+  onAcknowledge: () => {},
+  onOpenDowntime: () => {},
+}));
+check(downtimeWarning.includes("MACHINE DOWNTIME WARNING") && downtimeWarning.includes("machine is") && downtimeWarning.includes("currently marked down"), "manager login warning: active count and critical heading render");
+check(downtimeWarning.includes("BEAM-01") && downtimeWarning.includes("Mechanical Failure") && downtimeWarning.includes("Open Downtime Log") && !downtimeWarning.includes("OLD-01"), "manager login warning: live machine details + action render, closed events stay hidden");
+check(renderToString(React.createElement(MachineDowntimeLoginAlert, { events: [], onAcknowledge: () => {}, onOpenDowntime: () => {} })) === "", "manager login warning: no down machine means no prompt");
 
 const props = (role, menuConfig = null, lang) => ({
   activeTab: "station",

@@ -42,6 +42,7 @@ const DowntimeView = dynamic(() => import("@/components/DowntimeView"), { loadin
 const RecipeManagerView = dynamic(() => import("@/components/RecipeManagerView"), { loading: ScreenLoading });
 const PimsImportView = dynamic(() => import("@/components/PimsImportView"), { loading: ScreenLoading });
 const MenuDesignerView = dynamic(() => import("@/components/MenuDesignerView"), { loading: ScreenLoading });
+const MachineDowntimeLoginAlert = dynamic(() => import("@/components/MachineDowntimeLoginAlert"));
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -67,6 +68,8 @@ export default function WoodTekERP() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authCandidate, setAuthCandidate] = useState<any>(null);
+  const [managerDowntimeWarnings, setManagerDowntimeWarnings] = useState<any[]>([]);
+  const loginSequenceRef = useRef(0);
 
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [orders, setOrders] = useState<any[]>([]);
@@ -413,15 +416,36 @@ export default function WoodTekERP() {
   }, []);
 
   const requestProfileSwitch = (candidate?: any) => {
+    loginSequenceRef.current += 1;
+    setManagerDowntimeWarnings([]);
     setAuthCandidate(candidate || null);
     setAuthOpen(true);
     setSidebarOpen(false);
   };
 
   const handleAuthenticated = async (user: any) => {
+    const loginSequence = ++loginSequenceRef.current;
+    setManagerDowntimeWarnings([]);
     setCurrentUser(user);
     setAuthOpen(false);
     setAuthCandidate(null);
+
+    // A fresh Manager PIN login performs a dedicated live-downtime check. It
+    // is separate from dashboard loading so the safety prompt appears quickly
+    // even when the rest of the Manager workspace is still bootstrapping.
+    if (user.role === "Manager") {
+      void fetch("/api/downtime?activeOnly=true", { cache: "no-store" })
+        .then(async (response) => response.ok ? response.json() : [])
+        .then((payload) => {
+          if (loginSequenceRef.current !== loginSequence) return;
+          const active = Array.isArray(payload) ? payload.filter((event) => !event?.endedAt) : [];
+          if (active.length > 0) {
+            setShowSplash(false);
+            setManagerDowntimeWarnings(active);
+          }
+        })
+        .catch((error) => console.error("Manager login downtime check failed", error));
+    }
     const LANDING_TAB: Record<string, string> = {
       "Machine Operator": "station",
       "Floor Supervisor": "reception",
@@ -447,6 +471,8 @@ export default function WoodTekERP() {
   };
 
   const lockWorkspace = async () => {
+    loginSequenceRef.current += 1;
+    setManagerDowntimeWarnings([]);
     try {
       await fetch("/api/auth", { method: "DELETE" });
     } catch (error) {
@@ -572,6 +598,17 @@ export default function WoodTekERP() {
           user={currentUser}
           isLoading={loading}
           onClose={() => setShowSplash(false)}
+        />
+      )}
+      {managerDowntimeWarnings.length > 0 && currentUser?.role === "Manager" && (
+        <MachineDowntimeLoginAlert
+          events={managerDowntimeWarnings}
+          onAcknowledge={() => setManagerDowntimeWarnings([])}
+          onOpenDowntime={() => {
+            setManagerDowntimeWarnings([]);
+            setShowSplash(false);
+            setActiveTab("downtime");
+          }}
         />
       )}
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-slate-950/75 backdrop-blur-sm md:hidden" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
