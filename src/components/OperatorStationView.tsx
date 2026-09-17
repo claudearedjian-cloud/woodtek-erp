@@ -30,7 +30,7 @@ import {
 interface OperatorStationViewProps {
   machines: any[];
   currentUser: any;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onSelectOrder: (orderId: number) => void;
 }
 
@@ -115,6 +115,13 @@ export default function OperatorStationView({
 
   // C6 — new-job arrival flash
   const knownOpIds = useRef<Set<number>>(new Set());
+  const queueRequestId = useRef(0);
+  const queueInFlight = useRef(false);
+  const queueMachineId = useRef<number | null>(null);
+  const queueFingerprint = useRef("");
+  const downtimeFingerprint = useRef("");
+  const actionInFlight = useRef(false);
+  const newJobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [newJobFlash, setNewJobFlash] = useState(false);
   const [scanValue, setScanValue] = useState("");
   const [scannedOpId, setScannedOpId] = useState<number | null>(null);
@@ -162,59 +169,79 @@ export default function OperatorStationView({
     setSelectedMachineId(mine ? mine.id : machines[0].id);
   }, [machines, currentUser, selectedMachineId]);
 
-  // Fetch active operations for selected machine
-  const fetchMachineQueue = async () => {
-    if (!selectedMachineId) return;
-    setLoadingOps(true);
+  // One scoped station request now carries operation, material/BOM and receipt
+  // state. Downtime runs beside it instead of serially, and overlapping polls
+  // are suppressed so a slow response cannot pile up behind the next interval.
+  const fetchMachineQueue = async ({
+    showLoading = false,
+    force = false,
+  }: { showLoading?: boolean; force?: boolean } = {}): Promise<void> => {
+    const machineId = selectedMachineId;
+    if (!machineId) return;
+    if (!force && queueInFlight.current && queueMachineId.current === machineId) return;
+
+    const requestId = ++queueRequestId.current;
+    queueInFlight.current = true;
+    queueMachineId.current = machineId;
+    if (showLoading) setLoadingOps(true);
+
     try {
-      // B — also pull any open downtime for this station so the banner is live.
-      const dtRes = await fetch(`/api/downtime?machineId=${selectedMachineId}&activeOnly=true`, { cache: "no-store" });
-      if (dtRes.ok) {
-        const dt = await dtRes.json();
-        setActiveDowntime((Array.isArray(dt) && dt.length > 0) ? dt[0] : null);
-      } else {
-        setActiveDowntime(null);
+      const [dtRes, operationsRes] = await Promise.all([
+        fetch(`/api/downtime?machineId=${machineId}&activeOnly=true`, { cache: "no-store" }),
+        fetch(`/api/operations?machineId=${machineId}&activeOnly=true&station=true`, { cache: "no-store" }),
+      ]);
+      if (!operationsRes.ok) throw new Error("The station queue could not be refreshed.");
+
+      const [downtime, data] = await Promise.all([
+        dtRes.ok ? dtRes.json() : Promise.resolve([]),
+        operationsRes.json(),
+      ]);
+      if (requestId !== queueRequestId.current || machineId !== selectedMachineId) return;
+
+      const activeDowntimeRow = Array.isArray(downtime) && downtime.length > 0 ? downtime[0] : null;
+      const nextDowntimeFingerprint = JSON.stringify(activeDowntimeRow);
+      if (nextDowntimeFingerprint !== downtimeFingerprint.current) {
+        downtimeFingerprint.current = nextDowntimeFingerprint;
+        setActiveDowntime(activeDowntimeRow);
+      }
+      const rows = Array.isArray(data) ? data : [];
+      const nextQueueFingerprint = JSON.stringify(rows);
+      if (nextQueueFingerprint === queueFingerprint.current) return;
+      queueFingerprint.current = nextQueueFingerprint;
+
+      const previousIds = knownOpIds.current;
+      const ids = new Set<number>(rows.map((operation: any) => Number(operation.id)));
+      const fresh = previousIds.size > 0 && rows.some((operation: any) => !previousIds.has(Number(operation.id)));
+      knownOpIds.current = ids;
+      if (fresh) {
+        setNewJobFlash(true);
+        if (newJobTimer.current) clearTimeout(newJobTimer.current);
+        newJobTimer.current = setTimeout(() => setNewJobFlash(false), 5000);
       }
 
-      const res = await fetch(`/api/operations?machineId=${selectedMachineId}&activeOnly=true`);
-      if (res.ok) {
-        const data = await res.json();
-        // C6 — flash when a brand-new job shows up for this station
-        const ids = new Set((data as any[]).map((o: any) => Number(o.id)));
-        const fresh = (data as any[]).some((o: any) => !knownOpIds.current.has(Number(o.id)));
-        knownOpIds.current = ids;
-        if (fresh && knownOpIds.current.size > 0) {
-          setNewJobFlash(true);
-          setTimeout(() => setNewJobFlash(false), 5000);
-        }
-        setOperations(data);
-      }
-    } catch (err) {
-      console.error("Error fetching station tasks:", err);
-    } finally {
-      setLoadingOps(false);
-    }
-  };
-
-  // BOM board for this operator: requested materials + receipt confirmation.
-  const fetchBomBoard = async () => {
-    try {
-      const r = await fetch("/api/bom", { cache: "no-store" });
-      if (!r.ok) return;
-      const d = await r.json();
       const byOrder: Record<number, any[]> = {};
-      const rec: Record<number, boolean | null> = {};
-      const recState: Record<number, string | null> = {};
-      for (const o of d.orders ?? []) {
-        byOrder[o.id] = o.materials ?? [];
-        rec[o.id] = o.received ?? null;
-        recState[o.id] = o.receivedState ?? null;
+      const received: Record<number, boolean | null> = {};
+      const receivedState: Record<number, string | null> = {};
+      for (const operation of rows) {
+        if (byOrder[operation.orderId]) continue;
+        byOrder[operation.orderId] = operation.orderBom ?? operation.materials ?? [];
+        received[operation.orderId] = operation.received ?? null;
+        receivedState[operation.orderId] = operation.receivedState ?? null;
       }
+      setOperations(rows);
       setBomByOrder(byOrder);
-      setReceivedByOrder(rec);
-      setReceptionStateByOrder(recState);
-    } catch {
-      /* board is best-effort */
+      setReceivedByOrder(received);
+      setReceptionStateByOrder(receivedState);
+    } catch (error) {
+      if (requestId === queueRequestId.current) {
+        console.error("Error fetching station tasks:", error);
+      }
+    } finally {
+      if (requestId === queueRequestId.current) {
+        queueInFlight.current = false;
+        queueMachineId.current = null;
+        setLoadingOps(false);
+      }
     }
   };
 
@@ -232,32 +259,54 @@ export default function OperatorStationView({
         setTimeout(() => setActionError(""), 6000);
         return;
       }
-      await fetchBomBoard();
+      await fetchMachineQueue({ force: true });
     } catch {
-      /* ignore */
+      setActionError("Reception update failed.");
     }
   };
 
   useEffect(() => {
-    fetchMachineQueue();
-    fetchBomBoard();
-    const interval = setInterval(() => {
-      fetchMachineQueue();
-      fetchBomBoard();
-    }, 10000);
-    return () => clearInterval(interval);
+    queueRequestId.current += 1;
+    queueInFlight.current = false;
+    queueMachineId.current = null;
+    queueFingerprint.current = "";
+    downtimeFingerprint.current = "";
+    knownOpIds.current = new Set();
+    setNewJobFlash(false);
+    void fetchMachineQueue({ showLoading: true, force: true });
+
+    const refreshVisibleStation = () => {
+      if (document.visibilityState === "visible") void fetchMachineQueue();
+    };
+    const interval = setInterval(refreshVisibleStation, 10000);
+    document.addEventListener("visibilitychange", refreshVisibleStation);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshVisibleStation);
+      queueRequestId.current += 1;
+      queueInFlight.current = false;
+      if (newJobTimer.current) clearTimeout(newJobTimer.current);
+    };
   }, [selectedMachineId]);
 
-  const handleTouchAction = async (opId: number, status: string, reason?: string, extra?: Record<string, unknown>) => {
-    if (busyOperationId !== null) return;
+  const handleTouchAction = async (
+    opId: number,
+    status: string,
+    reason?: string,
+    extra?: Record<string, unknown>,
+    beforeRequest?: () => Promise<boolean>,
+  ) => {
+    if (actionInFlight.current) return;
     if (status === "Rejected/Rework" && !reason?.trim()) {
       setActionError("Choose a reason for rejection.");
       return;
     }
 
+    actionInFlight.current = true;
     setBusyOperationId(opId);
     setActionError("");
     try {
+      if (beforeRequest && !(await beforeRequest())) return;
       const response = await fetch(`/api/operations/${opId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -271,15 +320,23 @@ export default function OperatorStationView({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "The station could not update this operation.");
 
+      setOperations((current) => status === "Completed"
+        ? current.filter((operation) => operation.id !== opId)
+        : current.map((operation) => operation.id === opId ? { ...operation, status } : operation));
       setActionSuccess(status === "Completed" ? "Step completed — the next workstation is now ready." : `Operation marked ${status}.`);
       setTimeout(() => setActionSuccess(""), 3500);
-      await fetchMachineQueue();
-      onRefresh();
+      await fetchMachineQueue({ force: true });
+      // Keep surrounding counts current without making the station wait for it.
+      void Promise.resolve().then(onRefresh).catch(() => undefined);
     } catch (error) {
+      // A legacy last-material action advances its material immediately before
+      // closing the shared job. If close fails, show that persisted stage now.
+      if (beforeRequest) void fetchMachineQueue({ force: true });
       const message = error instanceof Error ? error.message : "Touch action failed.";
       setActionError(message);
       setTimeout(() => setActionError(""), 6000);
     } finally {
+      actionInFlight.current = false;
       setBusyOperationId(null);
     }
   };
@@ -309,7 +366,7 @@ export default function OperatorStationView({
   // the next ladder stage (never a skip). Best-effort; the queue refetches.
   // Per-material taps: "▶ Start" moves ONE material into the current step;
   // "✓ Finished here" lets the server pick the next ladder stage — never a skip.
-  const advanceMaterial = async (materialId: number, stage?: string): Promise<boolean> => {
+  const advanceMaterial = async (materialId: number, stage?: string, refreshQueue = true): Promise<boolean> => {
     try {
       const res = await fetch("/api/material-progress", {
         method: "PUT",
@@ -319,10 +376,9 @@ export default function OperatorStationView({
       if (!res.ok) {
         const d = await res.json().catch(() => ({} as any));
         setActionError(d.error || "Could not update the material.");
-        await fetchMachineQueue();
         return false;
       }
-      await fetchMachineQueue();
+      if (refreshQueue) await fetchMachineQueue({ force: true });
       return true;
     } catch {
       setActionError("Could not update the material.");
@@ -333,7 +389,10 @@ export default function OperatorStationView({
   // that ONE material into the step. FINISH on a line sends it to its next
   // stage; when the last material leaves, the machine job completes itself.
   const startMaterial = async (op0: any, matId: number, targetStage: string) => {
-    if (busyOperationId !== null) return;
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    setBusyOperationId(op0.id);
+    setActionError("");
     try {
       if (op0.status !== "In Progress") {
         const res = await fetch(`/api/operations/${op0.id}`, {
@@ -342,19 +401,35 @@ export default function OperatorStationView({
           body: JSON.stringify({ status: "In Progress", operatorId: currentUser?.id ? Number(currentUser.id) : undefined }),
         });
         if (!res.ok) {
-          const d = await res.json().catch(() => ({} as any));
-          setActionError(d.error || "Could not start the machine job.");
+          const data = await res.json().catch(() => ({} as any));
+          setActionError(data.error || "Could not start the machine job.");
           return;
         }
       }
-      await advanceMaterial(matId, targetStage);
+      if (!(await advanceMaterial(matId, targetStage, false))) {
+        await fetchMachineQueue({ force: true });
+        return;
+      }
+      setOperations((current) => current.map((operation) => operation.id === op0.id
+        ? {
+            ...operation,
+            status: "In Progress",
+            materials: (operation.materials ?? []).map((material: any) => material.id === matId
+              ? { ...material, stage: targetStage }
+              : material),
+          }
+        : operation));
+      await fetchMachineQueue({ force: true });
+      void Promise.resolve().then(onRefresh).catch(() => undefined);
     } catch {
       setActionError("Could not start this material.");
+    } finally {
+      actionInFlight.current = false;
+      setBusyOperationId(null);
     }
   };
 
   const finishMaterial = async (op0: any, matId: number, stepStage: string) => {
-    if (!(await advanceMaterial(matId))) return;
     // Legacy shared jobs close only after every material that needs this step
     // has reached and passed it. Merely having no material here at this exact
     // moment used to close the job before upstream materials arrived.
@@ -366,11 +441,25 @@ export default function OperatorStationView({
       const current = material.stage ? route.indexOf(material.stage) : -1;
       return current <= target;
     });
+
     if (!stillNeedsThisPass) {
-      await handleTouchAction(op0.id, "Completed");
+      await handleTouchAction(op0.id, "Completed", undefined, undefined, () => advanceMaterial(matId, undefined, false));
+      return;
+    }
+
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    setBusyOperationId(op0.id);
+    setActionError("");
+    try {
+      if (!(await advanceMaterial(matId, undefined, false))) return;
+      await fetchMachineQueue({ force: true });
+      void Promise.resolve().then(onRefresh).catch(() => undefined);
+    } finally {
+      actionInFlight.current = false;
+      setBusyOperationId(null);
     }
   };
-
 
   // C4 — finish requires a second tap within 3s
   const handleFinishTap = (op: any) => {
@@ -407,7 +496,7 @@ export default function OperatorStationView({
       setDowntimeReason(DOWNTIME_REASONS[0]);
       setActionSuccess("Station marked DOWN — downtime is now being logged.");
       setTimeout(() => setActionSuccess(""), 4000);
-      await fetchMachineQueue();
+      await fetchMachineQueue({ force: true });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not start downtime.");
       setTimeout(() => setActionError(""), 6000);
@@ -430,8 +519,8 @@ export default function OperatorStationView({
       if (!res.ok) throw new Error(payload.error || "Could not end downtime.");
       setActionSuccess("Station back up — downtime closed.");
       setTimeout(() => setActionSuccess(""), 4000);
-      await fetchMachineQueue();
-      onRefresh();
+      await fetchMachineQueue({ force: true });
+      void Promise.resolve().then(onRefresh).catch(() => undefined);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not end downtime.");
       setTimeout(() => setActionError(""), 6000);
@@ -588,7 +677,7 @@ export default function OperatorStationView({
             )}
           </h3>
           <button
-            onClick={fetchMachineQueue}
+            onClick={() => void fetchMachineQueue({ showLoading: true, force: true })}
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
             title="Refresh Machine Queue"
           >
@@ -685,9 +774,9 @@ export default function OperatorStationView({
                         <span className="flex items-center gap-1">
                           <Clock className="w-4 h-4 text-slate-500" /> Est: <strong className="text-slate-200">{op.estimatedMinutes} mins</strong>
                         </span>
-                        {isRunning && (
+                        {isRunning && op.startTime && (
                           <span className="flex items-center gap-1">
-                            <Timer className="w-4 h-4 text-slate-500" /> Started: <ElapsedTimer startTime={op.startTime} />
+                            <Timer className="w-4 h-4 text-slate-500" /> Started: <strong className="text-slate-200">{new Date(op.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
                           </span>
                         )}
                         {op.operatorName && (

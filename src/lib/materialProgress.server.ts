@@ -16,24 +16,58 @@ import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { findProductionStepByOperation } from "@/lib/productionPlan";
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 
+type ProgressMap = Record<string, { stage: string; at: string; by: string }>;
+
+type ProgressCache = {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  progress: ProgressMap;
+};
+
+let progressCache: ProgressCache | null = null;
+
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
   return path.join(dir, "material-progress.json");
 }
 
-export function readAllProgress(): Record<string, { stage: string; at: string; by: string }> {
+function cacheProgress(file: string, progress: ProgressMap): void {
   try {
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    return sanitizeProgressMap(parsed?.progress);
+    const stat = fs.statSync(file);
+    progressCache = { file, mtimeMs: stat.mtimeMs, size: stat.size, progress };
   } catch {
+    progressCache = { file, mtimeMs: -1, size: -1, progress };
+  }
+}
+
+export function readAllProgress(): ProgressMap {
+  const file = fileLocation();
+  try {
+    const stat = fs.statSync(file);
+    if (
+      progressCache?.file === file
+      && progressCache.mtimeMs === stat.mtimeMs
+      && progressCache.size === stat.size
+    ) {
+      return { ...progressCache.progress };
+    }
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const progress = sanitizeProgressMap(parsed?.progress);
+    cacheProgress(file, progress);
+    return { ...progress };
+  } catch {
+    if (progressCache?.file === file && progressCache.mtimeMs === -1) return { ...progressCache.progress };
+    cacheProgress(file, {});
     return {};
   }
 }
 
-export function writeAllProgress(progress: Record<string, { stage: string; at: string; by: string }>): void {
+export function writeAllProgress(progress: ProgressMap): void {
   const file = fileLocation();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ version: 1, progress }, null, 2), "utf8");
+  cacheProgress(file, { ...progress });
 }
 
 

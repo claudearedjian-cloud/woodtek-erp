@@ -4,20 +4,30 @@ import { machines, users, orderOperations, orders } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { listMachinesForUser, listOperationsForUser, isManager as userIsManager } from "@/lib/dataAccess";
-import { effectiveOperatorIds, setMachineOperators } from "@/lib/machineOperators.server";
+import { readMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
 
-export async function GET() {
+export async function GET(request: Request) {
   const { user, error: authError } = await authorize("machines:read");
   if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const scopedMachines = await listMachinesForUser(user);
-    const scopedOps = await listOperationsForUser(user);
+    const summaryOnly = new URL(request.url).searchParams.get("summary") === "true";
+    const [scopedMachines, scopedOps] = await Promise.all([
+      listMachinesForUser(user),
+      listOperationsForUser(user, { statuses: ["Ready", "In Progress", "Pending"] }),
+    ]);
 
-    const allowedMachineIds = new Set(scopedMachines.map(m => m.id));
+    const crews = readMachineOperators();
+    const operationsByMachine = new Map<number, typeof scopedOps>();
+    for (const operation of scopedOps) {
+      if (operation.machineId == null) continue;
+      const list = operationsByMachine.get(operation.machineId) ?? [];
+      list.push(operation);
+      operationsByMachine.set(operation.machineId, list);
+    }
 
     const enriched = scopedMachines.map(m => {
-      const machineOps = scopedOps.filter(o => o.machineId === m.id && (o.status === "Ready" || o.status === "In Progress" || o.status === "Pending"));
+      const machineOps = operationsByMachine.get(m.id) ?? [];
       const activeJob = machineOps.find(o => o.status === "In Progress") || null;
       const readyQueueCount = machineOps.filter(o => o.status === "Ready").length;
       const totalEstimatedMinutes = machineOps.reduce((sum, o) => sum + (o.estimatedMinutes || 0), 0);
@@ -33,13 +43,15 @@ export async function GET() {
       return {
         ...m,
         hourlyCost,
-        assignedOperatorIds: effectiveOperatorIds(m.id, m.assignedOperatorId),
+        assignedOperatorIds: crews[String(m.id)]?.length
+          ? crews[String(m.id)]
+          : m.assignedOperatorId != null ? [m.assignedOperatorId] : [],
         status: displayStatus,
         activeJob,
         queueCount: machineOps.length,
         readyQueueCount,
         totalQueueMinutes: totalEstimatedMinutes,
-        queuedJobs: machineOps,
+        ...(summaryOnly ? {} : { queuedJobs: machineOps }),
       };
     });
 

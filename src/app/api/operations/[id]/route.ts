@@ -13,7 +13,7 @@ import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { autoCompleteMaterialsForStep, markPlannedMaterialAtOperation } from "@/lib/materialProgress.server";
 import { jobLockedByOther } from "@/lib/jobLock";
-import { nextProductionOperationId, previousProductionOperationId } from "@/lib/productionPlan";
+import { findProductionStepByOperation, nextProductionOperationId, previousProductionOperationId } from "@/lib/productionPlan";
 import { readOrderProductionPlan, productionStepForOperation, updateProductionStepMachine } from "@/lib/productionPlan.server";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 
@@ -72,7 +72,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const [currentOp] = await tx.select().from(orderOperations).where(eq(orderOperations.id, operationId));
       if (!currentOp) throw new WorkflowError("Operation step not found.", 404);
       const productionPlan = readOrderProductionPlan(currentOp.orderId);
-      const plannedBinding = productionStepForOperation(currentOp.orderId, currentOp.id);
+      const plannedBinding = findProductionStepByOperation(productionPlan, currentOp.id);
 
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
@@ -167,7 +167,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             const [predecessor] = await tx
               .select({ status: orderOperations.status })
               .from(orderOperations)
-              .where(eq(orderOperations.id, predecessorId));
+              .where(eq(orderOperations.id, predecessorId))
+              .limit(1);
             if (!predecessor || predecessor.status !== "Completed") {
               throw new WorkflowError(`Finish the previous job for “${plannedBinding.item.name}” before starting this pass.`, 409);
             }
@@ -218,15 +219,38 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
         // Material gate: an order with a BOM cannot enter production until the
         // Floor Supervisor has approved reception at the station.
-        const bomLines = await tx
-          .select({ id: orderMaterials.id })
-          .from(orderMaterials)
-          .where(eq(orderMaterials.orderId, currentOp.orderId));
-        if (bomLines.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+        // A valid v2 binding always owns a material row, so its plan proves a
+        // BOM exists without another database round trip. Legacy orders retain
+        // the explicit allocation lookup.
+        const hasBomLines = plannedBinding
+          ? true
+          : (await tx
+              .select({ id: orderMaterials.id })
+              .from(orderMaterials)
+              .where(eq(orderMaterials.orderId, currentOp.orderId))
+              .limit(1)).length > 0;
+        if (hasBomLines && readReceived()[String(currentOp.orderId)]?.received !== true) {
           throw new WorkflowError("Material reception for this order has NOT been approved. Ask the Floor Supervisor to approve the BOM reception before starting.", 409);
         }
 
-        const [station] = await tx.select().from(machines).where(eq(machines.id, targetMachineId));
+        // Validate machine availability and its one-job capacity in one query.
+        const [station] = await tx
+          .select({
+            id: machines.id,
+            code: machines.code,
+            category: machines.category,
+            status: machines.status,
+            runningOperationId: orderOperations.id,
+            runningOperationName: orderOperations.operationName,
+          })
+          .from(machines)
+          .leftJoin(orderOperations, and(
+            eq(orderOperations.machineId, machines.id),
+            eq(orderOperations.status, "In Progress"),
+            ne(orderOperations.id, currentOp.id),
+          ))
+          .where(eq(machines.id, targetMachineId))
+          .limit(1);
         if (!station) throw new WorkflowError("The assigned machine no longer exists.", 409);
         if (plannedBinding && station.category.toLowerCase() !== plannedBinding.step.machineCategory.toLowerCase()) {
           throw new WorkflowError(`This pass requires a ${plannedBinding.step.machineCategory} machine.`, 409);
@@ -234,17 +258,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (station.status === "Maintenance" || station.status === "Offline") {
           throw new WorkflowError(`${station.code} is ${station.status.toLowerCase()} and cannot accept work.`, 409);
         }
-
-        const runningOnStation = await tx
-          .select({ id: orderOperations.id, operationName: orderOperations.operationName })
-          .from(orderOperations)
-          .where(and(
-            eq(orderOperations.machineId, targetMachineId),
-            eq(orderOperations.status, "In Progress"),
-            ne(orderOperations.id, currentOp.id)
-          ));
-        if (runningOnStation.length > 0) {
-          throw new WorkflowError(`${station.code} is already running “${runningOnStation[0].operationName}”. Complete or pause it first.`, 409);
+        if (station.runningOperationId) {
+          throw new WorkflowError(`${station.code} is already running “${station.runningOperationName}”. Complete or pause it first.`, 409);
         }
       }
 
@@ -355,7 +370,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
       // Recovering from a rejection closes the open rework event on this step:
       // restarting work marks it "In Rework", completing it marks it passed.
-      if (requestedStatus === "In Progress" || requestedStatus === "Completed") {
+      if (
+        requestedStatus === "Completed"
+        || (requestedStatus === "In Progress" && (currentOp.status === "Rejected/Rework" || Boolean(currentOp.rejectReason)))
+      ) {
         const targetDisposition = requestedStatus === "Completed" ? "Reworked & Passed" : "In Rework";
         await tx.update(qualityEvents)
           .set({ disposition: targetDisposition, resolvedAt: requestedStatus === "Completed" ? new Date() : null })
@@ -366,20 +384,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           ));
       }
 
-      // First machine start flips the ORDER itself into production so the
-      // orders board reflects reality without a manual status change.
-      if (requestedStatus === "In Progress") {
-        const [parentOrder] = await tx.select().from(orders).where(eq(orders.id, updatedOp.orderId));
-        if (parentOrder && (parentOrder.status === "Quoted" || parentOrder.status === "Deposit Paid")) {
-          await tx.update(orders)
-            .set({ status: "In Production" })
-            .where(eq(orders.id, parentOrder.id));
-        }
-      }
-
-      let allOps = await tx
-        .select()
+      // One compact order snapshot serves readiness, rework progress and the
+      // parent status calculation. Keep it current in memory after the writes
+      // below instead of issuing the same full-order SELECT a second time.
+      const allOps = await tx
+        .select({
+          id: orderOperations.id,
+          stepOrder: orderOperations.stepOrder,
+          status: orderOperations.status,
+          parentOrderStatus: orders.status,
+        })
         .from(orderOperations)
+        .innerJoin(orders, eq(orderOperations.orderId, orders.id))
         .where(eq(orderOperations.orderId, updatedOp.orderId))
         .orderBy(asc(orderOperations.stepOrder));
 
@@ -392,6 +408,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           await tx.update(orderOperations)
             .set({ status: "Ready", updatedAt: new Date() })
             .where(eq(orderOperations.id, nextStep.id));
+          nextStep.status = "Ready";
         }
       }
 
@@ -419,21 +436,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
                 }
               : { status: "Pending", updatedAt: new Date() })
             .where(eq(orderOperations.id, downstream.id));
+          downstream.status = "Pending";
         }
       }
 
-      // Re-read after readiness/rework changes so order progress reflects the
-      // committed private-chain states rather than the pre-update snapshot.
-      allOps = await tx
-        .select()
-        .from(orderOperations)
-        .where(eq(orderOperations.orderId, updatedOp.orderId))
-        .orderBy(asc(orderOperations.stepOrder));
       const completedCount = allOps.filter((operation) => operation.status === "Completed").length;
       const progressPercent = allOps.length > 0 ? Math.round((completedCount / allOps.length) * 100) : 0;
-      const [currentOrder] = await tx.select().from(orders).where(eq(orders.id, updatedOp.orderId));
 
-      let orderStatus = currentOrder?.status || "Pending";
+      let orderStatus = allOps[0]?.parentOrderStatus || "Pending";
       if (progressPercent === 100) orderStatus = "Completed";
       else if (updatedOp.status === "Rejected/Rework") orderStatus = "On Hold";
       else if (updatedOp.status === "In Progress" || progressPercent > 0) orderStatus = "In Production";

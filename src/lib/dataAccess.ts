@@ -55,9 +55,12 @@ export type ScopedMachine = typeof machines.$inferSelect & {
 export type ScopedOperation = typeof orderOperations.$inferSelect & {
   machineName: string | null;
   machineCode: string | null;
+  machineCategory: string | null;
   operatorName: string | null;
+  operatorAvatar: string | null;
   orderTitle: string | null;
   orderNumber: string | null;
+  orderPriority: string | null;
   customerId: number | null;
   customerName: string | null;
   customerCompany: string | null;
@@ -374,7 +377,7 @@ export async function listMachinesForUser(user: SessionUser): Promise<ScopedMach
  */
 export async function listOperationsForUser(
   user: SessionUser,
-  filters?: { orderId?: number },
+  filters?: { orderId?: number; machineId?: number; statuses?: string[] },
 ): Promise<ScopedOperation[]> {
   const allowedOrderIds = await allowedOrderIdsSubquery(user);
   const ids = allowedOrderIds ? (await allowedOrderIds).map(r => r.id) : null;
@@ -383,6 +386,10 @@ export async function listOperationsForUser(
   const whereClauses = [];
   if (ids) whereClauses.push(inArray(orderOperations.orderId, ids));
   if (filters?.orderId) whereClauses.push(eq(orderOperations.orderId, filters.orderId));
+  if (filters?.machineId) whereClauses.push(eq(orderOperations.machineId, filters.machineId));
+  if (filters?.statuses && filters.statuses.length > 0) {
+    whereClauses.push(inArray(orderOperations.status, filters.statuses));
+  }
 
   const rows = await db
     .select({
@@ -404,9 +411,12 @@ export async function listOperationsForUser(
       updatedAt: orderOperations.updatedAt,
       machineName: machines.name,
       machineCode: machines.code,
+      machineCategory: machines.category,
       operatorName: users.name,
+      operatorAvatar: users.avatarColor,
       orderTitle: orders.title,
       orderNumber: orders.orderNumber,
+      orderPriority: orders.priority,
       customerId: orders.customerId,
       customerName: customers.name,
       customerCompany: customers.company,
@@ -417,7 +427,7 @@ export async function listOperationsForUser(
     .leftJoin(orders, eq(orderOperations.orderId, orders.id))
     .leftJoin(customers, eq(orders.customerId, customers.id))
     .where(whereClauses.length > 0 ? and(...whereClauses) : undefined)
-    .orderBy(asc(orderOperations.stepOrder));
+    .orderBy(asc(orderOperations.stepOrder), asc(orderOperations.id));
 
   return rows as ScopedOperation[];
 }

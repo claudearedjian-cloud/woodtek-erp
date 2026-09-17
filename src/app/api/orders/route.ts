@@ -31,9 +31,13 @@ export async function GET(request: Request) {
 
     const scopedOrders = await listOrdersForUser(user, { status: status ?? undefined });
 
-    // For each order, fetch summary of operations and active station
-    // (within the same scoping rules).
-    const allOperations = await db
+    if (scopedOrders.length === 0) return NextResponse.json([]);
+
+    // Fetch operation summaries only for already-authorized orders, then group
+    // once. The former implementation scanned the full operation table and
+    // re-filtered it for every order (O(orders × operations)).
+    const orderIds = scopedOrders.map((order) => order.id);
+    const operationRows = await db
       .select({
         id: orderOperations.id,
         orderId: orderOperations.orderId,
@@ -45,22 +49,18 @@ export async function GET(request: Request) {
       })
       .from(orderOperations)
       .leftJoin(machines, eq(orderOperations.machineId, machines.id))
+      .where(inArray(orderOperations.orderId, orderIds))
       .orderBy(asc(orderOperations.stepOrder));
 
-    const allowedOrderIds = new Set(scopedOrders.map(o => o.id));
+    const operationsByOrder = new Map<number, typeof operationRows>();
+    for (const operation of operationRows) {
+      const list = operationsByOrder.get(operation.orderId) ?? [];
+      list.push(operation);
+      operationsByOrder.set(operation.orderId, list);
+    }
 
     const enrichedOrders = scopedOrders.map(order => {
-      const ops = allOperations
-        .filter(o => o.orderId === order.id && allowedOrderIds.has(o.orderId))
-        .map(o => ({
-          id: o.id,
-          orderId: o.orderId,
-          stepOrder: o.stepOrder,
-          operationName: o.operationName,
-          status: o.status,
-          machineCode: o.machineCode,
-          machineName: o.machineName,
-        }));
+      const ops = operationsByOrder.get(order.id) ?? [];
       const totalSteps = ops.length;
       const completedSteps = ops.filter(o => o.status === "Completed").length;
       const currentOp = ops.find(o => o.status === "In Progress")

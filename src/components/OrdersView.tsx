@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { STAGE_LABELS, type DispatchStage } from "@/lib/dispatch";
 import {
   Archive,
@@ -13,7 +14,15 @@ import {
   List,
   User,
 } from "lucide-react";
-import NewOrderWizard from "@/components/NewOrderWizard";
+const NewOrderWizard = dynamic(() => import("@/components/NewOrderWizard"), {
+  loading: () => (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm">
+      <div className="rounded-2xl border border-amber-500/30 bg-slate-900 px-6 py-4 text-sm font-black text-amber-300 shadow-2xl">
+        Opening production order builder…
+      </div>
+    </div>
+  ),
+});
 
 interface OrdersViewProps {
   orders: any[];
@@ -425,18 +434,20 @@ export default function OrdersView({
         </div>
       )}
 
-      <NewOrderWizard
-        open={showNewModal}
-        onClose={() => setShowNewModal(false)}
-        onCreated={onRefresh}
-        customers={customers}
-        templates={templates}
-        machines={machines}
-        inventoryItems={inventoryItems}
-        currentUser={currentUser}
-        cloneSeed={cloneSeed}
-        onCloneConsumed={onCloneConsumed}
-      />
+      {showNewModal && (
+        <NewOrderWizard
+          open
+          onClose={() => setShowNewModal(false)}
+          onCreated={onRefresh}
+          customers={customers}
+          templates={templates}
+          machines={machines}
+          inventoryItems={inventoryItems}
+          currentUser={currentUser}
+          cloneSeed={cloneSeed}
+          onCloneConsumed={onCloneConsumed}
+        />
+      )}
     </div>
   );
 }

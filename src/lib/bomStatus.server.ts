@@ -28,34 +28,72 @@ export interface BomReceivedEntry {
   at?: string;
 }
 
-interface RawFile {
+export interface BomBoardState {
   version: 1;
   entries: Record<string, BomStatusEntry>;
   received: Record<string, BomReceivedEntry>;
 }
+
+type RawFile = BomBoardState;
+
+type BomCache = {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  data: RawFile;
+};
+
+let bomCache: BomCache | null = null;
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
   return path.join(dir, "bom-status.json");
 }
 
-function readRaw(): RawFile {
+function cacheData(file: string, data: RawFile): RawFile {
   try {
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    return {
+    const stat = fs.statSync(file);
+    bomCache = { file, mtimeMs: stat.mtimeMs, size: stat.size, data };
+  } catch {
+    bomCache = { file, mtimeMs: -1, size: -1, data };
+  }
+  return data;
+}
+
+function readRaw(): RawFile {
+  const file = fileLocation();
+  try {
+    const stat = fs.statSync(file);
+    if (
+      bomCache?.file === file
+      && bomCache.mtimeMs === stat.mtimeMs
+      && bomCache.size === stat.size
+    ) {
+      return bomCache.data;
+    }
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    return cacheData(file, {
       version: 1,
       entries: parsed && typeof parsed.entries === "object" && parsed.entries ? parsed.entries : {},
       received: parsed && typeof parsed.received === "object" && parsed.received ? parsed.received : {},
-    };
+    });
   } catch {
-    return { version: 1, entries: {}, received: {} };
+    if (bomCache?.file === file && bomCache.mtimeMs === -1) return bomCache.data;
+    return cacheData(file, { version: 1, entries: {}, received: {} });
   }
 }
 
 function writeRaw(data: RawFile): void {
   const file = fileLocation();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(temp, file);
+  cacheData(file, data);
+}
+
+export function readBomBoardState(): BomBoardState {
+  return readRaw();
 }
 
 export function readBomStatus(): { version: 1; entries: Record<string, BomStatusEntry> } {
@@ -73,18 +111,29 @@ export function setBomStatus(
   machineId?: number | null,
   deliveredQty?: number | null,
 ): void {
-  const data = readRaw();
-  data.entries[String(allocationId)] = {
-    status,
-    machineId: machineId ?? null,
-    deliveredQty: typeof deliveredQty === "number" && deliveredQty > 0 ? deliveredQty : null,
-    updatedAt: new Date().toISOString(),
+  const current = readRaw();
+  const data: RawFile = {
+    ...current,
+    entries: {
+      ...current.entries,
+      [String(allocationId)]: {
+        status,
+        machineId: machineId ?? null,
+        deliveredQty: typeof deliveredQty === "number" && deliveredQty > 0 ? deliveredQty : null,
+        updatedAt: new Date().toISOString(),
+      },
+    },
   };
   writeRaw(data);
 }
 
 export function setOrderReceived(orderId: number, received: boolean, state?: ReceptionState): void {
-  const data = readRaw();
-  data.received[String(orderId)] = { received, ...(state ? { state } : {}), at: new Date().toISOString() };
-  writeRaw(data);
+  const current = readRaw();
+  writeRaw({
+    ...current,
+    received: {
+      ...current.received,
+      [String(orderId)]: { received, ...(state ? { state } : {}), at: new Date().toISOString() },
+    },
+  });
 }

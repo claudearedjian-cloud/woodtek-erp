@@ -19,7 +19,7 @@ import {
 } from "@/db/schema";
 import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
-import { readBomStatus, readReceived, setBomStatus, setOrderReceived, type BomStatus, type ReceptionState } from "@/lib/bomStatus.server";
+import { readBomBoardState, readBomStatus, setBomStatus, setOrderReceived, type BomStatus, type ReceptionState } from "@/lib/bomStatus.server";
 import { logAudit } from "@/lib/audit.server";
 import { findProductionItemByMaterial } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
@@ -99,8 +99,9 @@ export async function GET() {
         .from(machines),
     ]);
 
-    const overlay = readBomStatus().entries;
-    const receivedMap = readReceived();
+    const bomState = readBomBoardState();
+    const overlay = bomState.entries;
+    const receivedMap = bomState.received;
     const planStore = readProductionPlanStore();
     const plannedMaterials = new Map<number, any>();
     const plannedOperations = new Map<number, any>();

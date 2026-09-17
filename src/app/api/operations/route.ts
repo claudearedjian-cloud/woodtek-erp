@@ -1,131 +1,160 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orderOperations, orders, machines, users, orderMaterials, inventoryItems } from "@/db/schema";
-import { eq, asc, desc, not, inArray } from "drizzle-orm";
+import { orderOperations, orderMaterials, inventoryItems } from "@/db/schema";
+import { eq, asc, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { readBomBoardState } from "@/lib/bomStatus.server";
+import { listOperationsForUser } from "@/lib/dataAccess";
 import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { routeStageKeys } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 
 export async function GET(request: Request) {
-  const { error: authError } = await authorize("orders:read");
-  if (authError) return authError;
+  const { user, error: authError } = await authorize("orders:read");
+  if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const url = new URL(request.url);
-    const machineId = url.searchParams.get("machineId");
+    const machineParam = url.searchParams.get("machineId");
+    const requestedMachineId = Number(machineParam);
+    if (machineParam !== null && (!Number.isInteger(requestedMachineId) || requestedMachineId <= 0)) {
+      return NextResponse.json({ error: "A valid machineId is required." }, { status: 400 });
+    }
+    const machineId = machineParam === null ? undefined : requestedMachineId;
     const status = url.searchParams.get("status");
     const activeOnly = url.searchParams.get("activeOnly") === "true";
+    const stationMode = url.searchParams.get("station") === "true" || Boolean(machineId && activeOnly);
+    const activeStatuses = ["Ready", "In Progress", "Rejected/Rework"];
 
-    const allOps = await db
-      .select({
-        id: orderOperations.id,
-        orderId: orderOperations.orderId,
-        stepOrder: orderOperations.stepOrder,
-        operationName: orderOperations.operationName,
-        estimatedMinutes: orderOperations.estimatedMinutes,
-        actualMinutes: orderOperations.actualMinutes,
-        status: orderOperations.status,
-        startTime: orderOperations.startTime,
-        endTime: orderOperations.endTime,
-        scheduledStart: orderOperations.scheduledStart,
-        scheduledEnd: orderOperations.scheduledEnd,
-        qualityNotes: orderOperations.qualityNotes,
-        machineId: orderOperations.machineId,
-        machineName: machines.name,
-        machineCode: machines.code,
-        machineCategory: machines.category,
-        operatorId: orderOperations.operatorId,
-        operatorName: users.name,
-        operatorAvatar: users.avatarColor,
-        orderNumber: orders.orderNumber,
-        orderTitle: orders.title,
-        orderPriority: orders.priority,
-      })
-      .from(orderOperations)
-      .leftJoin(machines, eq(orderOperations.machineId, machines.id))
-      .leftJoin(users, eq(orderOperations.operatorId, users.id))
-      .leftJoin(orders, eq(orderOperations.orderId, orders.id))
-      .orderBy(asc(orderOperations.stepOrder));
-
-    let filtered = allOps;
-    if (machineId) {
-      filtered = filtered.filter(o => String(o.machineId) === String(machineId));
-    }
+    // Apply record scope and the station/status filters in SQL. The former
+    // endpoint loaded every operation, then discarded almost all of them in JS.
+    let filtered = await listOperationsForUser(user, {
+      machineId,
+      statuses: activeOnly ? activeStatuses : undefined,
+    });
     if (status && status !== "All") {
-      filtered = filtered.filter(o => o.status.toLowerCase() === status.toLowerCase());
-    }
-    if (activeOnly) {
-      filtered = filtered.filter(o => o.status === "Ready" || o.status === "In Progress" || o.status === "Rejected/Rework");
+      filtered = filtered.filter((operation) => operation.status.toLowerCase() === status.toLowerCase());
     }
 
-    // Attach the order's materials with their live production stage so the
-    // operator station can show the process per material ("cutting by material").
-    const orderIds = Array.from(new Set(filtered.map((o) => o.orderId).filter((id): id is number => typeof id === "number")));
-    const stepsByOrder = new Map<number, string[]>();
-    for (const o of allOps) {
-      const list = stepsByOrder.get(o.orderId) ?? [];
-      if (!list.includes(o.operationName)) list.push(o.operationName);
-      stepsByOrder.set(o.orderId, list);
-    }
-
+    const orderIds = Array.from(new Set(filtered.map((operation) => operation.orderId)));
+    if (orderIds.length === 0) return NextResponse.json([]);
+    const orderIdSet = new Set(orderIds);
     const planStore = readProductionPlanStore();
+    const relevantPlans = Object.values(planStore.orders).filter((plan) => orderIdSet.has(plan.orderId));
     const operationBindings = new Map<number, { item: any; step: any }>();
-    for (const plan of Object.values(planStore.orders)) {
-      if (!orderIds.includes(plan.orderId)) continue;
+    for (const plan of relevantPlans) {
       for (const item of plan.items) {
         for (const step of item.steps) operationBindings.set(step.operationId, { item, step });
       }
     }
-    let materialsByOrder = new Map<number, any[]>();
-    if (orderIds.length > 0) {
-      const [mats, progress, allRoutes] = await Promise.all([
-        db
-          .select({
-            id: orderMaterials.id,
-            orderId: orderMaterials.orderId,
-            itemName: inventoryItems.name,
-            itemSku: inventoryItems.sku,
-            itemUnit: inventoryItems.unit,
-            quantityUsed: orderMaterials.quantityUsed,
-          })
-          .from(orderMaterials)
-          .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
-          .where(inArray(orderMaterials.orderId, orderIds)),
-        Promise.resolve(readAllProgress()),
-        Promise.resolve(readAllRoutes()),
-      ]);
-      const routes = allRoutes;
-      const plannedMaterials = new Map<number, any>();
-      for (const plan of Object.values(planStore.orders)) {
-        for (const item of plan.items) plannedMaterials.set(item.materialId, item);
-      }
-      for (const m of mats) {
-        const list = materialsByOrder.get(m.orderId) ?? [];
-        const p = progress[String(m.id)];
-        const planned = plannedMaterials.get(m.id);
-        list.push({
-          ...m,
-          stage: p?.stage ?? "",
-          stageAt: p?.at ?? "",
-          stageBy: p?.by ?? "",
-          route: planned ? routeStageKeys(planned) : (routes[String(m.id)] ?? null),
-          productionItemName: planned?.name ?? null,
-        });
-        materialsByOrder.set(m.orderId, list);
-      }
+
+    // Schedule/Gantt callers need operation rows only. Material, route and BOM
+    // overlays are loaded exclusively for Station Mode, cutting several DB and
+    // filesystem reads from every generic operations refresh.
+    if (!stationMode) {
+      return NextResponse.json(filtered.map((operation) => {
+        const binding = operationBindings.get(operation.id);
+        return binding ? {
+          ...operation,
+          machineCategory: operation.machineCategory || binding.step.machineCategory,
+          productionItem: {
+            materialId: binding.item.materialId,
+            name: binding.item.name,
+            recipeName: binding.item.recipeName,
+            routeSource: binding.item.routeSource,
+            routePosition: binding.step.position,
+            routeLength: binding.item.steps.length,
+            steps: binding.item.steps,
+          },
+        } : operation;
+      }));
     }
-    return NextResponse.json(filtered.map((o) => {
-      const binding = operationBindings.get(o.id);
-      const allMaterials = materialsByOrder.get(o.orderId) ?? [];
+
+    const [stepRows, mats] = await Promise.all([
+      db
+        .select({
+          orderId: orderOperations.orderId,
+          operationName: orderOperations.operationName,
+          stepOrder: orderOperations.stepOrder,
+        })
+        .from(orderOperations)
+        .where(inArray(orderOperations.orderId, orderIds))
+        .orderBy(asc(orderOperations.stepOrder)),
+      db
+        .select({
+          id: orderMaterials.id,
+          orderId: orderMaterials.orderId,
+          itemName: inventoryItems.name,
+          itemSku: inventoryItems.sku,
+          itemUnit: inventoryItems.unit,
+          quantityUsed: orderMaterials.quantityUsed,
+        })
+        .from(orderMaterials)
+        .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
+        .where(inArray(orderMaterials.orderId, orderIds)),
+    ]);
+
+    const stepsByOrder = new Map<number, string[]>();
+    for (const operation of stepRows) {
+      const list = stepsByOrder.get(operation.orderId) ?? [];
+      if (!list.includes(operation.operationName)) list.push(operation.operationName);
+      stepsByOrder.set(operation.orderId, list);
+    }
+
+    const progress = readAllProgress();
+    const routes = readAllRoutes();
+    const bomState = readBomBoardState();
+    const bomEntries = bomState.entries;
+    const receivedEntries = bomState.received;
+    const plannedMaterials = new Map<number, any>();
+    for (const plan of relevantPlans) {
+      for (const item of plan.items) plannedMaterials.set(item.materialId, item);
+    }
+
+    const materialsByOrder = new Map<number, any[]>();
+    for (const material of mats) {
+      const list = materialsByOrder.get(material.orderId) ?? [];
+      const live = progress[String(material.id)];
+      const planned = plannedMaterials.get(material.id);
+      const fulfilment = bomEntries[String(material.id)];
+      list.push({
+        ...material,
+        stage: live?.stage ?? "",
+        stageAt: live?.at ?? "",
+        stageBy: live?.by ?? "",
+        route: planned ? routeStageKeys(planned) : (routes[String(material.id)] ?? null),
+        productionItemName: planned?.name ?? null,
+        status: fulfilment?.status ?? "Requested",
+        machineId: fulfilment?.machineId ?? planned?.steps?.[0]?.machineId ?? null,
+        deliveredQty: fulfilment?.deliveredQty ?? null,
+      });
+      materialsByOrder.set(material.orderId, list);
+    }
+
+    return NextResponse.json(filtered.map((operation) => {
+      const binding = operationBindings.get(operation.id);
+      const orderBom = materialsByOrder.get(operation.orderId) ?? [];
+      const reception = receivedEntries[String(operation.orderId)];
+      const shared = {
+        ...operation,
+        orderBom,
+        received: reception?.received ?? null,
+        receivedState: reception?.state ?? (
+          reception?.received === true ? "Received" : reception?.received === false ? "Not Received" : null
+        ),
+      };
       if (!binding) {
-        return { ...o, materials: allMaterials, orderSteps: stepsByOrder.get(o.orderId) ?? [] };
+        return {
+          ...shared,
+          materials: orderBom,
+          orderSteps: stepsByOrder.get(operation.orderId) ?? [],
+        };
       }
       return {
-        ...o,
-        machineCategory: o.machineCategory || binding.step.machineCategory,
-        materials: allMaterials.filter((material: any) => material.id === binding.item.materialId),
+        ...shared,
+        machineCategory: operation.machineCategory || binding.step.machineCategory,
+        materials: orderBom.filter((material: any) => material.id === binding.item.materialId),
         orderSteps: routeStageKeys(binding.item),
         productionItem: {
           materialId: binding.item.materialId,

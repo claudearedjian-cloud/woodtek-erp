@@ -60,6 +60,22 @@ const check = (cond, name) => {
   if (!cond) fails++;
 };
 
+// ---- performance architecture regressions ----
+const pageSource = fs.readFileSync("src/app/page.tsx", "utf8");
+const stationSource = fs.readFileSync("src/components/OperatorStationView.tsx", "utf8");
+const operationsSource = fs.readFileSync("src/app/api/operations/route.ts", "utf8");
+const operationActionSource = fs.readFileSync("src/app/api/operations/[id]/route.ts", "utf8");
+const machinesSource = fs.readFileSync("src/app/api/machines/route.ts", "utf8");
+check(pageSource.includes("dynamic(() => import(\"@/components/OperatorStationView\")"), "performance: application workspaces are code-split");
+check(!pageSource.includes("onRefresh={fetchAllData}"), "performance: actions never launch the whole-app refresh flood");
+check(pageSource.includes("compactStation ? Promise.resolve(null)"), "performance: locked Operator login skips unrelated administration datasets");
+check(stationSource.includes("activeOnly=true&station=true") && !stationSource.includes("fetchBomBoard"), "performance: station queue carries its lightweight BOM data in one payload");
+check(stationSource.includes("queueInFlight.current") && stationSource.includes("visibilityState"), "performance: station polling prevents overlap and pauses while hidden");
+check((stationSource.match(/<ElapsedTimer/g) || []).length === 1, "performance: each running station job owns only one live timer");
+check(operationsSource.includes("listOperationsForUser(user") && operationsSource.includes("statuses: activeOnly ? activeStatuses"), "performance: operation filtering stays scoped and runs in SQL");
+check(operationActionSource.includes("One compact order snapshot") && !operationActionSource.includes("Re-read after readiness"), "performance: station action avoids duplicate full-order reads");
+check(machinesSource.includes("summaryOnly") && machinesSource.includes("operationsByMachine"), "performance: machine summaries avoid repeated scans and queue payloads");
+
 const props = (role, menuConfig = null, lang) => ({
   activeTab: "station",
   setActiveTab: () => {},

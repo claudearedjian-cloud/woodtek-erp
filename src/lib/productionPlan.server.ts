@@ -22,11 +22,41 @@ function fileLocation(): string {
   return path.join(dir, "production-plans.json");
 }
 
-export function readProductionPlanStore(): ProductionPlanStore {
+type PlanCache = {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  store: ProductionPlanStore;
+};
+
+let planCache: PlanCache | null = null;
+
+function cacheStore(file: string, store: ProductionPlanStore): ProductionPlanStore {
   try {
-    return sanitizeProductionPlanStore(JSON.parse(fs.readFileSync(fileLocation(), "utf8")));
+    const stat = fs.statSync(file);
+    planCache = { file, mtimeMs: stat.mtimeMs, size: stat.size, store };
   } catch {
-    return { version: 1, orders: {} };
+    planCache = { file, mtimeMs: -1, size: -1, store };
+  }
+  return store;
+}
+
+export function readProductionPlanStore(): ProductionPlanStore {
+  const file = fileLocation();
+  try {
+    const stat = fs.statSync(file);
+    if (
+      planCache?.file === file
+      && planCache.mtimeMs === stat.mtimeMs
+      && planCache.size === stat.size
+    ) {
+      return planCache.store;
+    }
+    const store = sanitizeProductionPlanStore(JSON.parse(fs.readFileSync(file, "utf8")));
+    return cacheStore(file, store);
+  } catch {
+    if (planCache?.file === file && planCache.mtimeMs === -1) return planCache.store;
+    return cacheStore(file, { version: 1, orders: {} });
   }
 }
 
@@ -37,6 +67,7 @@ export function writeProductionPlanStore(store: ProductionPlanStore): void {
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
   fs.renameSync(temp, file);
+  cacheStore(file, clean);
 }
 
 export function readOrderProductionPlan(orderId: number): OrderProductionPlan | null {
@@ -46,19 +77,24 @@ export function readOrderProductionPlan(orderId: number): OrderProductionPlan | 
 
 export function saveOrderProductionPlan(plan: OrderProductionPlan): void {
   const store = readProductionPlanStore();
-  store.orders[String(plan.orderId)] = plan;
-  writeProductionPlanStore(store);
+  writeProductionPlanStore({
+    ...store,
+    orders: { ...store.orders, [String(plan.orderId)]: plan },
+  });
 }
 
 export function deleteOrderProductionPlan(orderId: number): void {
   const store = readProductionPlanStore();
   if (!store.orders[String(orderId)]) return;
-  delete store.orders[String(orderId)];
-  writeProductionPlanStore(store);
+  const orders = { ...store.orders };
+  delete orders[String(orderId)];
+  writeProductionPlanStore({ ...store, orders });
 }
 
 export function updateProductionStepMachine(orderId: number, operationId: number, machineId: number | null): boolean {
-  const store = readProductionPlanStore();
+  // Cached stores are read-only snapshots. Clone only on the rare write path so
+  // a failed filesystem write can never leave the in-process cache half-mutated.
+  const store = JSON.parse(JSON.stringify(readProductionPlanStore())) as ProductionPlanStore;
   const plan = store.orders[String(orderId)];
   const hit = findProductionStepByOperation(plan, operationId);
   if (!hit) return false;

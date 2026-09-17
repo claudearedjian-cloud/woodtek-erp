@@ -8,6 +8,17 @@
 import fs from "node:fs";
 import path from "node:path";
 
+type CrewMap = Record<string, number[]>;
+
+type CrewCache = {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  crews: CrewMap;
+};
+
+let crewCache: CrewCache | null = null;
+
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
   return path.join(dir, "machine-operators.json");
@@ -20,29 +31,47 @@ function cleanIds(v: unknown): number[] {
   ).slice(0, 20);
 }
 
-function readRaw(): Record<string, number[]> {
+function cacheCrews(file: string, crews: CrewMap): void {
   try {
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    const out: Record<string, number[]> = {};
+    const stat = fs.statSync(file);
+    crewCache = { file, mtimeMs: stat.mtimeMs, size: stat.size, crews };
+  } catch {
+    crewCache = { file, mtimeMs: -1, size: -1, crews };
+  }
+}
+
+function readRaw(): CrewMap {
+  const file = fileLocation();
+  try {
+    const stat = fs.statSync(file);
+    if (crewCache?.file === file && crewCache.mtimeMs === stat.mtimeMs && crewCache.size === stat.size) {
+      return { ...crewCache.crews };
+    }
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const out: CrewMap = {};
     if (parsed && typeof parsed === "object") {
       for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
         const ids = cleanIds(v);
         if (ids.length) out[k] = ids;
       }
     }
-    return out;
+    cacheCrews(file, out);
+    return { ...out };
   } catch {
+    if (crewCache?.file === file && crewCache.mtimeMs === -1) return { ...crewCache.crews };
+    cacheCrews(file, {});
     return {};
   }
 }
 
-function writeRaw(map: Record<string, number[]>): void {
+function writeRaw(map: CrewMap): void {
   const file = fileLocation();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(map, null, 2), "utf8");
+  cacheCrews(file, { ...map });
 }
 
-export function readMachineOperators(): Record<string, number[]> {
+export function readMachineOperators(): CrewMap {
   return readRaw();
 }
 

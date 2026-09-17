@@ -1,37 +1,47 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import AuthGate from "@/components/AuthGate";
-import DashboardView from "@/components/DashboardView";
-import PlantView from "@/components/PlantView";
-import OrdersView from "@/components/OrdersView";
-import OrderWorkflowDetail from "@/components/OrderWorkflowDetail";
-import MachinesView from "@/components/MachinesView";
-import OperatorStationView from "@/components/OperatorStationView";
-import CustomersView from "@/components/CustomersView";
-import InventoryView from "@/components/InventoryView";
-import WarehouseView from "@/components/WarehouseView";
-import FloorReceptionView from "@/components/FloorReceptionView";
-import ScheduleView from "@/components/ScheduleView";
-import GanttView from "@/components/GanttView";
-import CmmsView from "@/components/CmmsView";
-import ReportView from "@/components/ReportView";
-import WorkforceView from "@/components/WorkforceView";
-import SettingsView from "@/components/SettingsView";
-import WipBoardView from "@/components/WipBoardView";
-import QualityView from "@/components/QualityView";
-import DowntimeView from "@/components/DowntimeView";
-import RecipeManagerView from "@/components/RecipeManagerView";
-import PimsImportView from "@/components/PimsImportView";
 import FullscreenSplash from "@/components/FullscreenSplash";
-import MenuDesignerView from "@/components/MenuDesignerView";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
 import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
 import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
+
+const ScreenLoading = () => (
+  <div className="mx-auto mt-16 max-w-sm rounded-2xl border border-slate-800 bg-slate-900/70 px-6 py-5 text-center text-sm font-bold text-slate-400">
+    Opening workspace…
+  </div>
+);
+
+// A user sees one workspace at a time. Keep the other large screens out of the
+// initial client bundle and load each only when its tab is actually opened.
+const DashboardView = dynamic(() => import("@/components/DashboardView"), { loading: ScreenLoading });
+const PlantView = dynamic(() => import("@/components/PlantView"), { loading: ScreenLoading });
+const OrdersView = dynamic(() => import("@/components/OrdersView"), { loading: ScreenLoading });
+const OrderWorkflowDetail = dynamic(() => import("@/components/OrderWorkflowDetail"), { loading: ScreenLoading });
+const MachinesView = dynamic(() => import("@/components/MachinesView"), { loading: ScreenLoading });
+const OperatorStationView = dynamic(() => import("@/components/OperatorStationView"), { loading: ScreenLoading });
+const CustomersView = dynamic(() => import("@/components/CustomersView"), { loading: ScreenLoading });
+const InventoryView = dynamic(() => import("@/components/InventoryView"), { loading: ScreenLoading });
+const WarehouseView = dynamic(() => import("@/components/WarehouseView"), { loading: ScreenLoading });
+const FloorReceptionView = dynamic(() => import("@/components/FloorReceptionView"), { loading: ScreenLoading });
+const ScheduleView = dynamic(() => import("@/components/ScheduleView"), { loading: ScreenLoading });
+const GanttView = dynamic(() => import("@/components/GanttView"), { loading: ScreenLoading });
+const CmmsView = dynamic(() => import("@/components/CmmsView"), { loading: ScreenLoading });
+const ReportView = dynamic(() => import("@/components/ReportView"), { loading: ScreenLoading });
+const WorkforceView = dynamic(() => import("@/components/WorkforceView"), { loading: ScreenLoading });
+const SettingsView = dynamic(() => import("@/components/SettingsView"), { loading: ScreenLoading });
+const WipBoardView = dynamic(() => import("@/components/WipBoardView"), { loading: ScreenLoading });
+const QualityView = dynamic(() => import("@/components/QualityView"), { loading: ScreenLoading });
+const DowntimeView = dynamic(() => import("@/components/DowntimeView"), { loading: ScreenLoading });
+const RecipeManagerView = dynamic(() => import("@/components/RecipeManagerView"), { loading: ScreenLoading });
+const PimsImportView = dynamic(() => import("@/components/PimsImportView"), { loading: ScreenLoading });
+const MenuDesignerView = dynamic(() => import("@/components/MenuDesignerView"), { loading: ScreenLoading });
 
 export default function WoodTekERP() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -65,6 +75,12 @@ export default function WoodTekERP() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
+  const dashboardDirtyRef = useRef(true);
+  const fullRefreshInFlightRef = useRef(false);
+  const operationalRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const operationalRefreshPendingRef = useRef(false);
+  const machineSummaryRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const machineSummaryRefreshPendingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [menuConfig, setMenuConfig] = useState<MenuConfig | null>(null);
@@ -115,31 +131,218 @@ export default function WoodTekERP() {
     }
   };
 
-  const fetchAllData = async () => {
+  const fetchAllData = async ({
+    includeDashboard = true,
+    compactStation = false,
+  }: { includeDashboard?: boolean; compactStation?: boolean } = {}) => {
+    fullRefreshInFlightRef.current = true;
+    if (!includeDashboard) {
+      dashboardDirtyRef.current = true;
+      setDashboardData(null);
+    }
+    if (compactStation) {
+      // The locked Operator profile needs the station queue and its machine
+      // selector, not the customer/template/inventory administration datasets.
+      setOrders([]);
+      setCustomers([]);
+      setTemplates([]);
+      setInventory([]);
+    }
     try {
       const [dashRes, ordRes, machRes, userRes, custRes, tplRes, invRes] = await Promise.all([
-        fetch("/api/dashboard"),
-        fetch("/api/orders"),
-        fetch("/api/machines"),
-        fetch("/api/users"),
-        fetch("/api/customers"),
-        fetch("/api/templates"),
-        fetch("/api/inventory"),
+        includeDashboard ? fetch("/api/dashboard") : Promise.resolve(null),
+        compactStation ? Promise.resolve(null) : fetch("/api/orders"),
+        fetch("/api/machines?summary=true"),
+        fetch(compactStation ? "/api/auth/roster" : "/api/users", { cache: "no-store" }),
+        compactStation ? Promise.resolve(null) : fetch("/api/customers"),
+        compactStation ? Promise.resolve(null) : fetch("/api/templates"),
+        compactStation ? Promise.resolve(null) : fetch("/api/inventory"),
       ]);
 
-      if (userRes.ok) setUsers(await userRes.json());
-      if (ordRes.ok) setOrders(await ordRes.json());
-      if (machRes.ok) setMachines(await machRes.json());
-      if (custRes.ok) setCustomers(await custRes.json());
-      if (tplRes.ok) setTemplates(await tplRes.json());
-      if (invRes.ok) setInventory(await invRes.json());
-      if (dashRes.ok) setDashboardData(await dashRes.json());
+      const [dashData, orderData, machineData, userData, customerData, templateData, inventoryData] = await Promise.all([
+        dashRes?.ok ? dashRes.json() : null,
+        ordRes?.ok ? ordRes.json() : null,
+        machRes.ok ? machRes.json() : null,
+        userRes.ok ? userRes.json() : null,
+        custRes?.ok ? custRes.json() : null,
+        tplRes?.ok ? tplRes.json() : null,
+        invRes?.ok ? invRes.json() : null,
+      ]);
+      if (userData) setUsers(userData);
+      if (orderData) setOrders(orderData);
+      if (machineData) setMachines(machineData);
+      if (customerData) setCustomers(customerData);
+      if (templateData) setTemplates(templateData);
+      if (inventoryData) setInventory(inventoryData);
+      if (dashData) {
+        setDashboardData(dashData);
+        dashboardDirtyRef.current = false;
+      }
     } catch (error) {
       console.error("Failed to fetch ERP datasets:", error);
     } finally {
+      fullRefreshInFlightRef.current = false;
       setLoading(false);
     }
   };
+
+  // Explicit actions refresh only the datasets they can actually change. This
+  // avoids the former seven-request refresh flood after each station tap.
+  const refreshOperationalData = (): Promise<void> => {
+    dashboardDirtyRef.current = true;
+    if (operationalRefreshInFlightRef.current) {
+      operationalRefreshPendingRef.current = true;
+      return operationalRefreshInFlightRef.current;
+    }
+
+    const run = (async () => {
+      do {
+        operationalRefreshPendingRef.current = false;
+        try {
+          const [ordersRes, machinesRes] = await Promise.all([
+            fetch("/api/orders", { cache: "no-store" }),
+            fetch("/api/machines?summary=true", { cache: "no-store" }),
+          ]);
+          const [orderData, machineData] = await Promise.all([
+            ordersRes.ok ? ordersRes.json() : null,
+            machinesRes.ok ? machinesRes.json() : null,
+          ]);
+          if (orderData) setOrders(orderData);
+          if (machineData) setMachines(machineData);
+        } catch (error) {
+          console.error("Operational refresh failed", error);
+        }
+      } while (operationalRefreshPendingRef.current);
+    })();
+    operationalRefreshInFlightRef.current = run;
+    void run.finally(() => {
+      if (operationalRefreshInFlightRef.current === run) operationalRefreshInFlightRef.current = null;
+    });
+    return run;
+  };
+
+  const refreshStationShellData = (): Promise<void> => {
+    const compactOperator = currentUser?.role === "Machine Operator"
+      && (!currentUser?.displayRole || currentUser.displayRole === "Machine Operator");
+    if (!compactOperator) return refreshOperationalData();
+    dashboardDirtyRef.current = true;
+    if (machineSummaryRefreshInFlightRef.current) {
+      machineSummaryRefreshPendingRef.current = true;
+      return machineSummaryRefreshInFlightRef.current;
+    }
+
+    const run = (async () => {
+      do {
+        machineSummaryRefreshPendingRef.current = false;
+        try {
+          const response = await fetch("/api/machines?summary=true", { cache: "no-store" });
+          if (response.ok) setMachines(await response.json());
+        } catch (error) {
+          console.error("Station shell refresh failed", error);
+        }
+      } while (machineSummaryRefreshPendingRef.current);
+    })();
+    machineSummaryRefreshInFlightRef.current = run;
+    void run.finally(() => {
+      if (machineSummaryRefreshInFlightRef.current === run) machineSummaryRefreshInFlightRef.current = null;
+    });
+    return run;
+  };
+
+  const refreshOrderWorkspace = async () => {
+    dashboardDirtyRef.current = true;
+    try {
+      const [ordersRes, machinesRes, templatesRes, inventoryRes] = await Promise.all([
+        fetch("/api/orders", { cache: "no-store" }),
+        fetch("/api/machines?summary=true", { cache: "no-store" }),
+        fetch("/api/templates", { cache: "no-store" }),
+        fetch("/api/inventory", { cache: "no-store" }),
+      ]);
+      const [orderData, machineData, templateData, inventoryData] = await Promise.all([
+        ordersRes.ok ? ordersRes.json() : null,
+        machinesRes.ok ? machinesRes.json() : null,
+        templatesRes.ok ? templatesRes.json() : null,
+        inventoryRes.ok ? inventoryRes.json() : null,
+      ]);
+      if (orderData) setOrders(orderData);
+      if (machineData) setMachines(machineData);
+      if (templateData) setTemplates(templateData);
+      if (inventoryData) setInventory(inventoryData);
+    } catch (error) {
+      console.error("Order workspace refresh failed", error);
+    }
+  };
+
+  const refreshMachineData = async () => {
+    dashboardDirtyRef.current = true;
+    try {
+      const [machinesRes, usersRes] = await Promise.all([
+        fetch("/api/machines?summary=true", { cache: "no-store" }),
+        fetch("/api/users", { cache: "no-store" }),
+      ]);
+      const [machineData, userData] = await Promise.all([
+        machinesRes.ok ? machinesRes.json() : null,
+        usersRes.ok ? usersRes.json() : null,
+      ]);
+      if (machineData) setMachines(machineData);
+      if (userData) setUsers(userData);
+    } catch (error) {
+      console.error("Machine refresh failed", error);
+    }
+  };
+
+  const refreshCustomerData = async () => {
+    dashboardDirtyRef.current = true;
+    try {
+      const [customersRes, ordersRes] = await Promise.all([
+        fetch("/api/customers", { cache: "no-store" }),
+        fetch("/api/orders", { cache: "no-store" }),
+      ]);
+      const [customerData, orderData] = await Promise.all([
+        customersRes.ok ? customersRes.json() : null,
+        ordersRes.ok ? ordersRes.json() : null,
+      ]);
+      if (customerData) setCustomers(customerData);
+      if (orderData) setOrders(orderData);
+    } catch (error) {
+      console.error("Customer refresh failed", error);
+    }
+  };
+
+  const refreshInventoryData = async () => {
+    dashboardDirtyRef.current = true;
+    try {
+      const response = await fetch("/api/inventory", { cache: "no-store" });
+      if (response.ok) setInventory(await response.json());
+    } catch (error) {
+      console.error("Inventory refresh failed", error);
+    }
+  };
+
+  const refreshTemplateData = async () => {
+    try {
+      const response = await fetch("/api/templates", { cache: "no-store" });
+      if (response.ok) setTemplates(await response.json());
+    } catch (error) {
+      console.error("Template refresh failed", error);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser || activeTab !== "dashboard" || !dashboardDirtyRef.current || fullRefreshInFlightRef.current) return;
+    let cancelled = false;
+    void fetch("/api/dashboard", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+        if (!cancelled) {
+          setDashboardData(data);
+          dashboardDirtyRef.current = false;
+        }
+      })
+      .catch((error) => console.error("Dashboard refresh failed", error));
+    return () => { cancelled = true; };
+  }, [activeTab, currentUser, loading]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -151,37 +354,49 @@ export default function WoodTekERP() {
           await fetch("/api/seed", { method: "POST" });
         }
 
-        // Menu Designer configuration (optional; sidebar falls back to defaults).
-        try {
-          const mcRes = await fetch("/api/menu-config", { cache: "no-store" });
-          if (mcRes.ok) setMenuConfig((await mcRes.json()).config ?? null);
-        } catch {
-          /* menu config is optional */
-        }
+        // Menu config, custom roles and session are independent reads. Start
+        // them together rather than making every page refresh wait three times.
+        const safeGet = (url: string) => fetch(url, { cache: "no-store" }).catch(() => null);
+        const [menuResponse, rolesResponse, sessionResponse] = await Promise.all([
+          safeGet("/api/menu-config"),
+          safeGet("/api/roles"),
+          safeGet("/api/auth"),
+        ]);
 
-        // Custom roles registry (client mirror of data/roles-config.json).
-        try {
-          const rolesRes = await fetch("/api/roles", { cache: "no-store" });
-          if (rolesRes.ok) {
-            const rd = await rolesRes.json();
-            registerCustomRoles(Array.isArray(rd.roles) ? rd.roles : []);
-            registerModuleOverrides(rd.overrides && typeof rd.overrides === "object" ? rd.overrides : {});
-          }
-        } catch {
-          /* custom roles are optional */
+        let loadedMenuConfig: MenuConfig | null = null;
+        if (menuResponse?.ok) {
+          loadedMenuConfig = (await menuResponse.json()).config ?? null;
+          setMenuConfig(loadedMenuConfig);
+        }
+        if (rolesResponse?.ok) {
+          const roleData = await rolesResponse.json();
+          registerCustomRoles(Array.isArray(roleData.roles) ? roleData.roles : []);
+          registerModuleOverrides(roleData.overrides && typeof roleData.overrides === "object" ? roleData.overrides : {});
         }
 
         // Restore an existing signed session so a refresh does not log you out.
-        const meRes = await fetch("/api/auth", { cache: "no-store" });
-        if (meRes.ok) {
-          const me = await meRes.json();
+        if (sessionResponse?.ok) {
+          const me = await sessionResponse.json();
           setDemoMode(Boolean(me.demoMode));
           if (me.user) {
             setCurrentUser(me.user);
+            const guardRole = me.user.displayRole || me.user.role;
+            const configuredLanding =
+              getLandingTab(guardRole, loadedMenuConfig) ?? getLandingTab(me.user.role, loadedMenuConfig);
+            const restoredLanding = configuredLanding ?? ({
+              "Machine Operator": "station",
+              "Floor Supervisor": "reception",
+              "Warehouse Supervisor": "warehouse",
+            } as Record<string, string>)[me.user.role];
+            if (restoredLanding) setActiveTab(restoredLanding);
             // Show the welcome splash on page refresh too
             setShowSplash(true);
             setHasShownSplash(true);
-            await fetchAllData();
+            const compactStation = me.user.role === "Machine Operator" && (!me.user.displayRole || me.user.displayRole === "Machine Operator");
+            await fetchAllData({
+              includeDashboard: !restoredLanding || restoredLanding === "dashboard",
+              compactStation,
+            });
             return;
           }
         }
@@ -226,7 +441,8 @@ export default function WoodTekERP() {
     // Show the fullscreen welcome splash for this user
     setShowSplash(true);
     setHasShownSplash(true);
-    await fetchAllData();
+    const compactStation = user.role === "Machine Operator" && (!user.displayRole || user.displayRole === "Machine Operator");
+    await fetchAllData({ includeDashboard: !landing || landing === "dashboard", compactStation });
   };
 
   const lockWorkspace = async () => {
@@ -399,26 +615,28 @@ export default function WoodTekERP() {
         />
 
         <main key={activeTab} className="flex-1 pb-16 animate-fade-up">
+          {currentUser && (
+            <>
           {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} currentUser={currentUser} />}
           {activeTab === "plant" && <PlantView onNavigate={setActiveTab} />}
           {activeTab === "orders" && (
-            <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={fetchAllData}
+            <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={refreshOrderWorkspace}
               showNewModal={showNewModal && canCreateOrders} setShowNewModal={setShowNewModal} customers={customers}
               templates={templates} machines={machines} searchQuery={searchQuery} currentUser={currentUser} inventoryItems={inventory}
               presetStatus={ordersPresetStatus} cloneSeed={cloneSeed} onCloneConsumed={() => setCloneSeed(null)} />
           )}
           {activeTab === "schedule" && (
-            <ScheduleView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} searchQuery={searchQuery} />
+            <ScheduleView machines={machines} currentUser={currentUser} onRefresh={refreshOperationalData} searchQuery={searchQuery} />
           )}
           {activeTab.startsWith("order-") && (
             <OrderWorkflowDetail orderId={Number(activeTab.split("-")[1])} onBack={() => setActiveTab("orders")}
-              onRefresh={fetchAllData} currentUser={currentUser} machines={machines} inventoryItems={inventory}
+              onRefresh={refreshOperationalData} currentUser={currentUser} machines={machines} inventoryItems={inventory}
               onCloneOrder={canCreateOrders ? handleCloneOrder : undefined} />
           )}
-          {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={fetchAllData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
-          {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
-          {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={fetchAllData} onSelectOrder={handleSelectOrder} />}
-          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={fetchAllData} />}
+          {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={refreshMachineData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
+          {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={refreshStationShellData} onSelectOrder={handleSelectOrder} />}
+          {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={refreshCustomerData} onSelectOrder={handleSelectOrder} />}
+          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} />}
           {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
           {activeTab === "reception" && <FloorReceptionView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "gantt" && (
@@ -432,12 +650,14 @@ export default function WoodTekERP() {
           {activeTab === "wip" && <WipBoardView onSelectOrder={handleSelectOrder} onNavigate={setActiveTab} />}
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}
-          {activeTab === "recipes" && <RecipeManagerView onRefresh={fetchAllData} />}
+          {activeTab === "recipes" && <RecipeManagerView onRefresh={refreshTemplateData} />}
           {activeTab === "pims" && <PimsImportView onSelectOrder={handleSelectOrder} />}
           {activeTab === "designer" && (
             <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />
           )}
           {activeTab === "settings" && <SettingsView currentUser={currentUser} />}
+            </>
+          )}
         </main>
       </div>
 
