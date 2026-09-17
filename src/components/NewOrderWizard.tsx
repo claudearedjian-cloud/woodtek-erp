@@ -20,7 +20,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { DEFAULT_PROJECT_TYPES } from "@/lib/projectTypes";
+import { DEFAULT_PROJECT_TYPES, reconcileProjectType } from "@/lib/projectTypes";
 import { stockShortfall, type BomKit } from "@/lib/bomKits";
 import {
   productionRouteFromTemplate,
@@ -294,7 +294,7 @@ export default function NewOrderWizard({
     setPage("details");
     setCustomerId(customers[0]?.id ? String(customers[0].id) : "");
     setTitle("");
-    setProjectType(projectTypes[0] || "Custom Kitchens");
+    setProjectType(projectTypes[0] || "");
     setPriority("Normal");
     setTotalValue("");
     setDueDate(defaultDueDate());
@@ -315,7 +315,10 @@ export default function NewOrderWizard({
       fetch("/api/machine-categories", { cache: "no-store" }).then((response) => response.ok ? response.json() : { categories: [] }),
       fetch("/api/bom-kits", { cache: "no-store" }).then((response) => response.ok ? response.json() : { kits: [] }),
     ]).then(([projectData, categoryData, kitData]) => {
-      if (Array.isArray(projectData.types) && projectData.types.length > 0) setProjectTypes(projectData.types);
+      if (Array.isArray(projectData.types)) {
+        setProjectTypes(projectData.types);
+        setProjectType((current) => reconcileProjectType(projectData.types, current));
+      }
       if (Array.isArray(categoryData.categories)) setManagedCategories(categoryData.categories);
       if (Array.isArray(kitData.kits)) setKits(kitData.kits);
     }).catch(() => {});
@@ -493,7 +496,9 @@ export default function NewOrderWizard({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not update project categories.");
-      setProjectTypes(Array.isArray(data.types) ? data.types : next);
+      const savedTypes = Array.isArray(data.types) ? data.types : next;
+      setProjectTypes(savedTypes);
+      setProjectType((current) => reconcileProjectType(savedTypes, current));
       setProjectTypeMessage("Project categories updated.");
     } catch (cause) {
       setProjectTypeMessage(cause instanceof Error ? cause.message : "Could not update project categories.");
@@ -548,8 +553,8 @@ export default function NewOrderWizard({
   const validatePage = (target: WizardPage): boolean => {
     setError("");
     if (target === "details") {
-      if (!customerId || !title.trim() || !dueDate) {
-        setError("Choose a customer, enter the project title, and set the due date.");
+      if (!customerId || !projectType || !title.trim() || !dueDate) {
+        setError("Choose a customer and project category, enter the project title, and set the due date.");
         setPage("details");
         return false;
       }
@@ -750,9 +755,10 @@ export default function NewOrderWizard({
                     </select>
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-xs font-bold text-slate-300">Project category</label>
+                    <label className="mb-1.5 block text-xs font-bold text-slate-300">Project category *</label>
                     <select value={projectType} onChange={(event) => setProjectType(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white outline-none focus:border-amber-500">
-                      {Array.from(new Set([...projectTypes, projectType])).map((type) => <option key={type} value={type}>{type}</option>)}
+                      {projectTypes.length === 0 && <option value="">No project categories — add one below</option>}
+                      {projectTypes.map((type) => <option key={type} value={type}>{type}</option>)}
                     </select>
                     {canManageProjectTypes && (
                       <button type="button" onClick={() => setShowProjectTypes((value) => !value)} className="mt-1.5 flex items-center gap-1 text-[10px] font-black text-teal-300 hover:text-teal-200"><Wrench className="h-3 w-3" /> Manage categories</button>

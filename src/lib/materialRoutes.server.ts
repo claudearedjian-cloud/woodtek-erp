@@ -67,3 +67,23 @@ export function writeAllRoutes(routes: RouteMap): void {
   fs.writeFileSync(file, JSON.stringify({ version: 1, routes }, null, 2), "utf8");
   cacheRoutes(file, { ...routes });
 }
+
+/** Remove legacy route entries belonging to deleted order-material allocations. */
+export function clearMaterialRoutes(materialIds: readonly number[]): void {
+  const routes = readAllRoutes();
+  let changed = false;
+  for (const rawId of materialIds) {
+    const id = Number(rawId);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const key = String(id);
+    if (Object.prototype.hasOwnProperty.call(routes, key)) {
+      delete routes[key];
+      changed = true;
+    }
+  }
+  if (changed) writeAllRoutes(routes);
+}
+
+export function clearAllMaterialRoutes(): void {
+  writeAllRoutes({});
+}

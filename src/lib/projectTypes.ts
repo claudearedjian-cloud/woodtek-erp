@@ -13,3 +13,10 @@ export const DEFAULT_PROJECT_TYPES = [
 ];
 
 export { sanitizeCategories as sanitizeProjectTypes } from "@/lib/machineCategories";
+
+/** Keep a valid selected category, otherwise move to the first saved one. */
+export function reconcileProjectType(types: readonly string[], current: string): string {
+  const wanted = String(current || "").trim().toLowerCase();
+  const match = types.find((type) => type.toLowerCase() === wanted);
+  return match ?? types[0] ?? "";
+}

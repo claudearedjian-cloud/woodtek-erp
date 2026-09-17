@@ -66,6 +66,11 @@ const stationSource = fs.readFileSync("src/components/OperatorStationView.tsx", 
 const operationsSource = fs.readFileSync("src/app/api/operations/route.ts", "utf8");
 const operationActionSource = fs.readFileSync("src/app/api/operations/[id]/route.ts", "utf8");
 const machinesSource = fs.readFileSync("src/app/api/machines/route.ts", "utf8");
+const dashboardSource = fs.readFileSync("src/components/DashboardView.tsx", "utf8");
+const dashboardApiSource = fs.readFileSync("src/app/api/dashboard/route.ts", "utf8");
+const orderDeleteSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+const seedSource = fs.readFileSync("src/app/api/seed/route.ts", "utf8");
+const newOrderSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
 check(pageSource.includes("dynamic(() => import(\"@/components/OperatorStationView\")"), "performance: application workspaces are code-split");
 check(!pageSource.includes("onRefresh={fetchAllData}"), "performance: actions never launch the whole-app refresh flood");
 check(pageSource.includes("compactStation ? Promise.resolve(null)"), "performance: locked Operator login skips unrelated administration datasets");
@@ -75,6 +80,33 @@ check((stationSource.match(/<ElapsedTimer/g) || []).length === 1, "performance: 
 check(operationsSource.includes("listOperationsForUser(user") && operationsSource.includes("statuses: activeOnly ? activeStatuses"), "performance: operation filtering stays scoped and runs in SQL");
 check(operationActionSource.includes("One compact order snapshot") && !operationActionSource.includes("Re-read after readiness"), "performance: station action avoids duplicate full-order reads");
 check(machinesSource.includes("summaryOnly") && machinesSource.includes("operationsByMachine"), "performance: machine summaries avoid repeated scans and queue payloads");
+
+// ---- dashboard batch labels + clean deletion regressions ----
+check(
+  dashboardApiSource.includes("productionBatchNumber: binding?.batchNumber")
+    && dashboardApiSource.includes("productionBatchName: binding?.item.name"),
+  "dashboard: API attaches stable production-batch identity to each live job",
+);
+check(
+  dashboardSource.includes("BATCH {job.productionBatchNumber}")
+    && dashboardSource.includes("job.productionBatchName"),
+  "dashboard: live feed prints BATCH N beside the order number",
+);
+check(
+  orderDeleteSource.includes("clearDeletedOrderRuntimeState")
+    && orderDeleteSource.includes("materialRows.map((row) => row.id)"),
+  "order deletion: relational delete also clears every per-order/per-material overlay",
+);
+check(
+  seedSource.indexOf("if (!force)") < seedSource.indexOf("await db.delete(orderMaterials)")
+    && seedSource.includes("Automatic demo seeding was skipped"),
+  "demo seed: an initialized database cannot refill an intentionally empty orders table",
+);
+check(
+  newOrderSource.includes("if (Array.isArray(projectData.types))")
+    && !newOrderSource.includes("new Set([...projectTypes, projectType])"),
+  "new order: an intentionally empty/deleted project-category list stays empty",
+);
 
 const props = (role, menuConfig = null, lang) => ({
   activeTab: "station",
@@ -618,6 +650,22 @@ const samplePlan = {
 };
 check(pp.findProductionItemByMaterial(samplePlan, 71).name === "Kitchen doors", "production plan: material resolves to its private chain");
 check(pp.findProductionStepByOperation(samplePlan, 802).index === 2, "production plan: operation resolves to its material and pass position");
+const twoBatchPlan = {
+  ...samplePlan,
+  items: [
+    samplePlan.items[0],
+    {
+      ...samplePlan.items[0],
+      materialId: 72,
+      name: "Wall panels",
+      steps: [{ ...samplePlan.items[0].steps[0], operationId: 900 }],
+    },
+  ],
+};
+check(
+  pp.findProductionStepByOperation(twoBatchPlan, 900).batchNumber === 2,
+  "production plan: dashboard batch number follows the stable material-plan order",
+);
 check(pp.previousProductionOperationId(samplePlan, 802) === 801 && pp.nextProductionOperationId(samplePlan, 802) === 803, "production plan: predecessor/next stay inside one material chain");
 check(pp.routeStageKeys(samplePlan.items[0]).length === 4 && new Set(pp.routeStageKeys(samplePlan.items[0])).size === 4, "production plan: progress ladder preserves all repeated passes");
 const cleanPlanStore = pp.sanitizeProductionPlanStore({ version: 99, orders: { 22: samplePlan, bad: {}, 23: { orderId: 99, items: [] } } });
@@ -642,6 +690,11 @@ check(perms.canAssignMachines("Machine Operator") === false, "machine assign: op
 check(perms.canAssignMachines("Warehouse Supervisor") === false, "machine assign: warehouse cannot assign");
 check(perms.canAssignMachines(undefined) === false, "machine assign: signed-out cannot assign");
 perms.registerCustomRoles(savedCustomRoles);
+
+// ---- project category selection ----
+const pt = require("./compiled/lib/projectTypes.js");
+check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");
+check(pt.reconcileProjectType(["Kitchen"], "Deleted category") === "Kitchen" && pt.reconcileProjectType([], "Deleted category") === "", "project types: deleted selection cannot reappear, including an empty list");
 
 // ---- machine categories helpers ----
 const mc = require("./compiled/lib/machineCategories.js");

@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { orders, machines, orderOperations, inventoryItems, customers, users } from "@/db/schema";
 import { eq, desc, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { findProductionStepByOperation } from "@/lib/productionPlan";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 import {
   listOrdersForUser,
   listMachinesForUser,
@@ -158,14 +160,24 @@ export async function GET(request: Request) {
     // Recent Operational Activity (attach the client name so the order number + client are always readable)
     const customerById = new Map(customerRows.map((c: any) => [c.id, c]));
     const orderById = new Map(orderRows.map((o: any) => [o.id, o]));
-    const activeShopJobs = opRows
+    const activeJobRows = opRows
       .filter(o => o.status === "In Progress" || o.status === "Ready")
-      .slice(0, 6)
-      .map((j: any) => {
-        const ord: any = orderById.get(j.orderId);
-        const cust: any = ord ? customerById.get(ord.customerId) : null;
-        return { ...j, customerName: cust?.company || cust?.name || null };
-      });
+      .slice(0, 6);
+    const planByOrder = new Map(
+      Array.from(new Set(activeJobRows.map((job) => job.orderId)))
+        .map((orderId) => [orderId, readOrderProductionPlan(orderId)] as const),
+    );
+    const activeShopJobs = activeJobRows.map((job: any) => {
+      const ord: any = orderById.get(job.orderId);
+      const cust: any = ord ? customerById.get(ord.customerId) : null;
+      const binding = findProductionStepByOperation(planByOrder.get(job.orderId), job.id);
+      return {
+        ...job,
+        customerName: cust?.company || cust?.name || null,
+        productionBatchNumber: binding?.batchNumber ?? null,
+        productionBatchName: binding?.item.name ?? null,
+      };
+    });
 
     return NextResponse.json({
       kpis: {

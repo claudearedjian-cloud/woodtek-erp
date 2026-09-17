@@ -137,3 +137,31 @@ export function setOrderReceived(orderId: number, received: boolean, state?: Rec
     },
   });
 }
+
+/** Remove warehouse line state and reception state owned by one order. */
+export function clearBomOrderState(orderId: number, allocationIds: readonly number[]): void {
+  const current = readRaw();
+  const entries = { ...current.entries };
+  const received = { ...current.received };
+  let changed = false;
+
+  for (const rawId of allocationIds) {
+    const id = Number(rawId);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const key = String(id);
+    if (Object.prototype.hasOwnProperty.call(entries, key)) {
+      delete entries[key];
+      changed = true;
+    }
+  }
+  if (Number.isInteger(orderId) && orderId > 0 && Object.prototype.hasOwnProperty.call(received, String(orderId))) {
+    delete received[String(orderId)];
+    changed = true;
+  }
+  if (changed) writeRaw({ version: 1, entries, received });
+}
+
+/** Reset only order/BOM workflow state; shared warehouse configuration is unaffected. */
+export function clearAllBomOrderState(): void {
+  writeRaw({ version: 1, entries: {}, received: {} });
+}

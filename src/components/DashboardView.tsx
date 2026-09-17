@@ -390,10 +390,18 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
                         <Activity className={`w-5 h-5 ${isRunning ? "animate-spin" : ""}`} />
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-base font-black text-amber-400 tracking-tight">
                             {job.orderNumber}
                           </span>
+                          {Number(job.productionBatchNumber) > 0 && (
+                            <span
+                              title={job.productionBatchName || `Production batch ${job.productionBatchNumber}`}
+                              className="whitespace-nowrap rounded border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300"
+                            >
+                              BATCH {job.productionBatchNumber}
+                            </span>
+                          )}
                           <span className={`text-[10px] px-2 py-0.5 rounded font-extrabold uppercase tracking-wider ${
                             isRunning ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-300 border border-slate-700"
                           }`}>

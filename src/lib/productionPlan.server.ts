@@ -116,3 +116,8 @@ export function productionStepForOperation(
 ): { item: PlannedProductionItem; step: PlannedProductionStep; index: number } | null {
   return findProductionStepByOperation(readOrderProductionPlan(orderId), operationId);
 }
+
+/** Reset all per-order plans after an intentional all-orders clean slate. */
+export function clearAllProductionPlans(): void {
+  writeProductionPlanStore({ version: 1, orders: {} });
+}

@@ -18,25 +18,32 @@ import {
 } from "@/db/schema";
 import { sql } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
+import { clearAllOrderRuntimeState } from "@/lib/orderCleanup.server";
 
 export async function POST(request: Request) {
   try {
     const url = new URL(request.url);
     const force = url.searchParams.get("force") === "true";
 
-    // Bootstrap exception: an empty database has no accounts, so nobody could
-    // ever sign in to create the first one. Seeding is therefore allowed only
-    // while the users table is empty — after that it requires admin:seed.
+    // Bootstrap exception: a genuinely empty database has no account that can
+    // request demo data. Once ANY user exists, an automatic non-force request
+    // must never repopulate deleted orders. An intentional reset remains
+    // available only through the explicit ?force=true Manager path.
     const [anyUser] = await db.select({ id: users.id }).from(users).limit(1);
     const isBootstrap = !anyUser;
 
     if (!isBootstrap) {
       const { error: authError } = await authorize("admin:seed");
       if (authError) return authError;
+      if (!force) {
+        return NextResponse.json({
+          message: "Database is already initialized. Automatic demo seeding was skipped.",
+        });
+      }
     }
 
     if (!force) {
-      const existingOrders = await db.select().from(orders).limit(1);
+      const existingOrders = await db.select({ id: orders.id }).from(orders).limit(1);
       if (existingOrders.length > 0) {
         return NextResponse.json({ message: "Database already seeded with production orders." });
       }
@@ -57,6 +64,14 @@ export async function POST(request: Request) {
     await db.delete(customers);
     await db.delete(inventoryItems);
     await db.delete(users);
+
+    // A deliberate demo reset clears the JSON half of order state too. This
+    // excludes audit history and shared configuration, but removes old plans,
+    // reception flags, material stages, dispatch/QC state and delivery photos.
+    const cleanupWarnings = clearAllOrderRuntimeState();
+    if (cleanupWarnings.length > 0) {
+      console.warn("Demo reset completed with overlay cleanup warnings:", cleanupWarnings);
+    }
 
     // 1. Insert Users / Operators
     const [marcus, elena, diego, chloe, stefan, alexei] = await db.insert(users).values([

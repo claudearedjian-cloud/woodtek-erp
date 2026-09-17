@@ -5,7 +5,8 @@ import { eq, asc, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { isFloorRole } from "@/lib/dataAccess";
-import { readOrderProductionPlan, deleteOrderProductionPlan } from "@/lib/productionPlan.server";
+import { readOrderProductionPlan } from "@/lib/productionPlan.server";
+import { clearDeletedOrderRuntimeState } from "@/lib/orderCleanup.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, error: authError } = await authorize("orders:read");
@@ -252,15 +253,29 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       );
     }
 
-    // Delete the relational rows and the v2 route binding as one logical unit.
-    // A plan-file failure aborts the database transaction rather than leaving
-    // an overlay that points at deleted material and operation ids.
+    // Capture allocation ids before the relational delete so every JSON
+    // overlay entry owned by this order can be removed afterwards.
+    const materialRows = await db
+      .select({ id: orderMaterials.id })
+      .from(orderMaterials)
+      .where(eq(orderMaterials.orderId, orderId));
+
     await db.transaction(async (tx) => {
       await tx.delete(orderMaterials).where(eq(orderMaterials.orderId, orderId));
       await tx.delete(orderOperations).where(eq(orderOperations.orderId, orderId));
       await tx.delete(orders).where(eq(orders.id, orderId));
-      deleteOrderProductionPlan(orderId);
     });
+
+    // The database and JSON overlays form one logical order record. Clear the
+    // deleted order from every overlay while leaving unrelated orders, audit
+    // history and shared settings untouched.
+    const cleanupWarnings = clearDeletedOrderRuntimeState(
+      orderId,
+      materialRows.map((row) => row.id),
+    );
+    if (cleanupWarnings.length > 0) {
+      console.warn(`Order ${orderId} deleted, but some overlay cleanup steps need attention:`, cleanupWarnings);
+    }
 
     logAudit(user, "order.delete", "order", `Order #${orderId} deleted`, orderId);
     return NextResponse.json({ success: true, message: "Order and workflow operations deleted." });

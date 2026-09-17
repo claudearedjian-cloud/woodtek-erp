@@ -349,7 +349,8 @@ export default function WoodTekERP() {
       setLoading(true);
       try {
         // A production installation starts empty and presents Create Owner.
-        // Demo data is opt-in only; it must never silently populate a factory DB.
+        // Demo data is opt-in and may bootstrap only a truly uninitialized DB;
+        // the server will never refill orders deleted from an existing system.
         if (process.env.NEXT_PUBLIC_WOODTEK_DEMO === "on") {
           await fetch("/api/seed", { method: "POST" });
         }

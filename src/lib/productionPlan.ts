@@ -170,11 +170,14 @@ export function findProductionItemByMaterial(
 export function findProductionStepByOperation(
   plan: OrderProductionPlan | null | undefined,
   operationId: number,
-): { item: PlannedProductionItem; step: PlannedProductionStep; index: number } | null {
+): { item: PlannedProductionItem; step: PlannedProductionStep; index: number; batchNumber: number } | null {
   if (!plan) return null;
-  for (const item of plan.items) {
+  for (let batchIndex = 0; batchIndex < plan.items.length; batchIndex++) {
+    const item = plan.items[batchIndex];
     const index = item.steps.findIndex((step) => step.operationId === Number(operationId));
-    if (index !== -1) return { item, step: item.steps[index], index };
+    if (index !== -1) {
+      return { item, step: item.steps[index], index, batchNumber: batchIndex + 1 };
+    }
   }
   return null;
 }

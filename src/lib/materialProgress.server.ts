@@ -172,3 +172,23 @@ export async function autoCompleteMaterialsForStep(
     console.warn("material completion carry-over skipped:", e instanceof Error ? e.message : e);
   }
 }
+
+/** Remove progress chips belonging to deleted order-material allocations. */
+export function clearMaterialProgress(materialIds: readonly number[]): void {
+  const progress = readAllProgress();
+  let changed = false;
+  for (const rawId of materialIds) {
+    const id = Number(rawId);
+    if (!Number.isInteger(id) || id <= 0) continue;
+    const key = String(id);
+    if (Object.prototype.hasOwnProperty.call(progress, key)) {
+      delete progress[key];
+      changed = true;
+    }
+  }
+  if (changed) writeAllProgress(progress);
+}
+
+export function clearAllMaterialProgress(): void {
+  writeAllProgress({});
+}
