@@ -147,8 +147,21 @@ export async function GET() {
     // gap left by an old deployment or a transient filesystem interruption.
     const store = await updateDispatchStore((current) => {
       for (const order of orderRows) {
-        const inherited = current.stages[String(order.id)];
-        for (const material of materialsByOrder.get(order.id) ?? []) {
+        const orderMaterialRows = materialsByOrder.get(order.id) ?? [];
+        let inherited = current.stages[String(order.id)];
+        // Orders intentionally issued without a material/cut-list still reserve
+        // one order-level row immediately; it becomes actionable at completion.
+        if (orderMaterialRows.length === 0 && !inherited) {
+          const createdAt = iso(order.createdAt);
+          inherited = {
+            stage: order.status === "Delivered" ? "delivered" : defaultStage(order.projectType),
+            createdAt,
+            updatedAt: createdAt,
+            proof: null,
+          };
+          current.stages[String(order.id)] = inherited;
+        }
+        for (const material of orderMaterialRows) {
           if (current.batches[String(material.id)]) continue;
           const createdAt = iso(order.createdAt);
           current.batches[String(material.id)] = {
@@ -170,7 +183,9 @@ export async function GET() {
     const fullyDeliveredOrderIds = orderRows
       .filter((order) => {
         const ids = (materialsByOrder.get(order.id) ?? []).map((material) => material.id);
-        return allCurrentBatchesDelivered(ids, store.batches);
+        return ids.length > 0
+          ? allCurrentBatchesDelivered(ids, store.batches)
+          : store.stages[String(order.id)]?.stage === "delivered";
       })
       .map((order) => order.id);
     const deliveryStatusRepairs = orderRows
@@ -219,23 +234,22 @@ export async function GET() {
         });
       }
 
-      // Backward compatibility for historical/service orders with no BOM row.
-      if (
-        orderMaterialsRows.length === 0
-        && (order.status === "Completed" || order.status === "Delivered")
-      ) {
+      // Issued orders without a material row reserve one order-level fallback
+      // immediately. Historical orders use the same backward-compatible path.
+      if (orderMaterialsRows.length === 0) {
         const legacy = store.stages[String(order.id)];
         payload.push({
           ...order,
+          status: fullyDelivered.has(order.id) ? "Delivered" : order.status,
           orderId: order.id,
           batchId: null,
           dispatchKey: dispatchLegacyOrderKey(order.id),
           batchNumber: null,
-          batchName: "Legacy whole order",
+          batchName: "Order-level slot (no material batch)",
           stage: legacy?.stage ?? (order.status === "Delivered" ? "delivered" : defaultStage(order.projectType)),
           proof: legacy?.proof ?? null,
-          productionReady: true,
-          deliveredBatchCount: order.status === "Delivered" ? 1 : 0,
+          productionReady: order.status === "Completed" || order.status === "Delivered" || fullyDelivered.has(order.id),
+          deliveredBatchCount: legacy?.stage === "delivered" || fullyDelivered.has(order.id) ? 1 : 0,
           totalBatchCount: 1,
           materials: [],
         });

@@ -58,11 +58,13 @@ export async function GET(request: Request) {
     const orderIdSet = new Set(orderIds);
     const planStore = readProductionPlanStore();
     const relevantPlans = Object.values(planStore.orders).filter((plan) => orderIdSet.has(plan.orderId));
-    const operationBindings = new Map<number, { item: any; step: any }>();
+    const operationBindings = new Map<number, { item: any; step: any; batchNumber: number }>();
     for (const plan of relevantPlans) {
-      for (const item of plan.items) {
-        for (const step of item.steps) operationBindings.set(step.operationId, { item, step });
-      }
+      plan.items.forEach((item, index) => {
+        for (const step of item.steps) {
+          operationBindings.set(step.operationId, { item, step, batchNumber: index + 1 });
+        }
+      });
     }
 
     // Schedule/Gantt callers need operation rows only. Material, route and BOM
@@ -76,6 +78,7 @@ export async function GET(request: Request) {
           machineCategory: operation.machineCategory || binding.step.machineCategory,
           productionItem: {
             materialId: binding.item.materialId,
+            batchNumber: binding.batchNumber,
             name: binding.item.name,
             recipeName: binding.item.recipeName,
             routeSource: binding.item.routeSource,
@@ -174,6 +177,7 @@ export async function GET(request: Request) {
         orderSteps: routeStageKeys(binding.item),
         productionItem: {
           materialId: binding.item.materialId,
+          batchNumber: binding.batchNumber,
           name: binding.item.name,
           recipeName: binding.item.recipeName,
           routeSource: binding.item.routeSource,

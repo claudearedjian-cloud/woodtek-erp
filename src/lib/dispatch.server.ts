@@ -189,6 +189,28 @@ export async function ensureDispatchBatches(input: {
   });
 }
 
+/** Reserve one order-level delivery row when an issued order has no material batches. */
+export async function ensureLegacyDispatchOrder(input: {
+  orderId: number;
+  projectType?: string | null;
+  createdAt?: Date | string | null;
+  orderStatus?: string | null;
+}): Promise<void> {
+  const orderId = Number(input.orderId);
+  if (!Number.isInteger(orderId) || orderId <= 0) return;
+  await updateDispatchStore((store) => {
+    const key = String(orderId);
+    if (store.stages[key]) return;
+    const createdAt = cleanIso(input.createdAt) ?? new Date().toISOString();
+    store.stages[key] = {
+      stage: input.orderStatus === "Delivered" ? "delivered" : defaultStage(input.projectType),
+      createdAt,
+      updatedAt: createdAt,
+      proof: null,
+    };
+  });
+}
+
 export async function removeDispatchBatch(materialId: number): Promise<void> {
   if (!Number.isInteger(materialId) || materialId <= 0) return;
   await updateDispatchStore((store) => {

@@ -474,14 +474,18 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     return operations.filter(operation => {
       if (operation.status === "Completed") return false;
       if (!query) return true;
-      return [operation.orderNumber, operation.orderTitle, operation.operationName, operation.machineCode]
+      return [operation.orderNumber, operation.orderTitle, operation.operationName, operation.machineCode, operation.productionItem?.name]
         .filter(Boolean)
         .some(value => String(value).toLowerCase().includes(query));
     });
   }, [operations, searchQuery]);
 
-  const unscheduled = visibleOperations.filter(operation => !operation.scheduledStart);
-  const scheduled = visibleOperations.filter(operation => Boolean(operation.scheduledStart));
+  const unscheduled = visibleOperations.filter(operation => !operation.scheduledStart || !operation.scheduledEnd);
+  const scheduled = visibleOperations.filter(operation => Boolean(operation.scheduledStart && operation.scheduledEnd));
+  const visibleDayKeys = new Set(days.map((day) => day.key));
+  const outsideWindowScheduled = scheduled
+    .filter((operation) => !visibleDayKeys.has(localDateKey(operation.scheduledStart)))
+    .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
 
   // One click: server assigns a slot to every unscheduled open operation,
   // honoring routing order, order priority/due dates and machine availability.
@@ -492,7 +496,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       const response = await fetch("/api/operations/auto-schedule", { method: "POST" });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Auto-plan failed.");
-      const extra = payload.skipped ? ` — ${payload.skipped} skipped (machine unavailable)` : "";
+      const extra = payload.skipped ? ` — ${payload.skipped} still need machine assignment or availability` : "";
       setNotice(`Auto-planned ${payload.planned} operation${payload.planned === 1 ? "" : "s"} by workflow order and machine availability${extra}.`);
       setTimeout(() => setNotice(""), 6000);
       await fetchOperations(true);
@@ -618,7 +622,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             <CalendarDays className="h-4 w-4" /> Dispatch planning board
           </div>
           <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Machine lanes & production appointments</h1>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">Plan each routed step against a real machine and time window. Conflicting bookings and unavailable stations are rejected by the server before they reach the floor.</p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-400">Issuing an order automatically books every routed batch pass against a real machine and time window. Only unavailable or explicitly unassigned exceptions remain for manual planning.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-right">
@@ -646,7 +650,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-black text-white">
-            <Truck className="h-4 w-4 text-emerald-400" /> Dispatch queue — material batches
+            <Truck className="h-4 w-4 text-emerald-400" /> Delivery Dispatch queue — material batches
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -862,7 +866,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
         <section className="h-fit rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm xl:sticky xl:top-24">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-black text-white"><ListFilter className="h-4 w-4 text-amber-400" /> Needs a slot</h2>
+            <h2 className="flex items-center gap-2 text-sm font-black text-white"><ListFilter className="h-4 w-4 text-amber-400" /> Automatic slot exceptions</h2>
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-black text-amber-300">{unscheduled.length}</span>
           </div>
           {canSchedule && unscheduled.length > 0 && (
@@ -876,10 +880,15 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
               {autoPlanning ? "Planning slots…" : `Auto-plan ${unscheduled.length} operation${unscheduled.length === 1 ? "" : "s"}`}
             </button>
           )}
+          {unscheduled.length > 0 && (
+            <p className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-amber-200/80">
+              These passes could not be auto-booked, usually because an exact machine is unassigned or the required station is unavailable. Fix the station, then use Auto-plan.
+            </p>
+          )}
           {unscheduled.length === 0 ? (
             <div className="rounded-xl border border-dashed border-emerald-500/30 bg-emerald-500/5 p-5 text-center text-xs text-emerald-200">
               <CheckCircle2 className="mx-auto mb-2 h-7 w-7 text-emerald-400" />
-              All open operations have a dispatch slot.
+              Every open operation has a production Dispatch slot.
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -917,6 +926,24 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
               );
             })}
           </div>
+          {outsideWindowScheduled.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-black uppercase tracking-wider text-blue-300">Booked outside this five-day window</div>
+                <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-black text-blue-200">{outsideWindowScheduled.length}</span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {outsideWindowScheduled.map((operation) => (
+                  <div key={operation.id}>
+                    <div className="mb-1 text-[9px] font-black uppercase tracking-wide text-slate-500">
+                      {new Date(operation.scheduledStart).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                    </div>
+                    <OperationCard operation={operation} statusClass={statusClass} canSchedule={canSchedule} onPlan={() => openPlanner(operation)} onClear={() => clearSchedule(operation)} compact />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </div>
 
@@ -1004,6 +1031,11 @@ function OperationCard({ operation, statusClass, canSchedule, onPlan, onClear, c
         <GripVertical className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2"><span className="font-mono text-[10px] font-black text-amber-300">{operation.orderNumber}</span><span className="text-[10px] font-bold text-slate-400">{operation.scheduledStart ? timeValue(operation.scheduledStart) : "Unplanned"}</span></div>
+          {operation.productionItem?.name && (
+            <div className="mt-1 truncate text-[9px] font-black uppercase tracking-wide text-blue-300">
+              Batch {operation.productionItem.batchNumber || ""} · {operation.productionItem.name}
+            </div>
+          )}
           <div className="mt-1 line-clamp-2 text-xs font-black text-white">{operation.operationName}</div>
           <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-slate-400"><Cpu className="h-3 w-3 text-blue-300" />{operation.machineCode || "No station"} · {operation.estimatedMinutes}m</div>
           {!compact && <div className="mt-1 truncate text-[10px] text-slate-500">{operation.orderTitle}</div>}

@@ -300,9 +300,18 @@ export default function OrdersView({
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
                       {order.status}
                     </span>
+                    {Number(order.totalSteps) > 0 && (
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border ${
+                        Number(order.scheduledSteps) === Number(order.totalSteps)
+                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                          : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                      }`}>
+                        Machine slots: {Number(order.scheduledSteps) || 0}/{order.totalSteps}
+                      </span>
+                    )}
                     {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                       <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                        Dispatch: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
+                        Delivery: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
                       </span>
                     )}
                     {archivedSet.has(order.id) && (
@@ -415,10 +424,21 @@ export default function OrdersView({
                       <div className="text-xs text-white font-extrabold mb-3 truncate">
                         {order.customerCompany || order.customerName}
                       </div>
+                      {Number(order.totalSteps) > 0 && (
+                        <div className="mb-2">
+                          <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase border ${
+                            Number(order.scheduledSteps) === Number(order.totalSteps)
+                              ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                              : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                          }`}>
+                            Machine slots: {Number(order.scheduledSteps) || 0}/{order.totalSteps}
+                          </span>
+                        </div>
+                      )}
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                         <div className="mb-2">
                           <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                            Dispatch: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
+                            Delivery: {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered · {dispatchByOrder[String(order.id)].mixed ? "Mixed stages" : STAGE_LABELS[dispatchByOrder[String(order.id)].stage]}
                           </span>
                         </div>
                       )}

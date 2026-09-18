@@ -22,6 +22,7 @@ import {
 } from "@/lib/operationMachineCandidates.server";
 import { candidateStatusIsClaimable, sanitizeCandidateMachineIds } from "@/lib/operationMachineCandidates";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
+import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -98,6 +99,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     const result = await db.transaction(async (tx) => {
+      // Manual appointments share the automatic planner's advisory lock, so a
+      // new-order auto-booking and a manager edit cannot reserve the same slot.
+      if (body.scheduledStart !== undefined || body.scheduledEnd !== undefined) {
+        await lockDispatchSchedule(tx);
+      }
       const [currentOp] = await tx.select().from(orderOperations).where(eq(orderOperations.id, operationId));
       if (!currentOp) throw new WorkflowError("Operation step not found.", 404);
       const productionPlan = readOrderProductionPlan(currentOp.orderId);
@@ -443,7 +449,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const compareWaitingAssignment = !firstStartClaim
         && candidateStatusIsClaimable(currentOp.status)
         && (requestedCandidateMachineIds !== null || body.machineId !== undefined);
-      const claimWhere = firstStartClaim || compareWaitingAssignment
+      const compareWaitingSchedule = !firstStartClaim
+        && candidateStatusIsClaimable(currentOp.status)
+        && (body.scheduledStart !== undefined || body.scheduledEnd !== undefined);
+      const claimWhere = firstStartClaim || compareWaitingAssignment || compareWaitingSchedule
         ? and(
             eq(orderOperations.id, operationId),
             eq(orderOperations.status, currentOp.status),
@@ -461,7 +470,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         throw new WorkflowError(
           firstStartClaim
             ? "Another station claimed this operation first. Refresh the station queue."
-            : "This waiting operation changed while stations were being saved. Refresh and try again.",
+            : compareWaitingSchedule
+              ? "This waiting operation changed while its Dispatch slot was being saved. Refresh and try again."
+              : "This waiting operation changed while stations were being saved. Refresh and try again.",
           409,
         );
       }

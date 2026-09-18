@@ -40,6 +40,7 @@ compile("src/lib/packingQc.ts", "lib/packingQc.js");
 compile("src/lib/orderArchive.ts", "lib/orderArchive.js");
 compile("src/lib/deliveryPhotos.ts", "lib/deliveryPhotos.js");
 compile("src/lib/dispatch.ts", "lib/dispatch.js");
+compile("src/lib/dispatchScheduling.ts", "lib/dispatchScheduling.js");
 compile("src/lib/operationMachineCandidates.ts", "lib/operationMachineCandidates.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
@@ -77,6 +78,8 @@ const seedSource = fs.readFileSync("src/app/api/seed/route.ts", "utf8");
 const newOrderSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
 const orderCreateSource = fs.readFileSync("src/app/api/orders/route.ts", "utf8");
 const dispatchApiSource = fs.readFileSync("src/app/api/dispatch/route.ts", "utf8");
+const autoScheduleApiSource = fs.readFileSync("src/app/api/operations/auto-schedule/route.ts", "utf8");
+const dispatchSchedulingServerSource = fs.readFileSync("src/lib/dispatchScheduling.server.ts", "utf8");
 const scheduleSource = fs.readFileSync("src/components/ScheduleView.tsx", "utf8");
 const dataAccessSource = fs.readFileSync("src/lib/dataAccess.ts", "utf8");
 const orderWorkflowSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
@@ -154,6 +157,39 @@ check(
     && stationSource.includes("assignedMachineRef")
     && dataAccessSource.includes("crewMachineIds.length > 0"),
   "station crew refresh: secondary/reassigned operators update without a hard page refresh",
+);
+
+// ---- issued-order automatic production Dispatch slots ----
+check(
+  (orderCreateSource.match(/scheduleIssuedOrder\(/g) || []).length >= 3
+    && orderCreateSource.includes("dispatchScheduling,")
+    && orderCreateSource.includes("Dispatch slot(s) booked"),
+  "dispatch issue: both material-plan and legacy order creation auto-book real operation slots",
+);
+check(
+  autoScheduleApiSource.includes("autoScheduleDispatchSlots")
+    && dispatchSchedulingServerSource.includes("pg_advisory_xact_lock(874221902)")
+    && operationActionSource.includes("lockDispatchSchedule(tx)"),
+  "dispatch scheduling: issue, backlog auto-plan and manual edits share one database lock",
+);
+check(
+  dispatchSchedulingServerSource.includes("isNull(orderOperations.scheduledStart)")
+    && dispatchSchedulingServerSource.includes("expectedMachine")
+    && dispatchSchedulingServerSource.includes("operation changed while its slot was being booked"),
+  "dispatch scheduling: automatic writes compare the waiting snapshot instead of overwriting Start/reassignment",
+);
+check(
+  orderCreateSource.includes("ensureLegacyDispatchOrder")
+    && dispatchApiSource.includes("Orders intentionally issued without a material/cut-list")
+    && dispatchApiSource.includes("Order-level slot (no material batch)"),
+  "dispatch issue: an order without material rows still reserves an immediate production-blocked delivery row",
+);
+check(
+  newOrderSource.includes("Issue Order & Auto-book Dispatch")
+    && scheduleSource.includes("Automatic slot exceptions")
+    && scheduleSource.includes("operation.productionItem.batchNumber")
+    && ordersViewSource.includes("Machine slots:"),
+  "dispatch issue: automatic booking and per-batch slot identity are visible in the UI",
 );
 
 // ---- dashboard batch labels + clean deletion regressions ----
@@ -765,6 +801,54 @@ check(dispatch.dispatchBatchKey(71) === "batch:71" && dispatch.dispatchLegacyOrd
 check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "awaiting_delivery" } }) === false, "batch dispatch: one delivered batch never delivers its sibling or parent");
 check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "delivered" } }) === true, "batch dispatch: parent becomes deliverable only after every current batch");
 check(dispatch.allCurrentBatchesDelivered([], {}) === false, "batch dispatch: an empty material set cannot satisfy the all-batches roll-up");
+
+// ---- automatic production Dispatch slot planner ----
+const dsp = require("./compiled/lib/dispatchScheduling.js");
+const slotNow = new Date("2026-09-18T06:00:00.000Z").getTime();
+const automaticPlan = dsp.buildAutomaticDispatchPlan({
+  nowMs: slotNow,
+  orders: [
+    { id: 1, priority: "High", dueDate: "2026-09-20T12:00:00Z" },
+    { id: 2, priority: "Normal", dueDate: "2026-09-22T12:00:00Z" },
+    { id: 99, priority: "Normal", dueDate: "2026-09-30T12:00:00Z" },
+  ],
+  machines: [
+    { id: 1, category: "Beam Saw", status: "Active" },
+    { id: 2, category: "Beam Saw", status: "Active" },
+    { id: 3, category: "Edge Bander", status: "Active" },
+  ],
+  operations: [
+    // Existing work from another order reserves Saw 1 for the first 30 min.
+    { id: 900, orderId: 99, machineId: 1, stepOrder: 1, operationName: "Existing", estimatedMinutes: 30, status: "Ready", scheduledStart: new Date(slotNow), scheduledEnd: new Date(slotNow + 30 * 60000) },
+    // Two private material chains on one order.
+    { id: 101, orderId: 1, machineId: 1, stepOrder: 1, operationName: "Doors saw", estimatedMinutes: 60, status: "Ready", predecessorOperationId: null },
+    { id: 102, orderId: 1, machineId: 3, stepOrder: 2, operationName: "Doors edge", estimatedMinutes: 30, status: "Pending", predecessorOperationId: 101 },
+    { id: 201, orderId: 1, machineId: 2, stepOrder: 3, operationName: "Panels saw", estimatedMinutes: 45, status: "Ready", predecessorOperationId: null },
+    { id: 202, orderId: 1, machineId: 3, stepOrder: 4, operationName: "Panels edge", estimatedMinutes: 30, status: "Pending", predecessorOperationId: 201 },
+    // Not targeted and therefore must remain untouched.
+    { id: 301, orderId: 2, machineId: 2, stepOrder: 1, operationName: "Other order", estimatedMinutes: 20, status: "Ready" },
+  ],
+  targetOrderIds: [1],
+});
+const placement = (id) => automaticPlan.placements.find((entry) => entry.operationId === id);
+check(automaticPlan.attempted === 4 && automaticPlan.placements.length === 4 && !placement(301), "dispatch slots: issue-time planner targets only the newly issued order");
+check(placement(101).startMs === slotNow + 30 * 60000 && placement(201).startMs === slotNow, "dispatch slots: existing machine bookings are respected while sibling batches can start in parallel");
+check(placement(102).startMs >= placement(101).endMs && placement(202).startMs >= placement(201).endMs, "dispatch slots: each batch waits only for its own private predecessor");
+check(placement(102).endMs <= placement(202).startMs || placement(202).endMs <= placement(102).startMs, "dispatch slots: two batch passes can never overlap on one machine");
+const automaticMachinePlan = dsp.buildAutomaticDispatchPlan({
+  nowMs: slotNow,
+  orders: [{ id: 7, priority: "Normal" }],
+  machines: [
+    { id: 1, category: "Beam Saw", status: "Maintenance" },
+    { id: 2, category: "Beam Saw", status: "Active" },
+  ],
+  operations: [
+    { id: 701, orderId: 7, machineId: null, stepOrder: 1, operationName: "Auto saw", estimatedMinutes: 20, status: "Ready", requiredMachineCategory: "Beam Saw", automaticMachine: true },
+    { id: 702, orderId: 7, machineId: null, stepOrder: 2, operationName: "Exact pending", estimatedMinutes: 20, status: "Ready", automaticMachine: false },
+  ],
+});
+check(automaticMachinePlan.placements[0].machineId === 2, "dispatch slots: an unassigned Auto pass chooses an active compatible machine");
+check(automaticMachinePlan.skipped.some((entry) => entry.operationId === 702 && entry.reason.includes("exact machine")), "dispatch slots: an unassigned Exact pass stays a visible exception instead of using a wrong machine");
 
 // ---- operation machine candidates ----
 const omc = require("./compiled/lib/operationMachineCandidates.js");

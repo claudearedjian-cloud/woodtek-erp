@@ -644,6 +644,15 @@ export default function NewOrderWizard({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "The production order could not be created.");
+      const scheduling = data?.dispatchScheduling;
+      if (Number(scheduling?.skipped) > 0) {
+        const details = Array.isArray(scheduling.skippedDetails)
+          ? scheduling.skippedDetails.slice(0, 5).join("\n• ")
+          : "Check machine availability in Dispatch.";
+        window.alert(
+          `${data.orderNumber || "Order"} was issued and ${Number(scheduling.planned) || 0}/${Number(scheduling.attempted) || totalJobs} operation slots were booked automatically.\n\nStill needs attention:\n• ${details}`,
+        );
+      }
       reset();
       onClose();
       onCreated();
@@ -911,7 +920,7 @@ export default function NewOrderWizard({
               <section className="mx-auto max-w-5xl space-y-5">
                 <div>
                   <h3 className="flex items-center gap-2 text-xl font-black text-white"><CheckCircle2 className="h-5 w-5 text-emerald-400" /> Review production plan</h3>
-                  <p className="mt-1 text-xs text-slate-400">Nothing is created until you press the final button below.</p>
+                  <p className="mt-1 text-xs text-slate-400">Nothing is created until you press the final button below. Issuing the order automatically books every routable operation into its earliest conflict-free machine Dispatch slot.</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">Project</div><div className="mt-1 truncate text-sm font-black text-white">{title || "—"}</div></div>
@@ -956,7 +965,7 @@ export default function NewOrderWizard({
           <div className="hidden items-center gap-4 text-[10px] font-bold text-slate-500 sm:flex"><span>{materials.length} material batches</span><span>{totalJobs} station jobs</span><span>{totalMinutes} estimated minutes</span></div>
           {page === "review" ? (
             <button type="button" onClick={submit} disabled={submitting} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-950/40 hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50">
-              <CheckCircle2 className="h-4 w-4" /> {submitting ? "Creating all jobs…" : "Create Order & All Jobs"}
+              <CheckCircle2 className="h-4 w-4" /> {submitting ? "Issuing & booking slots…" : "Issue Order & Auto-book Dispatch"}
             </button>
           ) : (
             <button type="button" onClick={goNext} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 hover:from-amber-400 hover:to-amber-500">

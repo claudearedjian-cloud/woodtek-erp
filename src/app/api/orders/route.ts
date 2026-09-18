@@ -18,7 +18,8 @@ import {
 } from "@/lib/productionPlan";
 import { saveOrderProductionPlan } from "@/lib/productionPlan.server";
 import { applyMaterialsStatus } from "@/lib/materials";
-import { ensureDispatchBatches } from "@/lib/dispatch.server";
+import { ensureDispatchBatches, ensureLegacyDispatchOrder } from "@/lib/dispatch.server";
+import { autoScheduleDispatchSlots, type DispatchSchedulingResult } from "@/lib/dispatchScheduling.server";
 
 export async function GET(request: Request) {
   // The auth gate requires a signed-in user with orders:read.
@@ -45,6 +46,8 @@ export async function GET(request: Request) {
         stepOrder: orderOperations.stepOrder,
         operationName: orderOperations.operationName,
         status: orderOperations.status,
+        scheduledStart: orderOperations.scheduledStart,
+        scheduledEnd: orderOperations.scheduledEnd,
         machineName: machines.name,
         machineCode: machines.code,
       })
@@ -64,6 +67,7 @@ export async function GET(request: Request) {
       const ops = operationsByOrder.get(order.id) ?? [];
       const totalSteps = ops.length;
       const completedSteps = ops.filter(o => o.status === "Completed").length;
+      const scheduledSteps = ops.filter(o => o.scheduledStart && o.scheduledEnd).length;
       const currentOp = ops.find(o => o.status === "In Progress")
         || ops.find(o => o.status === "Ready")
         || ops.find(o => o.status === "Pending")
@@ -73,6 +77,7 @@ export async function GET(request: Request) {
         ...order,
         totalSteps,
         completedSteps,
+        scheduledSteps,
         currentStation: currentOp ? {
           operationName: currentOp.operationName,
           machineCode: currentOp.machineCode || "Unassigned",
@@ -193,6 +198,24 @@ async function prepareProductionAssignments(
       };
     }),
   }));
+}
+
+type IssuedOrderScheduling = DispatchSchedulingResult & { failed?: boolean };
+
+async function scheduleIssuedOrder(orderId: number): Promise<IssuedOrderScheduling> {
+  try {
+    return await autoScheduleDispatchSlots({ orderIds: [orderId] });
+  } catch (error) {
+    console.error(`Automatic Dispatch booking failed for order ${orderId}:`, error);
+    return {
+      attempted: 0,
+      planned: 0,
+      skipped: 1,
+      skippedDetails: ["Automatic slot booking failed. Open Dispatch and use Auto-plan after checking machine availability."],
+      placements: [],
+      failed: true,
+    };
+  }
 }
 
 export async function POST(request: Request) {
@@ -387,15 +410,31 @@ export async function POST(request: Request) {
         // persists every material batch before this response is returned.
         console.warn("Initial material-batch Dispatch entries could not be written:", error);
       }
+      // "Issue order" includes real production appointments, not just machine
+      // assignment. Every private material chain is booked now while all
+      // existing Dispatch appointments reserve their machine capacity.
+      const dispatchScheduling = await scheduleIssuedOrder(created.newOrder.id);
       let materialsStatus = created.newOrder.materialsStatus;
       try {
         materialsStatus = await applyMaterialsStatus(created.newOrder.id);
       } catch (error) {
         console.warn("Initial material availability status could not be computed:", error);
       }
-      logAudit(user, "order.create", "order", `${created.newOrder.orderNumber} created for ${title} · ${created.productionPlan.items.length} material job(s)`, created.newOrder.id);
+      logAudit(
+        user,
+        "order.create",
+        "order",
+        `${created.newOrder.orderNumber} created for ${title} · ${created.productionPlan.items.length} material job(s) · ${dispatchScheduling.planned}/${dispatchScheduling.attempted} Dispatch slot(s) booked`,
+        created.newOrder.id,
+      );
       return NextResponse.json(
-        { ...created.newOrder, materialsStatus, createdMaterials: created.createdMaterials, productionPlan: created.productionPlan },
+        {
+          ...created.newOrder,
+          materialsStatus,
+          createdMaterials: created.createdMaterials,
+          productionPlan: created.productionPlan,
+          dispatchScheduling,
+        },
         { status: 201 },
       );
     }
@@ -498,19 +537,35 @@ export async function POST(request: Request) {
     }
 
     try {
-      await ensureDispatchBatches({
-        orderId: newOrder.id,
-        materialIds: createdMaterials.map((material) => material.id),
-        projectType: newOrder.projectType,
-        createdAt: newOrder.createdAt,
-        orderStatus: newOrder.status,
-      });
+      if (createdMaterials.length > 0) {
+        await ensureDispatchBatches({
+          orderId: newOrder.id,
+          materialIds: createdMaterials.map((material) => material.id),
+          projectType: newOrder.projectType,
+          createdAt: newOrder.createdAt,
+          orderStatus: newOrder.status,
+        });
+      } else {
+        await ensureLegacyDispatchOrder({
+          orderId: newOrder.id,
+          projectType: newOrder.projectType,
+          createdAt: newOrder.createdAt,
+          orderStatus: newOrder.status,
+        });
+      }
     } catch (error) {
-      console.warn("Initial material-batch Dispatch entries could not be written:", error);
+      console.warn("Initial Dispatch reservation could not be written:", error);
     }
 
-    logAudit(user, "order.create", "order", `${newOrder.orderNumber} created for ${title}`, newOrder.id);
-    return NextResponse.json({ ...newOrder, createdMaterials }, { status: 201 });
+    const dispatchScheduling = await scheduleIssuedOrder(newOrder.id);
+    logAudit(
+      user,
+      "order.create",
+      "order",
+      `${newOrder.orderNumber} created for ${title} · ${dispatchScheduling.planned}/${dispatchScheduling.attempted} Dispatch slot(s) booked`,
+      newOrder.id,
+    );
+    return NextResponse.json({ ...newOrder, createdMaterials, dispatchScheduling }, { status: 201 });
   } catch (error: any) {
     console.error("POST order error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create order" }, { status: 500 });
