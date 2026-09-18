@@ -59,3 +59,34 @@ export function candidateIncludesStation(
 ): boolean {
   return effectiveCandidateMachineIds(persistedMachineId, status, entry).includes(Number(stationMachineId));
 }
+
+/** Grey "taken at another station" cards stay visible for this window. */
+export const CLAIMED_ELSEWHERE_GRACE_MS = 10 * 60 * 1000;
+
+/** When the work actually started, falling back to the last update stamp. */
+export function claimedElsewhereStartMs(
+  startedAt: string | number | Date | null | undefined,
+  updatedAt: string | number | Date | null | undefined,
+): number | null {
+  const s = startedAt ? new Date(startedAt).getTime() : NaN;
+  if (Number.isFinite(s)) return s;
+  const u = updatedAt ? new Date(updatedAt).getTime() : NaN;
+  if (Number.isFinite(u)) return u;
+  return null;
+}
+
+/**
+ * Whether a "taken elsewhere" card should still be visible: the work must
+ * have started within the last graceMs (a small forward allowance absorbs
+ * clock skew between the server and the wall).
+ */
+export function isWithinClaimedElsewhereGrace(
+  startedAt: string | number | Date | null | undefined,
+  updatedAt: string | number | Date | null | undefined,
+  nowMs: number,
+  graceMs: number = CLAIMED_ELSEWHERE_GRACE_MS,
+): boolean {
+  const at = claimedElsewhereStartMs(startedAt, updatedAt);
+  if (at === null) return false;
+  return at >= nowMs - graceMs && at <= nowMs + 60_000;
+}

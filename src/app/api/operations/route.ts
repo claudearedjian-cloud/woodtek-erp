@@ -4,7 +4,11 @@ import { orderOperations, orderMaterials, inventoryItems } from "@/db/schema";
 import { eq, asc, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { readBomBoardState } from "@/lib/bomStatus.server";
-import { listMachinesForUser, listOperationsForUser } from "@/lib/dataAccess";
+import {
+  listClaimedElsewhereOperationsForUser,
+  listMachinesForUser,
+  listOperationsForUser,
+} from "@/lib/dataAccess";
 import { baseRoleOf } from "@/lib/permissions";
 import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 import { readAllProgress } from "@/lib/materialProgress.server";
@@ -44,6 +48,22 @@ export async function GET(request: Request) {
     if (status && status !== "All") {
       filtered = filtered.filter((operation) => operation.status.toLowerCase() === status.toLowerCase());
     }
+
+    // The station queue additionally surfaces, greyed out, jobs that were
+    // offered to this station but already claimed at another station (the
+    // short grace window lives in dataAccess; display-only, read-only).
+    const claimedElsewhereIds = new Set<number>();
+    if (stationMode && machineId && (!status || status === "All")) {
+      const elsewhere = await listClaimedElsewhereOperationsForUser(user, machineId, Date.now());
+      const knownIds = new Set(filtered.map((operation) => operation.id));
+      for (const operation of elsewhere) {
+        if (!knownIds.has(operation.id)) {
+          filtered.push(operation);
+          claimedElsewhereIds.add(operation.id);
+        }
+      }
+    }
+
     const operationsWithCandidates = filtered.map((operation) => ({
       ...operation,
       candidateMachineIds: operationMachineCandidates(
@@ -163,15 +183,24 @@ export async function GET(request: Request) {
           reception?.received === true ? "Received" : reception?.received === false ? "Not Received" : null
         ),
       };
+      const elsewhereFlag = claimedElsewhereIds.has(operation.id)
+        ? {
+            claimedElsewhere: true,
+            claimedByMachineCode: operation.machineCode ?? null,
+            claimedAt: operation.startTime ?? null,
+          }
+        : {};
       if (!binding) {
         return {
           ...shared,
+          ...elsewhereFlag,
           materials: orderBom,
           orderSteps: stepsByOrder.get(operation.orderId) ?? [],
         };
       }
       return {
         ...shared,
+        ...elsewhereFlag,
         machineCategory: operation.machineCategory || binding.step.machineCategory,
         materials: orderBom.filter((material: any) => material.id === binding.item.materialId),
         orderSteps: routeStageKeys(binding.item),

@@ -28,13 +28,14 @@ import {
   qualityEvents,
   downtimeEvents,
 } from "@/db/schema";
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { readMachineOperators } from "@/lib/machineOperators.server";
 import {
   candidateOperationIdsForMachine,
   operationMachineCandidates,
+  readOperationMachineCandidates,
 } from "@/lib/operationMachineCandidates.server";
-import { CANDIDATE_CLAIMABLE_STATUSES } from "@/lib/operationMachineCandidates";
+import { CANDIDATE_CLAIMABLE_STATUSES, isWithinClaimedElsewhereGrace } from "@/lib/operationMachineCandidates";
 import type { SessionUser } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
 
@@ -477,6 +478,85 @@ export async function listOperationsForUser(
     .orderBy(asc(orderOperations.stepOrder), asc(orderOperations.id));
 
   return rows as ScopedOperation[];
+}
+
+/**
+ * "Claimed elsewhere" cards for a station queue (display-only, read-only).
+ *
+ * When one operation is offered to several candidate stations and another
+ * station starts it first, the losing station's queue loses the card outright.
+ * To keep that visible, this returns the operations that were OFFERED to
+ * `machineId`, are now In Progress at a DIFFERENT machine, and started within
+ * the short grace window. It is intentionally outside the normal order scope:
+ * the job was offered to this station, so its crew may see a grey "taken"
+ * placeholder for a few minutes even though the parent order now belongs to
+ * another station. The station itself is still validated against the user's
+ * visible machines so no cross-station data leaks.
+ */
+export async function listClaimedElsewhereOperationsForUser(
+  user: SessionUser,
+  machineId: number,
+  now: number,
+): Promise<ScopedOperation[]> {
+  if (!Number.isInteger(machineId) || machineId <= 0) return [];
+
+  const visibleMachines = await listMachinesForUser(user);
+  if (!visibleMachines.some((m) => m.id === machineId)) return [];
+
+  const candidateStore = readOperationMachineCandidates();
+  const offeredIds = Object.entries(candidateStore)
+    .filter(([, entry]) => (entry?.machineIds || []).includes(machineId))
+    .map(([opId]) => Number(opId))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (offeredIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      id: orderOperations.id,
+      orderId: orderOperations.orderId,
+      machineId: orderOperations.machineId,
+      stepOrder: orderOperations.stepOrder,
+      operationName: orderOperations.operationName,
+      estimatedMinutes: orderOperations.estimatedMinutes,
+      actualMinutes: orderOperations.actualMinutes,
+      status: orderOperations.status,
+      operatorId: orderOperations.operatorId,
+      startTime: orderOperations.startTime,
+      endTime: orderOperations.endTime,
+      scheduledStart: orderOperations.scheduledStart,
+      scheduledEnd: orderOperations.scheduledEnd,
+      qualityNotes: orderOperations.qualityNotes,
+      rejectReason: orderOperations.rejectReason,
+      updatedAt: orderOperations.updatedAt,
+      machineName: machines.name,
+      machineCode: machines.code,
+      machineCategory: machines.category,
+      operatorName: users.name,
+      operatorAvatar: users.avatarColor,
+      orderTitle: orders.title,
+      orderNumber: orders.orderNumber,
+      orderPriority: orders.priority,
+      customerId: orders.customerId,
+      customerName: customers.name,
+      customerCompany: customers.company,
+    })
+    .from(orderOperations)
+    .leftJoin(machines, eq(orderOperations.machineId, machines.id))
+    .leftJoin(users, eq(orderOperations.operatorId, users.id))
+    .leftJoin(orders, eq(orderOperations.orderId, orders.id))
+    .leftJoin(customers, eq(orders.customerId, customers.id))
+    .where(
+      and(
+        inArray(orderOperations.id, offeredIds),
+        eq(orderOperations.status, "In Progress"),
+        ne(orderOperations.machineId, machineId),
+      ),
+    )
+    .orderBy(asc(orderOperations.startTime));
+
+  return rows
+    .filter((op) => op.machineId != null)
+    .filter((op) => isWithinClaimedElsewhereGrace(op.startTime, op.updatedAt, now)) as ScopedOperation[];
 }
 
 // -------------------------------------------------------------------- DASHBOARD

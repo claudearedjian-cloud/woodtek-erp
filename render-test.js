@@ -1065,6 +1065,27 @@ check(
   "gantt view: timeline is driven by the pure model (true-dated steps, auto-fit window, health buckets)",
 );
 
+// ---- bundle 29b: grey "claimed elsewhere" card on the operator station ----
+const nowT = Date.parse("2026-09-18T12:00:00Z");
+check(omc.isWithinClaimedElsewhereGrace("2026-09-18T11:55:00Z", null, nowT) === true, "claimed elsewhere: a job started 5 minutes ago still shows grey");
+check(omc.isWithinClaimedElsewhereGrace("2026-09-18T11:49:00Z", null, nowT) === false, "claimed elsewhere: older than the 10-minute grace window fades away");
+check(omc.isWithinClaimedElsewhereGrace(null, "2026-09-18T11:58:00Z", nowT) === true, "claimed elsewhere: falls back to updatedAt when the start stamp is missing");
+check(omc.isWithinClaimedElsewhereGrace(null, null, nowT) === false, "claimed elsewhere: never shown without a time stamp");
+check(omc.isWithinClaimedElsewhereGrace("2026-09-18T12:00:30Z", null, nowT) === true && omc.isWithinClaimedElsewhereGrace("2026-09-18T12:05:00Z", null, nowT) === false, "claimed elsewhere: small clock skew tolerated, no far-future work");
+check(
+  operationsSource.includes("listClaimedElsewhereOperationsForUser")
+    && operationsSource.includes("claimedByMachineCode")
+    && dataAccessSource.includes("isWithinClaimedElsewhereGrace")
+    && dataAccessSource.includes("ne(orderOperations.machineId, machineId)"),
+  "claimed elsewhere: the station queue receives taken jobs from a scoped, time-boxed read only",
+);
+check(
+  stationSource.includes("setClaimedElsewhere")
+    && stationSource.includes("grayscale")
+    && stationSource.includes("Just taken at another station"),
+  "claimed elsewhere: the station renders the taken job as a grey, non-actionable card",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

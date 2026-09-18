@@ -26,6 +26,7 @@ import {
   RefreshCcw,
   ScanLine,
   Package,
+  ZapOff,
 } from "lucide-react";
 
 interface OperatorStationViewProps {
@@ -96,6 +97,9 @@ export default function OperatorStationView({
   const [assignmentNotice, setAssignmentNotice] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState<number | null>(null);
   const [operations, setOperations] = useState<any[]>([]);
+  // Jobs offered to this station but already started at another station —
+  // rendered grey and non-actionable; the server drops them after the window.
+  const [claimedElsewhere, setClaimedElsewhere] = useState<any[]>([]);
 
   useEffect(() => {
     setMachines(shellMachines);
@@ -333,7 +337,12 @@ export default function OperatorStationView({
         received[operation.orderId] = operation.received ?? null;
         receivedState[operation.orderId] = operation.receivedState ?? null;
       }
-      setOperations(rows);
+      // Grey "taken elsewhere" cards are tracked separately so they never
+      // enter the actionable queue, the new-job flash, or the all-clear test.
+      const actionableRows = rows.filter((operation: any) => !operation.claimedElsewhere);
+      const takenElsewhereRows = rows.filter((operation: any) => Boolean(operation.claimedElsewhere));
+      setOperations(actionableRows);
+      setClaimedElsewhere(takenElsewhereRows);
       setBomByOrder(byOrder);
       setReceivedByOrder(received);
       setReceptionStateByOrder(receivedState);
@@ -833,6 +842,41 @@ export default function OperatorStationView({
             Find job
           </button>
         </form>
+
+        {/* Grey, non-actionable cards: this job was offered here but another
+            candidate station started it first. The server keeps sending them
+            for ~10 minutes, then they fade away on their own. */}
+        {selectedMachineId && claimedElsewhere.length > 0 && (
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2 px-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+              <ZapOff className="h-3.5 w-3.5" />
+              Just taken at another station
+            </div>
+            {claimedElsewhere.map((op: any) => {
+              const claimedAt = op.claimedAt ? new Date(op.claimedAt) : null;
+              return (
+                <div
+                  key={op.id}
+                  className="rounded-2xl border border-dashed border-slate-700/80 bg-slate-900/50 p-4 opacity-70 grayscale"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-sm font-black text-slate-300">{op.orderNumber}</span>
+                    <span className="rounded-full border border-slate-600 bg-slate-800/80 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-400">
+                      Claimed at {op.claimedByMachineCode ?? "another station"}
+                    </span>
+                  </div>
+                  <h4 className="mt-1 text-sm font-bold text-slate-300">{op.operationName}</h4>
+                  <div className="mt-1 text-[11px] font-semibold text-slate-500">
+                    {claimedAt
+                      ? `Started ${claimedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : "Just started"}
+                    {op.operatorName ? ` · by ${op.operatorName}` : ""} — fades away after about 10 minutes
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {!selectedMachineId ? (
           <div className="my-6 rounded-3xl border border-sky-500/30 bg-slate-900/90 p-12 text-center shadow-sm">
