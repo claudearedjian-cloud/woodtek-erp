@@ -41,7 +41,9 @@ type OpInfo = {
   status: string;
   machineId: number | null;
   machineCode?: string | null;
+  machineCategory?: string | null;
   candidates: { id: number; code: string; name: string; status: string }[];
+  candidateMachineIds?: number[];
 };
 
 export default function FloorReceptionView({
@@ -109,13 +111,30 @@ export default function FloorReceptionView({
     }
   };
 
-  const assignMachine = async (opId: number, machineId: number) => {
+  // Effective offer set for a row: the candidate overlay when present,
+  // otherwise the assigned machine; an unassigned step starts empty.
+  const selectedCandidateIds = (op: OpInfo): number[] => {
+    if (Array.isArray(op.candidateMachineIds) && op.candidateMachineIds.length > 0) {
+      return op.candidateMachineIds.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    }
+    return op.machineId ? [Number(op.machineId)] : [];
+  };
+
+  // Multi-station offer: toggling a station updates the FULL candidate set
+  // (same mechanism as the order workflow). The first valid Start claims one
+  // station; the others lose the job and see it greyed on their station.
+  const toggleCandidateStation = async (opId: number, nextIds: number[]) => {
     setError("");
+    if (nextIds.length === 0) {
+      setError("Keep at least one candidate station selected.");
+      setTimeout(() => setError(""), 6000);
+      return;
+    }
     try {
       const res = await fetch(`/api/operations/${opId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ machineId }),
+        body: JSON.stringify({ candidateMachineIds: nextIds }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -123,7 +142,11 @@ export default function FloorReceptionView({
         setTimeout(() => setError(""), 6000);
         return;
       }
-      setNotice("Machine assigned.");
+      setNotice(
+        nextIds.length > 1
+          ? `Offered to ${nextIds.length} stations — first Start claims one.`
+          : "Machine assigned.",
+      );
       setTimeout(() => setNotice(""), 4000);
       await load();
     } catch {
@@ -330,22 +353,40 @@ export default function FloorReceptionView({
                               <span className="text-slate-500"> · now: {op.machineCode || "—"}</span>
                             </span>
                             {o.received === true ? (
-                              <span className="flex flex-wrap gap-1.5">
-                                {op.candidates.map((c) => (
-                                  <button
-                                    key={c.id}
-                                    type="button"
-                                    disabled={c.id === op.machineId}
-                                    onClick={() => assignMachine(op.id, c.id)}
-                                    className={`rounded-lg border px-2 py-1 text-[10px] font-black ${
-                                      c.id === op.machineId
-                                        ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
-                                        : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 hover:text-amber-300"
-                                    }`}
-                                  >
-                                    {c.code}
-                                  </button>
-                                ))}
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                {op.candidates.map((c) => {
+                                  const selected = selectedCandidateIds(op).includes(c.id);
+                                  return (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      onClick={() => {
+                                        const set = selectedCandidateIds(op);
+                                        const next = selected
+                                          ? set.filter((id) => id !== c.id)
+                                          : [...set, c.id];
+                                        void toggleCandidateStation(op.id, next);
+                                      }}
+                                      title={
+                                        selected
+                                          ? "Remove this candidate station"
+                                          : "Offer this step to this station too"
+                                      }
+                                      className={`rounded-lg border px-2 py-1 text-[10px] font-black ${
+                                        selected
+                                          ? "border-emerald-500 bg-emerald-500/20 text-emerald-300"
+                                          : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 hover:text-amber-300"
+                                      }`}
+                                    >
+                                      {c.code}
+                                    </button>
+                                  );
+                                })}
+                                {selectedCandidateIds(op).length > 1 && (
+                                  <span className="text-[9px] font-black uppercase tracking-wide text-amber-300">
+                                    First Start claims one
+                                  </span>
+                                )}
                               </span>
                             ) : (
                               <span className="text-[10px] font-black text-sky-300">🔒 after approval</span>

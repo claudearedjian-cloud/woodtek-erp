@@ -1101,6 +1101,19 @@ check(
   "candidate UI: station chips use the same tolerant category match as the server",
 );
 
+// ---- bundle 31: multi-station machine assignment on Material Reception ----
+const bomBoardSource = fs.readFileSync("src/app/api/bom/route.ts", "utf8");
+const floorReceptionSource = fs.readFileSync("src/components/FloorReceptionView.tsx", "utf8");
+check(
+  bomBoardSource.includes("candidateMachineIds: operationMachineCandidates(op.id, op.machineId, op.status)"),
+  "reception board: every operation carries its effective candidate station set",
+);
+check(
+  floorReceptionSource.includes("body: JSON.stringify({ candidateMachineIds: nextIds })") &&
+    floorReceptionSource.includes("First Start claims one"),
+  "reception board: machine assignment is a multi-select candidate offer, not a single reassignment",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

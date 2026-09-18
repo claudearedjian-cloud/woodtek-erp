@@ -23,6 +23,7 @@ import { readBomBoardState, readBomStatus, setBomStatus, setOrderReceived, type 
 import { logAudit } from "@/lib/audit.server";
 import { findProductionItemByMaterial } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
+import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -163,6 +164,9 @@ export async function GET() {
         machineCategory: requiredCategory,
         productionItemName: planned?.item.name ?? null,
         candidates,
+        // Effective candidate offer (pending/ready only): lets the reception
+        // board show multi-station offers and the claimed machine afterwards.
+        candidateMachineIds: operationMachineCandidates(op.id, op.machineId, op.status),
       });
     }
     for (const o of byOrder.values()) {
