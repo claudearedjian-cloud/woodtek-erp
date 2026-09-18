@@ -63,6 +63,22 @@ export function candidateIncludesStation(
 /** Grey "taken at another station" cards stay visible for this window. */
 export const CLAIMED_ELSEWHERE_GRACE_MS = 10 * 60 * 1000;
 
+/**
+ * Machine categories are manager-editable free text, so all comparisons are
+ * trimmed + case-insensitive. A missing category cannot disqualify a machine
+ * (unknown data never blocks; an explicit different category still does).
+ */
+export function normalizeMachineCategory(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+export function machineCategoryMatches(stepCategory: unknown, machineCategory: unknown): boolean {
+  const step = normalizeMachineCategory(stepCategory);
+  const machine = normalizeMachineCategory(machineCategory);
+  if (!step || !machine) return true;
+  return step === machine;
+}
+
 /** When the work actually started, falling back to the last update stamp. */
 export function claimedElsewhereStartMs(
   startedAt: string | number | Date | null | undefined,

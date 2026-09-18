@@ -32,6 +32,7 @@ import QRCode from "qrcode";
 import { QUOTE_STRINGS, type Lang } from "@/lib/i18n";
 import autoTable from "jspdf-autotable";
 import { can, canAssignMachines } from "@/lib/permissions";
+import { machineCategoryMatches } from "@/lib/operationMachineCandidates";
 import { allowedStages } from "@/lib/materialProgress";
 
 interface OrderWorkflowDetailProps {
@@ -857,7 +858,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                 ? op.candidateMachineIds.map(Number).filter((id: number) => Number.isInteger(id) && id > 0)
                 : op.machineId ? [Number(op.machineId)] : [];
               const equivalentMachines = machines.filter((machine: any) =>
-                (!op.machineCategory || machine.category === op.machineCategory || machine.id === op.machineId)
+                (machineCategoryMatches(op.machineCategory, machine.category) || machine.id === op.machineId)
                 && (!["Maintenance", "Offline"].includes(machine.status) || candidateMachineIds.includes(machine.id))
               );
               const candidateSelectionLocked = !["Pending", "Ready"].includes(op.status);

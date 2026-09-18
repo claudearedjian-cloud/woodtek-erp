@@ -20,7 +20,11 @@ import {
   operationMachineCandidates,
   setOperationMachineCandidates,
 } from "@/lib/operationMachineCandidates.server";
-import { candidateStatusIsClaimable, sanitizeCandidateMachineIds } from "@/lib/operationMachineCandidates";
+import {
+  candidateStatusIsClaimable,
+  normalizeMachineCategory,
+  sanitizeCandidateMachineIds,
+} from "@/lib/operationMachineCandidates";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
 
@@ -148,14 +152,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         const [currentMachine] = currentOp.machineId
           ? await tx.select().from(machines).where(eq(machines.id, currentOp.machineId))
           : [undefined];
-        const requiredCategory = plannedBinding?.step.machineCategory
-          ?? currentMachine?.category
+        // The machine actually running this step defines the equivalence class;
+        // the recipe step's category is only a fallback (it may predate a
+        // category rename), then the first chosen station. Comparisons are
+        // trimmed + case-insensitive; a missing category cannot disqualify.
+        const requiredCategoryDisplay = currentMachine?.category
+          ?? plannedBinding?.step.machineCategory
           ?? selectedMachines[0]?.category;
-        const wrongCategory = selectedMachines.find((machine) =>
-          machine.category.toLowerCase() !== String(requiredCategory ?? "").toLowerCase()
-        );
+        const requiredCategory = normalizeMachineCategory(requiredCategoryDisplay);
+        const wrongCategory = selectedMachines.find((machine) => {
+          const cat = normalizeMachineCategory(machine.category);
+          if (!requiredCategory || !cat) return false;
+          return cat !== requiredCategory;
+        });
         if (wrongCategory) {
-          throw new WorkflowError(`Only ${requiredCategory} machines can be candidates for this step.`, 409);
+          throw new WorkflowError(
+            `Only ${String(requiredCategoryDisplay ?? "matching")} machines can be candidates for this step.`,
+            409,
+          );
         }
         const unavailable = selectedMachines.find((machine) =>
           machine.status === "Maintenance" || machine.status === "Offline"

@@ -1086,6 +1086,21 @@ check(
   "claimed elsewhere: the station renders the taken job as a grey, non-actionable card",
 );
 
+// ---- bundle 30: tolerant machine-category matching for multi-station candidates ----
+check(omc.normalizeMachineCategory("  Beam Saw ") === "beam saw", "category match: names are trimmed and lower-cased");
+check(omc.machineCategoryMatches("Beam Saw", "beam saw") === true, "category match: case/spacing drift never blocks a second station");
+check(omc.machineCategoryMatches("", "Beam Saw") === true && omc.machineCategoryMatches("Beam Saw", null) === true, "category match: a missing category cannot disqualify a machine");
+check(omc.machineCategoryMatches("Beam Saw", "Edge Banding") === false, "category match: an explicit different category is still rejected");
+check(
+  operationActionSource.includes("normalizeMachineCategory(requiredCategoryDisplay)")
+    && !operationActionSource.includes("machine.category.toLowerCase() !=="),
+  "candidate server: normalized comparison, machine actually running the step anchors the equivalence class",
+);
+check(
+  orderWorkflowSource.includes("machineCategoryMatches(op.machineCategory, machine.category)"),
+  "candidate UI: station chips use the same tolerant category match as the server",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");
