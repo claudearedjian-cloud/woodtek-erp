@@ -45,6 +45,7 @@ compile("src/lib/operationMachineCandidates.ts", "lib/operationMachineCandidates
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
 compile("src/lib/stationAssignment.ts", "lib/stationAssignment.js");
+compile("src/lib/ganttModel.ts", "lib/ganttModel.js");
 compile("src/lib/inventoryImport.ts", "lib/inventoryImport.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
@@ -94,6 +95,8 @@ const orderWorkflowSource = fs.readFileSync("src/components/OrderWorkflowDetail.
 const ordersViewSource = fs.readFileSync("src/components/OrdersView.tsx", "utf8");
 const packingApiSource = fs.readFileSync("src/app/api/packing-qc/route.ts", "utf8");
 const deliveryPhotoApiSource = fs.readFileSync("src/app/api/delivery-photos/route.ts", "utf8");
+const ganttViewSource = fs.readFileSync("src/components/GanttView.tsx", "utf8");
+const ganttApiSource = fs.readFileSync("src/app/api/gantt/route.ts", "utf8");
 check(pageSource.includes("dynamic(() => import(\"@/components/OperatorStationView\")"), "performance: application workspaces are code-split");
 check(!pageSource.includes("onRefresh={fetchAllData}"), "performance: actions never launch the whole-app refresh flood");
 check(pageSource.includes("compactStation ? Promise.resolve(null)"), "performance: locked Operator login skips unrelated administration datasets");
@@ -981,6 +984,86 @@ check(perms.canAssignMachines("Machine Operator") === false, "machine assign: op
 check(perms.canAssignMachines("Warehouse Supervisor") === false, "machine assign: warehouse cannot assign");
 check(perms.canAssignMachines(undefined) === false, "machine assign: signed-out cannot assign");
 perms.registerCustomRoles(savedCustomRoles);
+
+// ---- bundle 29: daily Gantt timeline + Deadline Health board ----
+const gm = require("./compiled/lib/ganttModel.js");
+const mkStep = (over = {}) => ({
+  id: 1, stepOrder: 1, operationName: "Cut", status: "Pending",
+  machineCode: "CNC-01", estimatedMinutes: 30,
+  scheduledStart: null, scheduledEnd: null, startTime: null, endTime: null,
+  batchId: null, batchName: null, batchNumber: null, ...over,
+});
+const mkOrder = (over = {}) => ({
+  id: 10, orderNumber: "ORD-1", title: "Kitchen", customerLabel: "ACME",
+  projectType: "Kitchen", priority: "Normal", status: "In Production",
+  createdAt: "2026-09-10T09:00:00Z", dueDate: "2026-09-30T17:00:00Z",
+  progressPercent: 30, totalValue: null, totalSteps: 2, completedSteps: 1,
+  dispatch: { stage: null, mixed: false, deliveredCount: 0, totalBatches: 0, deliveredAt: null },
+  steps: [], ...over,
+});
+const nowFix = new Date("2026-09-18T12:00:00Z").getTime();
+
+const swActual = gm.stepWindow(mkStep({ scheduledStart: "2026-09-10T08:00:00Z", scheduledEnd: "2026-09-10T12:00:00Z", startTime: "2026-09-11T09:00:00Z", endTime: "2026-09-11T11:30:00Z" }));
+check(swActual && swActual.kind === "actual" && new Date(swActual.startMs).toISOString() === "2026-09-11T09:00:00.000Z", "gantt model: actual execution dates win over the schedule");
+const swScheduled = gm.stepWindow(mkStep({ scheduledStart: "2026-09-10T08:00:00Z", scheduledEnd: "2026-09-10T12:00:00Z" }));
+check(swScheduled && swScheduled.kind === "scheduled", "gantt model: scheduled window is used when no actuals exist");
+check(gm.stepWindow(mkStep()) === null, "gantt model: an undated step is unscheduled, never invented on the timeline");
+
+const spanOpen = gm.orderSpan(mkOrder());
+check(spanOpen.startMs === gm.startOfDayMs("2026-09-10T09:00:00Z") && spanOpen.endMs === gm.endOfDayMs("2026-09-30T17:00:00Z"), "gantt model: candle runs from issue date to due date");
+const spanDelivered = gm.orderSpan(mkOrder({ status: "Delivered", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-09-20T10:00:00Z" } }));
+check(spanDelivered.endMs === gm.endOfDayMs("2026-09-20T10:00:00Z"), "gantt model: delivered candle ends on the actual delivery date");
+
+const win = gm.computeTimelineWindow([
+  mkOrder(),
+  mkOrder({ id: 11, createdAt: "2026-09-05T08:00:00Z", dueDate: "2026-09-20T08:00:00Z", status: "Delivered", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-09-17T15:00:00Z" } }),
+], nowFix);
+check(win.startMs === gm.startOfDayMs("2026-09-04T00:00:00Z") && win.endMs === gm.endOfDayMs("2026-09-30T17:00:00Z") + gm.DAY_MS, "gantt model: auto-fit window pads one day around earliest issue and latest due/delivery");
+check(gm.buildDays(win).length === 28, "gantt model: day grid lists every day of the window");
+
+const lanes = gm.assignLanes([
+  { startMs: 0, endMs: 10, kind: "scheduled" },
+  { startMs: 5, endMs: 15, kind: "scheduled" },
+  { startMs: 15, endMs: 20, kind: "scheduled" },
+  null,
+]);
+check(lanes[0] === 0 && lanes[1] === 1 && lanes[2] === 0 && lanes[3] === -1, "gantt model: overlapping steps get distinct lanes, sequential steps reuse lanes");
+check(gm.maxLanes(lanes) === 2, "gantt model: lane count reflects peak concurrency");
+
+check(gm.healthBucket(mkOrder({ dueDate: "2026-09-17T09:00:00Z", progressPercent: 40 }), nowFix) === "overdue", "health: past due with open work is Overdue");
+check(gm.healthBucket(mkOrder({ dueDate: "2026-09-22T09:00:00Z", progressPercent: 20 }), nowFix) === "at-risk", "health: due within 7 days with low progress is At Risk");
+check(gm.healthBucket(mkOrder({ dueDate: "2026-09-22T09:00:00Z", progressPercent: 90, steps: [mkStep({ id: 5, operationName: "Pack" })] }), nowFix) === "at-risk", "health: due within 7 days with an unscheduled step is At Risk");
+check(gm.healthBucket(mkOrder({ dueDate: "2026-09-22T09:00:00Z", progressPercent: 80, steps: [mkStep({ id: 5, scheduledStart: "2026-09-19T08:00:00Z", scheduledEnd: "2026-09-19T11:00:00Z" })] }), nowFix) === "on-track", "health: due soon but progressing with everything scheduled stays On Track");
+check(gm.healthBucket(mkOrder({ status: "Completed", dueDate: "2026-09-10T09:00:00Z", totalSteps: 3, completedSteps: 3 }), nowFix) === "ready", "health: complete-but-undelivered is Ready even past due, because the remaining action is dispatch");
+const delOrder = mkOrder({ status: "Delivered", dueDate: "2026-09-20T09:00:00Z", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-09-17T10:00:00Z" } });
+check(gm.healthBucket(delOrder, nowFix) === "delivered", "health: delivered order buckets to delivered");
+check(gm.recentlyDelivered(delOrder, nowFix, 14) === true && gm.recentlyDelivered(mkOrder({ status: "Delivered", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-08-20T10:00:00Z" } }), nowFix, 14) === false, "health: recently-delivered window is 14 days");
+
+check(gm.scheduleCrossesDue(mkOrder({ steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === true, "health: a schedule that crosses the due date is flagged");
+check(gm.scheduleCrossesDue(mkOrder({ status: "Delivered", steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === false, "health: delivered orders are never flagged for a crossing plan");
+const nextOrder = mkOrder({ steps: [mkStep({ id: 1, stepOrder: 1, status: "Completed" }), mkStep({ id: 2, stepOrder: 3, operationName: "QA" }), mkStep({ id: 3, stepOrder: 2, operationName: "Edge" })] });
+check(gm.nextOpenStep(nextOrder)?.operationName === "Edge", "health: next open step follows route order, not id order");
+check(gm.unscheduledStepCount(nextOrder) === 2, "health: unscheduled count only counts undated steps");
+
+check(
+  ganttApiSource.includes('authorize("orders:read")')
+    && ganttApiSource.includes("listOrdersForUser(user)")
+    && ganttApiSource.includes("listOperationsForUser(user)")
+    && ganttApiSource.includes("readDispatchStore()"),
+  "gantt api: orders and operations reach the endpoint only through the scoped access helpers",
+);
+check(
+  !ganttApiSource.includes("from(orders)") && !ganttApiSource.includes("from(orderOperations)"),
+  "gantt api: no direct order/operation table query bypasses the deny-by-default subqueries",
+);
+check(
+  ganttViewSource.includes('fetch("/api/gantt", { cache: "no-store" })')
+    && ganttViewSource.includes("computeTimelineWindow")
+    && ganttViewSource.includes("healthBucket")
+    && ganttViewSource.includes("assignLanes")
+    && ganttViewSource.includes("orderSpan"),
+  "gantt view: timeline is driven by the pure model (true-dated steps, auto-fit window, health buckets)",
+);
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
