@@ -62,7 +62,9 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json(enriched);
+    return NextResponse.json(enriched, {
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    });
   } catch (error: any) {
     console.error("GET machines error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch machines" }, { status: 500 });
@@ -76,6 +78,12 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { name, code, category, status = "Active", hourlyCost = "65.00", location = "Shop Floor", assignedOperatorId, notes, maintenanceDue } = body;
+    const legacyOperatorId = Number(assignedOperatorId);
+    const crewIds = Array.isArray(body.assignedOperatorIds)
+      ? (Array.from(new Set(body.assignedOperatorIds
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isInteger(value) && value > 0))) as number[]).slice(0, 20)
+      : Number.isInteger(legacyOperatorId) && legacyOperatorId > 0 ? [legacyOperatorId] : [];
 
     if (!name || !code || !category) {
       return NextResponse.json({ error: "Machine Name, Code, and Category are required." }, { status: 400 });
@@ -88,19 +96,15 @@ export async function POST(request: Request) {
       status,
       hourlyCost: String(hourlyCost),
       location,
-      assignedOperatorId: assignedOperatorId ? Number(assignedOperatorId) : null,
+      assignedOperatorId: crewIds[0] ?? null,
       notes: notes || null,
       maintenanceDue: maintenanceDue ? new Date(maintenanceDue) : null
     }).returning();
 
     // Multi-operator crew (Manager UI) — sync overlay + keep primary column.
-    if (Array.isArray(body.assignedOperatorIds)) {
-      setMachineOperators(newMachine.id, body.assignedOperatorIds);
-    } else if (newMachine.assignedOperatorId != null) {
-      setMachineOperators(newMachine.id, [newMachine.assignedOperatorId]);
-    }
+    if (crewIds.length > 0) setMachineOperators(newMachine.id, crewIds);
 
-    return NextResponse.json(newMachine, { status: 201 });
+    return NextResponse.json({ ...newMachine, assignedOperatorIds: crewIds }, { status: 201 });
   } catch (error: any) {
     console.error("POST machine error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create machine" }, { status: 500 });

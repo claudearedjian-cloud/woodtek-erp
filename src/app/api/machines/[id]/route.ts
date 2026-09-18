@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { machines, orderOperations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
-import { removeMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
+import { readMachineOperators, removeMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
 import { removeMachineFromOperationCandidates } from "@/lib/operationMachineCandidates.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -48,13 +48,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Crew list wins; the primary column mirrors the first crew member so
       // legacy single-operator logic keeps working.
       const crew = Array.isArray(body.assignedOperatorIds)
-        ? body.assignedOperatorIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n > 0)
+        ? (Array.from(new Set(body.assignedOperatorIds
+            .map((x: unknown) => Number(x))
+            .filter((n: number) => Number.isInteger(n) && n > 0))) as number[]).slice(0, 20)
         : [];
       updateFields.assignedOperatorId = crew.length > 0 ? crew[0] : null;
       pendingCrew = crew;
     } else if (body.assignedOperatorId !== undefined) {
-      updateFields.assignedOperatorId = body.assignedOperatorId ? Number(body.assignedOperatorId) : null;
-      pendingCrew = body.assignedOperatorId ? [Number(body.assignedOperatorId)] : [];
+      const legacyOperatorId = Number(body.assignedOperatorId);
+      const validLegacyOperatorId = Number.isInteger(legacyOperatorId) && legacyOperatorId > 0 ? legacyOperatorId : null;
+      updateFields.assignedOperatorId = validLegacyOperatorId;
+      pendingCrew = validLegacyOperatorId ? [validLegacyOperatorId] : [];
     }
     if (body.maintenanceDue !== undefined) updateFields.maintenanceDue = body.maintenanceDue ? new Date(body.maintenanceDue) : null;
 
@@ -64,9 +68,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       .where(eq(machines.id, machineId))
       .returning();
 
+    if (!updatedMachine) return NextResponse.json({ error: "Machine not found" }, { status: 404 });
     if (pendingCrew !== null) setMachineOperators(machineId, pendingCrew);
+    const effectiveCrew = pendingCrew
+      ?? readMachineOperators()[String(machineId)]
+      ?? (updatedMachine.assignedOperatorId != null ? [updatedMachine.assignedOperatorId] : []);
 
-    return NextResponse.json(updatedMachine);
+    return NextResponse.json(
+      { ...updatedMachine, assignedOperatorIds: effectiveCrew },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+    );
   } catch (error: any) {
     console.error("PATCH machine error:", error);
     return NextResponse.json({ error: error?.message || "Failed to update machine" }, { status: 500 });

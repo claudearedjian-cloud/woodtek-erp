@@ -1,15 +1,20 @@
 "use client";
 
-import React, { useState } from "react";
-import { Package, Plus, AlertTriangle, CheckCircle2, DollarSign, Tag, Layers, Trash2, X, RefreshCw, Lock, ChevronRight } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2 } from "lucide-react";
+import { can } from "@/lib/permissions";
+import type { InventoryImportValidation } from "@/lib/inventoryImport";
 
 interface InventoryViewProps {
   items: any[];
   loading: boolean;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
+  currentUser?: { role?: string | null } | null;
 }
 
-export default function InventoryView({ items = [], loading, onRefresh }: InventoryViewProps) {
+type ImportResult = { total: number; created: number; updated: number };
+
+export default function InventoryView({ items = [], loading, onRefresh, currentUser }: InventoryViewProps) {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [showModal, setShowModal] = useState(false);
   const [showOrdersModal, setShowOrdersModal] = useState<any | null>(null); // item being inspected
@@ -23,6 +28,15 @@ export default function InventoryView({ items = [], loading, onRefresh }: Invent
   const [unitCost, setUnitCost] = useState("65.00");
   const [reorderLevel, setReorderLevel] = useState("20");
   const [location, setLocation] = useState("Rack 1-A");
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
+  const [importBusy, setImportBusy] = useState<"preview" | "commit" | null>(null);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [lastImportResult, setLastImportResult] = useState<ImportResult | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const canImportStock = can(currentUser?.role, "inventory:write");
 
   const categories = ["All", "Wood & MDF Panels", "Edge Banding", "Hardware & Fittings", "Coatings & Adhesives"];
 
@@ -91,6 +105,81 @@ export default function InventoryView({ items = [], loading, onRefresh }: Invent
     }
   };
 
+  const openImport = () => {
+    setImportFile(null);
+    setImportPreview(null);
+    setImportError("");
+    setImportResult(null);
+    setShowImportModal(true);
+  };
+
+  const chooseImportFile = (file: File | null) => {
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError("");
+    if (!file) {
+      setImportFile(null);
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      setImportFile(null);
+      setImportError("Choose an .xlsx workbook. Download the WoodTek template if needed.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImportFile(null);
+      setImportError("The workbook is larger than the 5 MB limit.");
+      return;
+    }
+    setImportFile(file);
+  };
+
+  const runInventoryImport = async (mode: "preview" | "commit") => {
+    if (!importFile || importBusy) return;
+    setImportBusy(mode);
+    setImportError("");
+    try {
+      const form = new FormData();
+      form.append("mode", mode);
+      form.append("file", importFile);
+      const response = await fetch("/api/inventory/import", {
+        method: "POST",
+        body: form,
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (mode === "preview") {
+        if (typeof data?.valid === "boolean") setImportPreview(data as InventoryImportValidation);
+        if (!response.ok && typeof data?.valid !== "boolean") {
+          throw new Error(data?.error || "The workbook could not be validated.");
+        }
+        if (data?.valid === false) {
+          setImportError(`Nothing was imported. Fix ${data.errors?.length || 1} row${data.errors?.length === 1 ? "" : "s"} and validate again.`);
+        }
+        return;
+      }
+
+      if (!response.ok || data?.success !== true) {
+        if (typeof data?.valid === "boolean") setImportPreview(data as InventoryImportValidation);
+        throw new Error(data?.error || "The workbook was not imported. Zero rows were written.");
+      }
+      const result: ImportResult = {
+        total: Number(data.total) || 0,
+        created: Number(data.created) || 0,
+        updated: Number(data.updated) || 0,
+      };
+      setImportResult(result);
+      setLastImportResult(result);
+      setImportPreview(null);
+      await onRefresh();
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "The workbook was not imported. Zero rows were written.");
+    } finally {
+      setImportBusy(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -110,6 +199,20 @@ export default function InventoryView({ items = [], loading, onRefresh }: Invent
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {lastImportResult && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+            <span className="font-bold">
+              Excel import complete: {lastImportResult.created} created, {lastImportResult.updated} updated ({lastImportResult.total} total).
+            </span>
+          </div>
+          <button onClick={() => setLastImportResult(null)} className="rounded-lg p-1 text-emerald-300 hover:bg-emerald-500/20 hover:text-white" aria-label="Dismiss import result">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Summary stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4">
@@ -160,12 +263,32 @@ export default function InventoryView({ items = [], loading, onRefresh }: Invent
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-gradient-to-b from-amber-400 to-amber-600 px-4 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
-        >
-          <Plus className="h-4 w-4 stroke-[2.5]" /> Receive / Add Stock Item
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {canImportStock && (
+            <>
+              <a
+                href="/api/inventory/import"
+                download="WoodTek-Stock-Import-Template.xlsx"
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-xs font-extrabold text-slate-200 transition hover:border-emerald-500/50 hover:text-emerald-300"
+                title="Download the required Excel workbook template"
+              >
+                <Download className="h-4 w-4" /> Excel Template
+              </a>
+              <button
+                onClick={openImport}
+                className="flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-4 py-2 text-xs font-black text-emerald-200 shadow-lg shadow-emerald-950/20 transition hover:bg-emerald-500/25 active:scale-[0.97]"
+              >
+                <FileSpreadsheet className="h-4 w-4 stroke-[2.5]" /> Import Excel
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-gradient-to-b from-amber-400 to-amber-600 px-4 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
+          >
+            <Plus className="h-4 w-4 stroke-[2.5]" /> Receive / Add Stock Item
+          </button>
+        </div>
       </div>
 
       {/* Items Table */}
@@ -278,6 +401,204 @@ export default function InventoryView({ items = [], loading, onRefresh }: Invent
         </div>
         )}
       </div>
+
+      {/* Excel stock import — visible from the tab-level action above. */}
+      {showImportModal && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-800 p-5">
+              <div className="flex items-start gap-3">
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-emerald-300">
+                  <FileSpreadsheet className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white">Import Wood & Edge Stock from Excel</h3>
+                  <p className="mt-1 text-xs text-slate-400">Upload → validate every row → review creates and updates → import atomically.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => !importBusy && setShowImportModal(false)}
+                disabled={Boolean(importBusy)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40"
+                aria-label="Close Excel import"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-5">
+              {importResult ? (
+                <div className="mx-auto max-w-2xl rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-8 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300">
+                    <CheckCircle2 className="h-8 w-8" />
+                  </div>
+                  <h4 className="mt-4 text-xl font-black text-white">Stock import complete</h4>
+                  <p className="mt-2 text-sm text-emerald-100">The visible Stock table has been refreshed.</p>
+                  <div className="mt-5 grid grid-cols-3 gap-3">
+                    <div className="rounded-xl bg-slate-950/60 p-3"><div className="text-2xl font-black text-white">{importResult.total}</div><div className="text-[10px] font-bold uppercase text-slate-500">Total</div></div>
+                    <div className="rounded-xl bg-slate-950/60 p-3"><div className="text-2xl font-black text-emerald-300">{importResult.created}</div><div className="text-[10px] font-bold uppercase text-slate-500">Created</div></div>
+                    <div className="rounded-xl bg-slate-950/60 p-3"><div className="text-2xl font-black text-sky-300">{importResult.updated}</div><div className="text-[10px] font-bold uppercase text-slate-500">Updated</div></div>
+                  </div>
+                  <button onClick={() => setShowImportModal(false)} className="mt-6 rounded-xl bg-emerald-500 px-6 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-400">Done</button>
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {[
+                      ["1", "Select workbook", "Use the WoodTek .xlsx template"],
+                      ["2", "Validation preview", "No database writes happen yet"],
+                      ["3", "Atomic import", "All rows succeed or zero are written"],
+                    ].map(([number, title, detail], index) => (
+                      <div key={number} className={`rounded-xl border p-3 ${index === 0 || importPreview ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-950/30"}`}>
+                        <div className="flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-[11px] font-black text-emerald-300">{number}</span><span className="text-xs font-black text-white">{title}</span></div>
+                        <p className="mt-1.5 pl-8 text-[10px] text-slate-500">{detail}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+                    <span className="font-black">Important:</span> Stock Quantity is the new absolute on-hand value—it replaces the current quantity. Existing SKUs match after trimming and without regard to letter case.
+                  </div>
+
+                  <div
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      chooseImportFile(event.dataTransfer.files?.[0] ?? null);
+                    }}
+                    className="rounded-2xl border-2 border-dashed border-slate-700 bg-slate-950/40 p-6 text-center transition hover:border-emerald-500/50"
+                  >
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      className="hidden"
+                      onChange={(event) => chooseImportFile(event.target.files?.[0] ?? null)}
+                    />
+                    <Upload className="mx-auto h-8 w-8 text-emerald-400" />
+                    {importFile ? (
+                      <>
+                        <div className="mt-2 text-sm font-black text-white">{importFile.name}</div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">{(importFile.size / 1024).toFixed(1)} KB · ready to validate</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mt-2 text-sm font-black text-white">Drop an .xlsx workbook here</div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">Maximum 5 MB and 2,000 data rows</div>
+                      </>
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                      <button type="button" onClick={() => importInputRef.current?.click()} className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold text-slate-100 hover:bg-slate-700">
+                        {importFile ? "Choose another file" : "Choose workbook"}
+                      </button>
+                      <a href="/api/inventory/import" download="WoodTek-Stock-Import-Template.xlsx" className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/10">
+                        <Download className="h-4 w-4" /> Download template
+                      </a>
+                    </div>
+                  </div>
+
+                  {importError && (
+                    <div className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs font-bold text-rose-200">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{importError}</span>
+                    </div>
+                  )}
+
+                  {importPreview && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase ${importPreview.valid ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>
+                          {importPreview.valid ? "Validation passed" : "Validation failed"}
+                        </span>
+                        {importPreview.valid && (
+                          <>
+                            <span className="rounded-full bg-slate-800 px-3 py-1 text-[11px] font-bold text-white">{importPreview.summary.total} rows</span>
+                            <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-bold text-emerald-300">{importPreview.summary.creates} create</span>
+                            <span className="rounded-full bg-sky-500/10 px-3 py-1 text-[11px] font-bold text-sky-300">{importPreview.summary.updates} update</span>
+                          </>
+                        )}
+                      </div>
+
+                      {importPreview.errors.length > 0 && (
+                        <div className="overflow-hidden rounded-xl border border-rose-500/30">
+                          <div className="border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs font-black text-rose-200">Row-specific errors — zero rows can be imported until all are fixed</div>
+                          <div className="max-h-56 divide-y divide-slate-800 overflow-y-auto bg-slate-950/50">
+                            {importPreview.errors.map((error) => (
+                              <div key={`${error.rowNumber}-${error.sku || "row"}`} className="grid gap-1 px-4 py-2.5 text-xs sm:grid-cols-[100px_1fr]">
+                                <div className="font-black text-rose-300">Row {error.rowNumber}{error.sku ? ` · ${error.sku}` : ""}</div>
+                                <ul className="list-disc space-y-0.5 pl-4 text-slate-300">{error.messages.map((message) => <li key={message}>{message}</li>)}</ul>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {importPreview.rows.length > 0 && (
+                        <div className="overflow-hidden rounded-xl border border-slate-700">
+                          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/70 px-4 py-2">
+                            <span className="text-xs font-black text-white">Validated workbook preview</span>
+                            {importPreview.rows.length > 250 && <span className="text-[10px] text-slate-500">Showing first 250 rows</span>}
+                          </div>
+                          <div className="max-h-72 overflow-auto">
+                            <table className="w-full min-w-[1100px] text-left text-[11px]">
+                              <thead className="sticky top-0 bg-slate-950 text-[9px] uppercase tracking-wider text-slate-500">
+                                <tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">Action</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">Name</th><th className="px-3 py-2">Category</th><th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Reorder</th><th className="px-3 py-2">Location</th></tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800/70">
+                                {importPreview.rows.slice(0, 250).map((row) => (
+                                  <tr key={row.rowNumber} className="text-slate-300">
+                                    <td className="px-3 py-2 font-mono text-slate-500">{row.rowNumber}</td>
+                                    <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${row.action === "create" ? "bg-emerald-500/15 text-emerald-300" : "bg-sky-500/15 text-sky-300"}`}>{row.action}</span></td>
+                                    <td className="px-3 py-2 font-mono font-bold text-amber-300">{row.sku}</td>
+                                    <td className="max-w-[260px] truncate px-3 py-2 font-semibold text-white">{row.name}</td>
+                                    <td className="px-3 py-2">{row.category}</td>
+                                    <td className="px-3 py-2 text-right font-mono">{row.stockQuantity}</td>
+                                    <td className="px-3 py-2">{row.unit}</td>
+                                    <td className="px-3 py-2 text-right font-mono">${row.unitCost}</td>
+                                    <td className="px-3 py-2 text-right font-mono">{row.reorderLevel}</td>
+                                    <td className="px-3 py-2">{row.location}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {!importResult && (
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 bg-slate-950/40 px-5 py-4">
+                <button type="button" onClick={() => setShowImportModal(false)} disabled={Boolean(importBusy)} className="rounded-xl px-4 py-2 text-xs font-bold text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-40">Cancel</button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => runInventoryImport("preview")}
+                    disabled={!importFile || Boolean(importBusy)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800 px-4 py-2.5 text-xs font-black text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {importBusy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                    {importPreview ? "Validate again" : "Validate workbook"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => runInventoryImport("commit")}
+                    disabled={!importFile || !importPreview?.valid || Boolean(importBusy)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+                    title={!importPreview?.valid ? "Validate a completely valid workbook first" : "Import all validated rows"}
+                  >
+                    {importBusy === "commit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    Import {importPreview?.valid ? `${importPreview.summary.total} rows` : "all rows"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Add Item Modal */}
       {showModal && (

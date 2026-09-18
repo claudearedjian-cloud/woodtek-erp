@@ -674,7 +674,7 @@ export default function WoodTekERP() {
           {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={refreshMachineData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={refreshStationShellData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={refreshCustomerData} onSelectOrder={handleSelectOrder} />}
-          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} />}
+          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} currentUser={currentUser} />}
           {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
           {activeTab === "reception" && <FloorReceptionView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "gantt" && (

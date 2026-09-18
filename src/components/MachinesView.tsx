@@ -58,6 +58,15 @@ export default function MachinesView({
   const [formOperatorIds, setFormOperatorIds] = useState<number[]>([]);
   const [notes, setNotes] = useState("");
 
+  const announceMachineCrewUpdate = (machineId: number) => {
+    window.dispatchEvent(new Event("woodtek:machine-crew-updated"));
+    try {
+      localStorage.setItem("woodtek:machine-crew-revision", `${Date.now()}:${machineId}`);
+    } catch {
+      // Storage can be disabled; Station's short cross-device poll remains the fallback.
+    }
+  };
+
   const [categoryList, setCategoryList] = useState<string[]>(["Beam Saw", "Edge Bander", "CNC Router", "Press", "Panel Saw", "Drill Press", "Spray & Finish", "Assembly Table"]);
   useEffect(() => {
     fetch("/api/machine-categories", { cache: "no-store" })
@@ -96,6 +105,7 @@ export default function MachinesView({
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to reassign operator");
       }
+      announceMachineCrewUpdate(machineId);
       onRefresh();
     } catch (err) {
       console.error("Failed to reassign operator", err);
@@ -157,6 +167,8 @@ export default function MachinesView({
             body: JSON.stringify({ ...payload, status: "Active" }),
           });
       if (!res.ok) throw new Error(editMachineId != null ? "Failed to update machine" : "Failed to add machine");
+      const savedMachine = await res.json().catch(() => ({}));
+      announceMachineCrewUpdate(Number(savedMachine.id ?? editMachineId) || 0);
       closeModal();
       setName("");
       setCode("");
@@ -171,7 +183,9 @@ export default function MachinesView({
   const handleDeleteMachine = async (id: number, name: string) => {
     if (!confirm(`Are you sure you want to delete ${name}? Queued jobs will be marked as unassigned.`)) return;
     try {
-      await fetch(`/api/machines/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/machines/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Failed to delete machine");
+      announceMachineCrewUpdate(id);
       onRefresh();
     } catch (err) {
       console.error("Failed to delete machine", err);

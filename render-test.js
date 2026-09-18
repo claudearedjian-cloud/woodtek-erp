@@ -44,6 +44,8 @@ compile("src/lib/dispatchScheduling.ts", "lib/dispatchScheduling.js");
 compile("src/lib/operationMachineCandidates.ts", "lib/operationMachineCandidates.js");
 compile("src/lib/wallboard.ts", "lib/wallboard.js");
 compile("src/lib/jobLock.ts", "lib/jobLock.js");
+compile("src/lib/stationAssignment.ts", "lib/stationAssignment.js");
+compile("src/lib/inventoryImport.ts", "lib/inventoryImport.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
 compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
@@ -68,9 +70,15 @@ const check = (cond, name) => {
 // ---- performance architecture regressions ----
 const pageSource = fs.readFileSync("src/app/page.tsx", "utf8");
 const stationSource = fs.readFileSync("src/components/OperatorStationView.tsx", "utf8");
+const machineMonitorSource = fs.readFileSync("src/components/MachinesView.tsx", "utf8");
+const inventoryViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+const inventoryImportApiSource = fs.readFileSync("src/app/api/inventory/import/route.ts", "utf8");
+const inventoryImportServerSource = fs.readFileSync("src/lib/inventoryImport.server.ts", "utf8");
 const operationsSource = fs.readFileSync("src/app/api/operations/route.ts", "utf8");
 const operationActionSource = fs.readFileSync("src/app/api/operations/[id]/route.ts", "utf8");
 const machinesSource = fs.readFileSync("src/app/api/machines/route.ts", "utf8");
+const machineActionSource = fs.readFileSync("src/app/api/machines/[id]/route.ts", "utf8");
+const machineCrewStoreSource = fs.readFileSync("src/lib/machineOperators.server.ts", "utf8");
 const dashboardSource = fs.readFileSync("src/components/DashboardView.tsx", "utf8");
 const dashboardApiSource = fs.readFileSync("src/app/api/dashboard/route.ts", "utf8");
 const orderDeleteSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
@@ -154,9 +162,23 @@ check(
 );
 check(
   stationSource.includes('/api/machines?summary=true')
-    && stationSource.includes("assignedMachineRef")
+    && stationSource.includes("assignmentStateRef")
+    && stationSource.includes("reconcileStationSelection")
     && dataAccessSource.includes("crewMachineIds.length > 0"),
-  "station crew refresh: secondary/reassigned operators update without a hard page refresh",
+  "station crew refresh: secondary/reassigned operators reconcile the complete assignment set",
+);
+check(
+  stationSource.includes("setInterval(refreshMachineRoster, 3000)")
+    && stationSource.includes("woodtek:machine-crew-updated")
+    && machineMonitorSource.includes("announceMachineCrewUpdate"),
+  "station crew refresh: short cross-device poll plus immediate browser signal replaces hard refresh",
+);
+check(
+  machinesSource.includes("assignedOperatorId: crewIds[0] ?? null")
+    && machinesSource.includes("assignedOperatorIds: crewIds")
+    && machineActionSource.includes("assignedOperatorIds: effectiveCrew")
+    && machineCrewStoreSource.includes("fs.renameSync(temporary, file)"),
+  "station crew persistence: create/update responses mirror primary and full crew through an atomic overlay write",
 );
 
 // ---- issued-order automatic production Dispatch slots ----
@@ -856,6 +878,89 @@ check(JSON.stringify(omc.sanitizeCandidateMachineIds([2, "1", 2, 0, "bad"])) ===
 check(JSON.stringify(omc.effectiveCandidateMachineIds(1, "Ready", { machineIds: [1, 2] })) === JSON.stringify([1, 2]), "machine candidates: waiting operation is actionable at every selected equivalent station");
 check(JSON.stringify(omc.effectiveCandidateMachineIds(2, "In Progress", { machineIds: [1, 2] })) === JSON.stringify([2]), "machine candidates: running operation collapses to the atomically claimed station");
 check(omc.candidateIncludesStation(1, "Ready", { machineIds: [1, 2] }, 2) === true && omc.candidateIncludesStation(1, "Completed", { machineIds: [1, 2] }, 2) === false, "machine candidates: unchosen station loses visibility after first Start");
+
+// ---- complete machine-assignment set reconciliation ----
+const stationAssignment = require("./compiled/lib/stationAssignment.js");
+let stationPick = stationAssignment.reconcileStationSelection({
+  availableMachineIds: [1, 2], assignedMachineIds: [2], previousAssignedMachineIds: [], selectedMachineId: null, initialized: false,
+});
+check(stationPick.selectedMachineId === 2 && stationPick.reason === "initial-assignment", "station assignment: initial operator station opens automatically");
+stationPick = stationAssignment.reconcileStationSelection({
+  availableMachineIds: [1, 2], assignedMachineIds: [1, 2], previousAssignedMachineIds: [1], selectedMachineId: 1, initialized: true,
+});
+check(stationPick.selectedMachineId === 2 && stationPick.reason === "assignment-added", "station assignment: adding a second machine is detected even while the old first match remains");
+stationPick = stationAssignment.reconcileStationSelection({
+  availableMachineIds: [2, 1], assignedMachineIds: [2, 1], previousAssignedMachineIds: [1, 2], selectedMachineId: 2, initialized: true,
+});
+check(stationPick.selectedMachineId === 2 && stationPick.reason === "unchanged", "station assignment: response reordering never overrides a stable manual choice");
+stationPick = stationAssignment.reconcileStationSelection({
+  availableMachineIds: [2], assignedMachineIds: [2], previousAssignedMachineIds: [1, 2], selectedMachineId: 1, initialized: true,
+});
+check(stationPick.selectedMachineId === 2 && stationPick.removedMachineIds.includes(1), "station assignment: removing or moving the selected station falls through to a remaining assignment");
+stationPick = stationAssignment.reconcileStationSelection({
+  availableMachineIds: [], assignedMachineIds: [], previousAssignedMachineIds: [2], selectedMachineId: 2, initialized: true,
+});
+check(stationPick.selectedMachineId === null && stationPick.reason === "selection-removed", "station assignment: removing the final assignment clears the stale station");
+
+// ---- atomic Excel stock import ----
+const inventoryImport = require("./compiled/lib/inventoryImport.js");
+const stockHeaders = [...inventoryImport.INVENTORY_IMPORT_HEADERS];
+const validStockWorkbook = [
+  stockHeaders,
+  [" brd-oak-18 ", "Updated Oak Board", "Wood & MDF Panels", "1,250", "sheets", "123.4", 50, "Rack A"],
+  ["edg-new-22", "New ABS Edge", "edge banding", 80, "meters", 0.85, 10, "Spool 4"],
+];
+let stockValidation = inventoryImport.validateInventoryImportMatrix(validStockWorkbook, [{ id: 9, sku: "BRD-OAK-18" }]);
+check(stockValidation.valid && stockValidation.summary.total === 2 && stockValidation.summary.updates === 1 && stockValidation.summary.creates === 1, "Excel stock import: valid workbook previews exact create/update counts");
+check(stockValidation.rows[0].action === "update" && stockValidation.rows[0].existingId === 9 && stockValidation.rows[0].stockQuantity === 1250, "Excel stock import: trimmed case-insensitive SKU matching updates the existing row");
+check(stockValidation.rows[1].action === "create" && stockValidation.rows[1].sku === "EDG-NEW-22" && stockValidation.rows[1].unitCost === "0.85" && stockValidation.rows[1].category === "Edge Banding", "Excel stock import: unknown SKU and known category casing are normalized for creation");
+stockValidation = inventoryImport.validateInventoryImportMatrix([
+  stockHeaders,
+  ["DUP-1", "First", "Edge Banding", 1, "meters", 1, 1, "A"],
+  [" dup-1 ", "Second", "Edge Banding", 2, "meters", 2, 2, "B"],
+], []);
+check(!stockValidation.valid && stockValidation.rows.length === 0 && stockValidation.errors.every((error) => error.messages.some((message) => message.includes("Duplicate SKU"))), "Excel stock import: normalized duplicate SKUs invalidate the whole workbook with both row numbers");
+stockValidation = inventoryImport.validateInventoryImportMatrix([
+  stockHeaders,
+  ["BAD-1", "", "", -1, "", "not-money", 1.5, ""],
+  ["BAD-2", "Valid name", "Edge Banding", 2, "meters", 1, 1, ""],
+], []);
+check(!stockValidation.valid && stockValidation.errors.some((error) => error.rowNumber === 2) && stockValidation.errors.some((error) => error.rowNumber === 3), "Excel stock import: every invalid row receives row-specific errors before any write");
+stockValidation = inventoryImport.validateInventoryImportMatrix([
+  stockHeaders,
+  ["COST-3DP", "Too precise", "Edge Banding", 1, "meters", 1.005, 1, "A"],
+], []);
+check(!stockValidation.valid && stockValidation.errors[0].messages.some((message) => message.includes("2 decimal places")), "Excel stock import: unit cost rejects hidden third-decimal rounding");
+stockValidation = inventoryImport.validateInventoryImportMatrix([
+  stockHeaders.filter((header) => header !== "Location"),
+  ["A", "A", "Edge Banding", 1, "meters", 1, 1],
+], []);
+check(!stockValidation.valid && stockValidation.errors[0].rowNumber === 1 && stockValidation.errors[0].messages.some((message) => message.includes("Location")), "Excel stock import: missing required headers reject the workbook");
+stockValidation = inventoryImport.validateInventoryImportMatrix([
+  stockHeaders,
+  ["FORMULA-1", "Formula", "Edge Banding", inventoryImport.unsupportedInventoryImportCell("formulas are not supported"), "meters", 1, 1, "A"],
+], []);
+check(!stockValidation.valid && stockValidation.errors[0].messages.some((message) => message.includes("formulas are not supported")), "Excel stock import: formula cells cannot bypass deterministic validation");
+check(
+  inventoryViewSource.includes("Import Excel")
+    && inventoryViewSource.includes("Excel Template")
+    && inventoryViewSource.includes("importPreview?.valid"),
+  "Excel stock import: Stock tab exposes template, upload, preview and validity-gated commit controls",
+);
+check(
+  inventoryImportApiSource.includes("db.transaction")
+    && inventoryImportApiSource.includes("lock table inventory_items")
+    && (inventoryImportApiSource.match(/validateInventoryImportMatrix/g) || []).length >= 2
+    && inventoryImportApiSource.includes("zero rows were written"),
+  "Excel stock import: commit locks, revalidates and writes all rows in one rollback-safe transaction",
+);
+check(
+  inventoryImportServerSource.includes('addWorksheet("Stock Import"')
+    && inventoryImportServerSource.includes('addWorksheet("Instructions"')
+    && inventoryImportServerSource.includes("Stock Quantity")
+    && inventoryImportServerSource.includes("REPLACES"),
+  "Excel stock import: downloadable template documents headers and absolute stock semantics",
+);
 
 // ---- crew job lock ----
 const jl = require("./compiled/lib/jobLock.js");

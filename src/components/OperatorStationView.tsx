@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import { allowedStages } from "@/lib/materialProgress";
 import { jobLockedByOther } from "@/lib/jobLock";
+import { reconcileStationSelection } from "@/lib/stationAssignment";
 import {
   Tablet,
   Play,
@@ -85,7 +86,14 @@ export default function OperatorStationView({
   // Machine crews can be changed remotely from the Machines workspace. Keep a
   // live station roster here instead of waiting for a full-page hard refresh.
   const [machines, setMachines] = useState<any[]>(shellMachines);
-  const assignedMachineRef = useRef<number | null>(null);
+  const assignmentStateRef = useRef<{ userId: number | null; initialized: boolean; machineIds: number[] }>({
+    userId: null,
+    initialized: false,
+    machineIds: [],
+  });
+  const refreshMachineRosterRef = useRef<() => Promise<void>>(async () => undefined);
+  const assignmentNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [assignmentNotice, setAssignmentNotice] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState<number | null>(null);
   const [operations, setOperations] = useState<any[]>([]);
 
@@ -110,6 +118,7 @@ export default function OperatorStationView({
               status: machine.status,
               assignedOperatorId: machine.assignedOperatorId,
               assignedOperatorIds: machine.assignedOperatorIds,
+              assignedOperatorName: machine.assignedOperatorName,
               code: machine.code,
               name: machine.name,
               category: machine.category,
@@ -127,13 +136,28 @@ export default function OperatorStationView({
         inFlight = false;
       }
     };
+    refreshMachineRosterRef.current = refreshMachineRoster;
     void refreshMachineRoster();
-    const interval = setInterval(refreshMachineRoster, 10000);
+
+    // Cross-device sessions use the short poll. Focus/visibility and the custom
+    // signal make same-browser edits visible immediately rather than waiting.
+    const interval = setInterval(refreshMachineRoster, 3000);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "woodtek:machine-crew-revision") void refreshMachineRoster();
+    };
     document.addEventListener("visibilitychange", refreshMachineRoster);
+    window.addEventListener("focus", refreshMachineRoster);
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("woodtek:machine-crew-updated", refreshMachineRoster);
     return () => {
       alive = false;
+      refreshMachineRosterRef.current = async () => undefined;
       clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshMachineRoster);
+      window.removeEventListener("focus", refreshMachineRoster);
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("woodtek:machine-crew-updated", refreshMachineRoster);
+      if (assignmentNoticeTimer.current) clearTimeout(assignmentNoticeTimer.current);
     };
   }, []);
   const [bomByOrder, setBomByOrder] = useState<Record<number, any[]>>({});
@@ -208,29 +232,47 @@ export default function OperatorStationView({
         ? [Number(m.assignedOperatorId)]
         : [];
 
-  const myMachineId = currentUser
-    ? machines.find((m: any) => opIdsOf(m).includes(Number(currentUser.id)))?.id ?? null
-    : null;
+  const myMachineIds = currentUser
+    ? machines
+        .filter((machine: any) => opIdsOf(machine).includes(Number(currentUser.id)))
+        .map((machine: any) => Number(machine.id))
+    : [];
+  const selectedIsMine = selectedMachineId != null && myMachineIds.includes(selectedMachineId);
 
-  // Auto-select the operator's assigned station on open. If a supervisor moves
-  // the operator to another crew, the live roster switches once; ordinary
-  // manual station choices remain untouched while the assignment is stable.
+  // Reconcile the COMPLETE assignment set. Remembering only the first match
+  // missed additions whenever an older station still sorted first.
   useEffect(() => {
-    const mine = machines.find((machine: any) => opIdsOf(machine).includes(Number(currentUser?.id)));
-    const mineId = mine?.id ?? null;
-    const assignmentChanged = assignedMachineRef.current !== mineId;
-    assignedMachineRef.current = mineId;
+    const userId = Number(currentUser?.id) || null;
+    const previous = assignmentStateRef.current;
+    const sameUser = previous.userId === userId;
+    const initialized = sameUser && previous.initialized;
+    const result = reconcileStationSelection({
+      availableMachineIds: machines.map((machine: any) => machine.id),
+      assignedMachineIds: myMachineIds,
+      previousAssignedMachineIds: sameUser ? previous.machineIds : [],
+      selectedMachineId,
+      initialized,
+    });
 
-    if (mineId && (!selectedMachineId || assignmentChanged)) {
-      setSelectedMachineId(mineId);
+    assignmentStateRef.current = { userId, initialized: true, machineIds: [...myMachineIds] };
+    if (!sameUser) setAssignmentNotice("");
+    if (result.selectedMachineId !== selectedMachineId) setSelectedMachineId(result.selectedMachineId);
+
+    if (initialized && result.reason === "assignment-added") {
+      const machine = machines.find((candidate: any) => Number(candidate.id) === result.selectedMachineId);
+      setAssignmentNotice(`Assignment updated — switched to ${machine?.code || machine?.name || "the newly assigned station"}.`);
+    } else if (initialized && result.removedMachineIds.length > 0) {
+      const machine = machines.find((candidate: any) => Number(candidate.id) === result.selectedMachineId);
+      setAssignmentNotice(machine
+        ? `Assignment updated — staying on ${machine.code || machine.name}.`
+        : "Assignment updated — no workstation is currently assigned.");
+    } else {
       return;
     }
-    if (selectedMachineId && !machines.some((machine: any) => machine.id === selectedMachineId)) {
-      setSelectedMachineId(machines[0]?.id ?? null);
-      return;
-    }
-    if (!selectedMachineId && machines.length > 0) setSelectedMachineId(machines[0].id);
-  }, [machines, currentUser, selectedMachineId]);
+
+    if (assignmentNoticeTimer.current) clearTimeout(assignmentNoticeTimer.current);
+    assignmentNoticeTimer.current = setTimeout(() => setAssignmentNotice(""), 6000);
+  }, [machines, currentUser?.id, selectedMachineId]);
 
   // One scoped station request now carries operation, material/BOM and receipt
   // state. Downtime runs beside it instead of serially, and overlapping polls
@@ -336,6 +378,12 @@ export default function OperatorStationView({
     downtimeFingerprint.current = "";
     knownOpIds.current = new Set();
     setNewJobFlash(false);
+    setLoadingOps(false);
+    setOperations([]);
+    setBomByOrder({});
+    setReceivedByOrder({});
+    setReceptionStateByOrder({});
+    setActiveDowntime(null);
     void fetchMachineQueue({ showLoading: true, force: true });
 
     const refreshVisibleStation = () => {
@@ -614,9 +662,9 @@ export default function OperatorStationView({
               </span>
             </div>
             <h2 className="text-2xl font-black text-white tracking-tight">Select Workstation</h2>
-            {myMachineId && (
+            {myMachineIds.length > 0 && (
               <p className="text-[11px] font-bold text-emerald-400 mt-1 flex items-center gap-1.5">
-                <Star className="w-3.5 h-3.5 fill-emerald-400" /> Your assigned station opens first — you can switch to any other.
+                <Star className="w-3.5 h-3.5 fill-emerald-400" /> Your assigned station{myMachineIds.length === 1 ? "" : "s"} stay synced automatically every 3 seconds.
               </p>
             )}
           </div>
@@ -641,14 +689,21 @@ export default function OperatorStationView({
               </button>
             ) : (
               <button
-                onClick={() => setDowntimeOpen(true)}
-                className="flex items-center gap-2 bg-slate-950 hover:bg-slate-900 text-rose-400 font-black text-sm px-5 py-2.5 rounded-2xl border-2 border-rose-500/50 transition active:scale-95"
+                onClick={() => selectedMachineId && setDowntimeOpen(true)}
+                disabled={!selectedMachineId}
+                className="flex items-center gap-2 bg-slate-950 hover:bg-slate-900 text-rose-400 font-black text-sm px-5 py-2.5 rounded-2xl border-2 border-rose-500/50 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Zap className="w-5 h-5" /> MACHINE DOWN
               </button>
             )}
           </div>
         </div>
+
+        {assignmentNotice && (
+          <div className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-sky-500/50 bg-sky-500/15 p-3 text-sm font-black text-sky-200" role="status">
+            <RefreshCw className="h-5 w-5" /> {assignmentNotice}
+          </div>
+        )}
 
         {/* C6 — new job arrival flash */}
         {newJobFlash && (
@@ -659,6 +714,13 @@ export default function OperatorStationView({
 
         {/* Tactile Station Buttons Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3 pt-6">
+          {machines.length === 0 && (
+            <div className="col-span-full rounded-2xl border border-dashed border-sky-500/40 bg-sky-500/5 p-6 text-center">
+              <RefreshCw className="mx-auto h-6 w-6 animate-spin text-sky-400" />
+              <div className="mt-2 text-sm font-black text-white">Waiting for a workstation assignment</div>
+              <div className="mt-1 text-[11px] text-slate-400">Stay signed in—new assignments appear here automatically within about 3 seconds.</div>
+            </div>
+          )}
           {machines.map((m: any) => {
             const isSelected = m.id === selectedMachineId;
             const unavailable = m.status === "Maintenance" || m.status === "Offline";
@@ -740,16 +802,19 @@ export default function OperatorStationView({
           <h3 className="text-lg font-black text-white flex items-center gap-2.5">
             <Activity className="w-5 h-5 text-amber-500 animate-pulse" />
             <span>Active Queue for {currentMachine?.name || "Selected Machine"}</span>
-            {myMachineId === selectedMachineId && (
+            {selectedIsMine && (
               <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
                 Your station
               </span>
             )}
           </h3>
           <button
-            onClick={() => void fetchMachineQueue({ showLoading: true, force: true })}
+            onClick={() => {
+              void refreshMachineRosterRef.current();
+              void fetchMachineQueue({ showLoading: true, force: true });
+            }}
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
-            title="Refresh Machine Queue"
+            title="Refresh assignments and machine queue"
           >
             <RefreshCw className={`w-4 h-4 ${loadingOps ? "animate-spin text-amber-400" : ""}`} />
           </button>
@@ -769,7 +834,13 @@ export default function OperatorStationView({
           </button>
         </form>
 
-        {operations.length === 0 ? (
+        {!selectedMachineId ? (
+          <div className="my-6 rounded-3xl border border-sky-500/30 bg-slate-900/90 p-12 text-center shadow-sm">
+            <Tablet className="mx-auto mb-3 h-14 w-14 text-sky-400/70" />
+            <h3 className="text-xl font-black text-white">No workstation assigned yet</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm font-semibold text-slate-400">This station is listening for assignment changes. You do not need to log out or hard-refresh.</p>
+          </div>
+        ) : operations.length === 0 ? (
           <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-16 text-center my-6 shadow-sm">
             <CheckCircle2 className="w-20 h-20 text-emerald-500 mx-auto mb-4 stroke-[1.5] animate-bounce" />
             <h3 className="text-2xl font-black text-white mb-2">Workstation All Clear!</h3>
