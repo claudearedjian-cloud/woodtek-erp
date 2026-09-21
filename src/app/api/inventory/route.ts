@@ -6,6 +6,8 @@ import { authorize } from "@/lib/auth";
 import { computeAvailability } from "@/lib/materials";
 import { getSessionUser } from "@/lib/auth";
 import { isManager } from "@/lib/dataAccess";
+import { readInventoryDimensions, setInventoryDimension } from "@/lib/inventoryDimensions.server";
+import { normalizeDimensions, validateDimensions } from "@/lib/inventoryDimensions";
 
 export async function GET() {
   const { error: authError, user } = await authorize("inventory:read");
@@ -17,6 +19,9 @@ export async function GET() {
     // Compute reservations so we can show available stock to operators
     // (and to managers - operators also need this for the Operator Station)
     const availability = await computeAvailability();
+
+    // Panel dimensions live in the JSON overlay (no DB migration).
+    const dimensions = readInventoryDimensions();
 
     // Field-level redaction: hide unitCost from non-Managers
     const isPrivileged = user ? isManager(user) : false;
@@ -31,6 +36,7 @@ export async function GET() {
         ...it,
         reservedQuantity: av.reserved,
         availableQuantity: av.available,
+        dimensions: dimensions[String(it.id)] ?? null,
         // Redact financial fields for non-Managers
         unitCost: isPrivileged ? it.unitCost : null,
       };
@@ -55,6 +61,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "SKU and Item Name are required." }, { status: 400 });
     }
 
+    const dimensions = normalizeDimensions(body.dimensions);
+    const dimensionsError = validateDimensions(dimensions);
+    if (dimensionsError) {
+      return NextResponse.json({ error: dimensionsError }, { status: 400 });
+    }
+
     const [newItem] = await db.insert(inventoryItems).values({
       sku: sku.toUpperCase(),
       name,
@@ -66,7 +78,11 @@ export async function POST(request: Request) {
       location,
     }).returning();
 
-    return NextResponse.json(newItem, { status: 201 });
+    if (dimensions) {
+      setInventoryDimension(newItem.id, dimensions);
+    }
+
+    return NextResponse.json({ ...newItem, dimensions: dimensions || null }, { status: 201 });
   } catch (error: any) {
     console.error("POST inventory error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create inventory item" }, { status: 500 });

@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { inventoryItems, orderMaterials } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { setInventoryDimension, deleteInventoryDimension, readInventoryDimensions } from "@/lib/inventoryDimensions.server";
+import { normalizeDimensions, validateDimensions } from "@/lib/inventoryDimensions";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("inventory:write");
@@ -22,8 +24,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.reorderLevel !== undefined) updateFields.reorderLevel = Number(body.reorderLevel);
     if (body.location !== undefined) updateFields.location = body.location;
 
+    // Panel dimensions (JSON overlay): provided = update, "" = clear.
+    let nextDimensions: string | null = null;
+    if (body.dimensions !== undefined) {
+      const dims = normalizeDimensions(body.dimensions);
+      const dimensionsError = validateDimensions(dims);
+      if (dimensionsError) {
+        return NextResponse.json({ error: dimensionsError }, { status: 400 });
+      }
+      setInventoryDimension(Number(id), dims);
+      nextDimensions = dims || null;
+    } else {
+      nextDimensions = readInventoryDimensions()[String(id)] ?? null;
+    }
+
     const [updated] = await db.update(inventoryItems).set(updateFields).where(eq(inventoryItems.id, Number(id))).returning();
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, dimensions: nextDimensions });
   } catch (error: any) {
     console.error("PATCH inventory error:", error);
     return NextResponse.json({ error: error?.message || "Failed to update item" }, { status: 500 });
@@ -38,6 +54,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const { id } = await context.params;
     await db.delete(orderMaterials).where(eq(orderMaterials.itemId, Number(id)));
     await db.delete(inventoryItems).where(eq(inventoryItems.id, Number(id)));
+    deleteInventoryDimension(Number(id));
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("DELETE inventory error:", error);

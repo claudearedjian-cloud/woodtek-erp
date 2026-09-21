@@ -1248,6 +1248,21 @@ check(
   "material rule: the wizard blocks review and disables Issue with zero materials",
 );
 
+// ---- bundle 38: panel dimensions on Wood & Edge Stock ----
+compile("src/lib/inventoryDimensions.ts", "lib/inventoryDimensions.js");
+const idd = require("./compiled/lib/inventoryDimensions.js");
+check(idd.isPanelCategory("Wood & MDF Panels") === true && idd.isPanelCategory("Edge Banding") === false, "panel dimensions: the field is panel-category driven");
+check(idd.validateDimensions("2440 x 1220 x 18") === null, "panel dimensions: canonical L x W x Thickness accepted");
+check(idd.validateDimensions("2440×1220×18") === null && idd.validateDimensions("2440 x 1220 x 18 mm") === null && idd.validateDimensions("18") === null, "panel dimensions: × separator, unit suffix and single value tolerated");
+check(idd.validateDimensions("wide board") !== null && idd.validateDimensions("1 x 2 x 3 x 4 x 5") !== null, "panel dimensions: non-numeric or more than 4 parts rejected");
+check(idd.validateDimensions("") === null && idd.normalizeDimensions(" 2440  x 1220 ") === "2440 x 1220", "panel dimensions: empty clears and whitespace normalizes");
+const invRouteSource = fs.readFileSync("src/app/api/inventory/route.ts", "utf8");
+const invItemRouteSource = fs.readFileSync("src/app/api/inventory/[id]/route.ts", "utf8");
+const invViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(invRouteSource.includes("readInventoryDimensions()") && invRouteSource.includes("setInventoryDimension("), "panel dimensions: the stock API reads and persists the dimensions overlay");
+check(invItemRouteSource.includes("validateDimensions(dims)") && invItemRouteSource.includes("deleteInventoryDimension("), "panel dimensions: item update validates/clears and deletion removes the overlay entry");
+check(invViewSource.includes("isPanelCategory(category)") && invViewSource.includes("item.dimensions"), "panel dimensions: the form shows the field for panels only and the list displays it");
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

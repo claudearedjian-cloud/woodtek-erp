@@ -4,6 +4,7 @@ import React, { useRef, useState } from "react";
 import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2 } from "lucide-react";
 import { can } from "@/lib/permissions";
 import type { InventoryImportValidation } from "@/lib/inventoryImport";
+import { isPanelCategory, validateDimensions } from "@/lib/inventoryDimensions";
 
 interface InventoryViewProps {
   items: any[];
@@ -28,6 +29,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [unitCost, setUnitCost] = useState("65.00");
   const [reorderLevel, setReorderLevel] = useState("20");
   const [location, setLocation] = useState("Rack 1-A");
+  const [dimensions, setDimensions] = useState("");
+  const [dimensionsError, setDimensionsError] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -64,20 +67,28 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const dimensionsError = validateDimensions(dimensions);
+    if (dimensionsError) {
+      setDimensionsError(dimensionsError);
+      return;
+    }
     try {
       const res = await fetch("/api/inventory", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, name, category, stockQuantity: Number(stockQuantity), unit, unitCost, reorderLevel: Number(reorderLevel), location }),
+        body: JSON.stringify({ sku, name, category, stockQuantity: Number(stockQuantity), unit, unitCost, reorderLevel: Number(reorderLevel), location, dimensions }),
       });
-      if (!res.ok) throw new Error("Failed to create item");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to create item");
       setShowModal(false);
       setSku("");
       setName("");
+      setDimensions("");
+      setDimensionsError("");
       onRefresh();
     } catch (err) {
       console.error("Create inventory error", err);
-      alert("Error adding item. SKU must be unique.");
+      alert(err instanceof Error && err.message !== "Failed to create item" ? err.message : "Error adding item. SKU must be unique.");
     }
   };
 
@@ -327,6 +338,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                     <td className="py-4 px-5 font-medium">
                       <div className="font-mono text-[11px] font-black text-amber-400">{item.sku}</div>
                       <div className="text-sm font-extrabold text-white mt-0.5">{item.name}</div>
+                      {item.dimensions ? <div className="font-mono text-[10px] text-sky-300/90 mt-0.5">{item.dimensions}</div> : null}
                     </td>
                     <td className="py-4 px-4 text-slate-300 font-semibold">{item.category}</td>
                     <td className="py-4 px-4 text-slate-400 font-mono">{item.location}</td>
@@ -629,6 +641,19 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 <label className="block text-xs font-bold text-slate-300 mb-1">Item Specification Name *</label>
                 <input type="text" required placeholder="e.g. Matte White Supermatt Melamine 18mm" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
               </div>
+              {isPanelCategory(category) && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Dimensions (L × W × Thickness)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 2440 x 1220 x 18"
+                    value={dimensions}
+                    onChange={(e) => { setDimensions(e.target.value); setDimensionsError(""); }}
+                    className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs text-white font-mono ${dimensionsError ? "border-rose-500" : "border-slate-700"}`}
+                  />
+                  {dimensionsError && <p className="mt-1 text-[11px] font-bold text-rose-400">{dimensionsError}</p>}
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">Initial Qty</label>
