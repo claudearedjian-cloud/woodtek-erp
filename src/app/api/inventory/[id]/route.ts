@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { inventoryItems, orderMaterials } from "@/db/schema";
+import { inventoryItems, materialConsumptions, orderMaterials } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { setInventoryDimension, deleteInventoryDimension, readInventoryDimensions } from "@/lib/inventoryDimensions.server";
@@ -52,6 +52,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
   try {
     const { id } = await context.params;
+    // Consumption audit rows also reference the item (NOT NULL FK) - clean them first.
+    await db.delete(materialConsumptions).where(eq(materialConsumptions.itemId, Number(id)));
     await db.delete(orderMaterials).where(eq(orderMaterials.itemId, Number(id)));
     await db.delete(inventoryItems).where(eq(inventoryItems.id, Number(id)));
     deleteInventoryDimension(Number(id));

@@ -1285,6 +1285,33 @@ check(
   "stock categories: the stock screen fetches the list and exposes a Manager-only Manage dialog",
 );
 
+// ---- bundle 40: modal containment fix, item editing, delete-all stock ----
+const globalsSource = fs.readFileSync("src/app/globals.css", "utf8");
+check(/to\s*\{\s*opacity:\s*1;\s*transform:\s*none;\s*\}/.test(globalsSource), "modal fix: fade-up keyframe ends with transform:none so fixed modals anchor to the viewport");
+const delAllSource = fs.readFileSync("src/app/api/inventory/all/route.ts", "utf8");
+check(
+  delAllSource.includes('authorize("users:manage")') &&
+    delAllSource.includes("db.delete(materialConsumptions)") &&
+    delAllSource.includes("db.delete(inventoryItems)") &&
+    delAllSource.includes("clearInventoryDimensions()"),
+  "delete-all stock: Manager-only, clears ledger rows before items, wipes dimensions overlay",
+);
+const invIdSource = fs.readFileSync("src/app/api/inventory/[id]/route.ts", "utf8");
+check(invIdSource.includes("db.delete(materialConsumptions)"), "delete-all stock: single-item delete also clears consumption FK rows");
+const invViewEditSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(
+  invViewEditSource.includes("openEditItem") &&
+    invViewEditSource.includes("/api/inventory/${editingId}") &&
+    invViewEditSource.includes("Edit Stock Item"),
+  "item editing: rows expose an Edit dialog that PATCHes the existing item",
+);
+check(
+  invViewEditSource.includes("/api/inventory/all") &&
+    invViewEditSource.includes('wipeConfirm !== "DELETE"') &&
+    invViewEditSource.includes("Delete ALL Stock Items"),
+  "delete-all stock: Manager-only button with type-to-confirm dialog",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

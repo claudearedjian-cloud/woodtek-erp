@@ -90,3 +90,8 @@ export function setInventoryDimension(itemId: number, dimensions: string): void 
 export function deleteInventoryDimension(itemId: number): void {
   setInventoryDimension(itemId, "");
 }
+
+/** Wipe the whole overlay (delete-all stock). */
+export function clearInventoryDimensions(): void {
+  writeRaw({ version: 1, entries: {} });
+}

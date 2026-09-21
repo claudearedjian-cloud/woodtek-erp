@@ -38,6 +38,11 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [manageError, setManageError] = useState("");
   const [manageSaving, setManageSaving] = useState(false);
   const [newCategory, setNewCategory] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [wipeConfirm, setWipeConfirm] = useState("");
+  const [wipeBusy, setWipeBusy] = useState(false);
+  const [wipeError, setWipeError] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -86,6 +91,34 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
     }
   };
 
+  const resetItemForm = () => {
+    setEditingId(null);
+    setSku("");
+    setName("");
+    setStockQuantity("100");
+    setUnit("sheets");
+    setUnitCost("65.00");
+    setReorderLevel("20");
+    setLocation("Rack 1-A");
+    setDimensions("");
+    setDimensionsError("");
+  };
+
+  const openEditItem = (item: any) => {
+    setEditingId(item.id);
+    setSku(String(item.sku ?? ""));
+    setName(String(item.name ?? ""));
+    setCategory(String(item.category ?? ""));
+    setStockQuantity(String(item.stockQuantity ?? 0));
+    setUnit(String(item.unit ?? ""));
+    setUnitCost(String(item.unitCost ?? "0"));
+    setReorderLevel(String(item.reorderLevel ?? 0));
+    setLocation(String(item.location ?? ""));
+    setDimensions(String(item.dimensions ?? ""));
+    setDimensionsError("");
+    setShowModal(true);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const dimensionsError = validateDimensions(dimensions);
@@ -93,23 +126,54 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       setDimensionsError(dimensionsError);
       return;
     }
+    const payload = {
+      sku,
+      name,
+      category,
+      stockQuantity: Number(stockQuantity),
+      unit,
+      unitCost,
+      reorderLevel: Number(reorderLevel),
+      location,
+      dimensions,
+    };
     try {
-      const res = await fetch("/api/inventory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, name, category, stockQuantity: Number(stockQuantity), unit, unitCost, reorderLevel: Number(reorderLevel), location, dimensions }),
-      });
+      const res = editingId
+        ? await fetch(`/api/inventory/${editingId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        : await fetch("/api/inventory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to create item");
+      if (!res.ok) throw new Error(data.error || (editingId ? "Failed to update item" : "Failed to create item"));
       setShowModal(false);
-      setSku("");
-      setName("");
-      setDimensions("");
-      setDimensionsError("");
+      resetItemForm();
       onRefresh();
     } catch (err) {
-      console.error("Create inventory error", err);
-      alert(err instanceof Error && err.message !== "Failed to create item" ? err.message : "Error adding item. SKU must be unique.");
+      console.error("Save inventory error", err);
+      alert(err instanceof Error && err.message !== "Failed to create item" ? err.message : "Error saving item.");
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setWipeBusy(true);
+    setWipeError("");
+    try {
+      const res = await fetch("/api/inventory/all", { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to delete all stock items");
+      setDeleteAllOpen(false);
+      setWipeConfirm("");
+      onRefresh();
+    } catch (err) {
+      setWipeError(err instanceof Error ? err.message : "Failed to delete all stock items");
+    } finally {
+      setWipeBusy(false);
     }
   };
 
@@ -337,13 +401,22 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
             </button>
           ))}
           {canManageStockCategories && (
-            <button
-              onClick={openManageCategories}
-              title="Add, rename or remove stock categories"
-              className="ml-1 flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs font-bold text-slate-300 transition hover:border-slate-500 hover:text-white"
-            >
-              <Pencil className="h-3.5 w-3.5" /> Manage
-            </button>
+            <>
+              <button
+                onClick={openManageCategories}
+                title="Add, rename or remove stock categories"
+                className="ml-1 flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs font-bold text-slate-300 transition hover:border-slate-500 hover:text-white"
+              >
+                <Pencil className="h-3.5 w-3.5" /> Manage
+              </button>
+              <button
+                onClick={() => { setWipeConfirm(""); setWipeError(""); setDeleteAllOpen(true); }}
+                title="Delete every stock item (Manager)"
+                className="flex items-center gap-1.5 rounded-xl border border-rose-900/70 bg-rose-950/40 px-3 py-1 text-xs font-bold text-rose-300 transition hover:border-rose-600 hover:bg-rose-900/40"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete All
+              </button>
+            </>
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -366,7 +439,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
             </>
           )}
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => { resetItemForm(); setShowModal(true); }}
             className="flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-gradient-to-b from-amber-400 to-amber-600 px-4 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" /> Receive / Add Stock Item
@@ -468,6 +541,15 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                           Orders
                           <ChevronRight className="w-3 h-3" />
                         </button>
+                        {canImportStock && (
+                          <button
+                            onClick={() => openEditItem(item)}
+                            className="p-1.5 hover:bg-sky-500/20 text-slate-600 hover:text-sky-300 rounded-lg transition"
+                            title="Edit item"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDelete(item.id, item.name)}
                           className="p-1.5 hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 rounded-lg transition"
@@ -689,8 +771,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white">Register Raw Material Item</h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white">
+              <h3 className="text-base font-bold text-white">{editingId ? "Edit Stock Item" : "Register Raw Material Item"}</h3>
+              <button onClick={() => { setShowModal(false); setEditingId(null); }} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -698,7 +780,16 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">SKU *</label>
-                  <input type="text" required placeholder="BRD-WHT-18" value={sku} onChange={(e) => setSku(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="BRD-WHT-18"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value)}
+                    disabled={!!editingId}
+                    title={editingId ? "The SKU is the stock identity of an existing item and cannot be changed here." : undefined}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase disabled:opacity-60 disabled:cursor-not-allowed"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">Category</label>
@@ -741,8 +832,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Cancel</button>
-                <button type="submit" className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow">Register Item</button>
+                <button type="button" onClick={() => { setShowModal(false); setEditingId(null); }} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow">{editingId ? "Save Changes" : "Register Item"}</button>
               </div>
             </form>
           </div>
@@ -819,6 +910,55 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow disabled:opacity-50"
               >
                 {manageSaving ? "Saving…" : "Save Categories"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete ALL stock confirmation (Manager) */}
+      {deleteAllOpen && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-rose-900/70 bg-slate-900 p-6 shadow-2xl shadow-black/60">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-rose-300">Delete ALL Stock Items</h3>
+              <button
+                onClick={() => setDeleteAllOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-300">
+              This permanently removes <span className="font-black text-white">{items.length}</span> stock
+              item(s), their material allocations on orders, and their consumption records. It cannot be
+              undone from the app — the nightly backup is the only recovery path. Use it to wipe physical
+              stock before a fresh Excel import.
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Type <span className="font-mono text-rose-300">DELETE</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={wipeConfirm}
+                onChange={(e) => setWipeConfirm(e.target.value)}
+                placeholder="DELETE"
+                className="w-full bg-slate-950 border border-rose-900/70 rounded-xl px-3 py-2 text-xs text-white font-mono uppercase"
+              />
+            </div>
+            {wipeError && <p className="text-[11px] font-bold text-rose-400">{wipeError}</p>}
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+              <button type="button" onClick={() => setDeleteAllOpen(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteAll()}
+                disabled={wipeConfirm !== "DELETE" || wipeBusy}
+                className="px-5 py-2 bg-rose-600 text-white font-black text-xs rounded-xl shadow hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {wipeBusy ? "Deleting…" : "Delete Everything"}
               </button>
             </div>
           </div>
