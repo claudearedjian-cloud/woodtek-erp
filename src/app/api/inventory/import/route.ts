@@ -14,6 +14,7 @@ import {
   InventoryWorkbookError,
   parseInventoryWorkbook,
 } from "@/lib/inventoryImport.server";
+import { effectiveInventoryCategories } from "@/lib/inventoryCategories.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,7 +93,9 @@ export async function POST(request: Request) {
 
   try {
     const initialExisting = await db.select({ id: inventoryItems.id, sku: inventoryItems.sku }).from(inventoryItems);
-    const initialValidation = validateInventoryImportMatrix(matrix, initialExisting);
+    // Categories are manager-editable — validate against the live list.
+    const knownCategories = await effectiveInventoryCategories();
+    const initialValidation = validateInventoryImportMatrix(matrix, initialExisting, knownCategories);
     if (mode === "preview") {
       return NextResponse.json(initialValidation, { headers: NO_STORE_HEADERS });
     }
@@ -108,7 +111,7 @@ export async function POST(request: Request) {
       await tx.execute(sql`lock table inventory_items in share row exclusive mode`);
 
       const latestExisting = await tx.select({ id: inventoryItems.id, sku: inventoryItems.sku }).from(inventoryItems);
-      const validation = validateInventoryImportMatrix(matrix, latestExisting);
+      const validation = validateInventoryImportMatrix(matrix, latestExisting, knownCategories);
       if (!validation.valid) throw new ImportChangedError(validation);
 
       let created = 0;

@@ -156,6 +156,7 @@ function emptyResult(errors: InventoryImportError[]): InventoryImportValidation 
 export function validateInventoryImportMatrix(
   matrix: unknown[][],
   existingInventory: ExistingInventorySku[],
+  knownCategories: readonly string[] = INVENTORY_IMPORT_CATEGORIES,
 ): InventoryImportValidation {
   const errorMap = new Map<number, InventoryImportError>();
   const headerRow = Array.isArray(matrix[0]) ? matrix[0] : [];
@@ -210,7 +211,7 @@ export function validateInventoryImportMatrix(
     const sku = normalizeInventorySku(unsupportedCellReason(valueAt(row, "SKU")) ? "" : valueAt(row, "SKU"));
     const name = cellText(unsupportedCellReason(valueAt(row, "Name")) ? "" : valueAt(row, "Name"));
     const categoryInput = cellText(unsupportedCellReason(valueAt(row, "Category")) ? "" : valueAt(row, "Category"));
-    const category = INVENTORY_IMPORT_CATEGORIES.find((candidate) => candidate.toLowerCase() === categoryInput.toLowerCase()) ?? categoryInput;
+    const category = knownCategories.find((candidate) => String(candidate).toLowerCase() === categoryInput.toLowerCase()) ?? categoryInput;
     const unit = cellText(unsupportedCellReason(valueAt(row, "Unit")) ? "" : valueAt(row, "Unit"));
     const location = cellText(unsupportedCellReason(valueAt(row, "Location")) ? "" : valueAt(row, "Location"));
     const stockQuantity = parseInteger(unsupportedCellReason(valueAt(row, "Stock Quantity")) ? null : valueAt(row, "Stock Quantity"));
@@ -225,8 +226,8 @@ export function validateInventoryImportMatrix(
     if (!name) addError(errorMap, rowNumber, "Name is required.", sku);
     else if (name.length > 200) addError(errorMap, rowNumber, "Name must be 200 characters or fewer.", sku);
     if (!category) addError(errorMap, rowNumber, "Category is required.", sku);
-    else if (!INVENTORY_IMPORT_CATEGORIES.includes(category as (typeof INVENTORY_IMPORT_CATEGORIES)[number])) {
-      addError(errorMap, rowNumber, `Category must be one of: ${INVENTORY_IMPORT_CATEGORIES.join(", ")}.`, sku);
+    else if (!knownCategories.includes(category)) {
+      addError(errorMap, rowNumber, `Category must be one of: ${knownCategories.join(", ")}.`, sku);
     }
     if (stockQuantity === null) addError(errorMap, rowNumber, "Stock Quantity must be a whole number from 0 to 2,147,483,647.", sku);
     if (!unit) addError(errorMap, rowNumber, "Unit is required.", sku);

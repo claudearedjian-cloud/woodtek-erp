@@ -1263,6 +1263,28 @@ check(invRouteSource.includes("readInventoryDimensions()") && invRouteSource.inc
 check(invItemRouteSource.includes("validateDimensions(dims)") && invItemRouteSource.includes("deleteInventoryDimension("), "panel dimensions: item update validates/clears and deletion removes the overlay entry");
 check(invViewSource.includes("isPanelCategory(category)") && invViewSource.includes("item.dimensions"), "panel dimensions: the form shows the field for panels only and the list displays it");
 
+// ---- bundle 39: manager-editable stock categories (add / rename / remove) ----
+compile("src/lib/inventoryCategories.ts", "lib/inventoryCategories.js");
+const ic = require("./compiled/lib/inventoryCategories.js");
+check(ic.DEFAULT_INVENTORY_CATEGORIES.length === 4 && ic.DEFAULT_INVENTORY_CATEGORIES[0] === "Wood & MDF Panels", "stock categories: defaults seed existing deployments");
+check(ic.sanitizeInventoryCategories(["Panel", "panel ", "Edge"]).length === 2, "stock categories: sanitize trims and dedupes case-insensitively");
+const invCatsRouteSource = fs.readFileSync("src/app/api/inventory-categories/route.ts", "utf8");
+check(
+  invCatsRouteSource.includes('authorize("users:manage")') &&
+    invCatsRouteSource.includes("cannot be removed") &&
+    invCatsRouteSource.includes("renameItemsCategory("),
+  "stock categories: Manager-only edits, in-use protection, renames migrate item rows",
+);
+const importRouteSource2 = fs.readFileSync("src/app/api/inventory/import/route.ts", "utf8");
+check(importRouteSource2.includes("effectiveInventoryCategories()"), "stock categories: the Excel import validates against the live category list");
+const invViewManageSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(
+  invViewManageSource.includes("/api/inventory-categories") &&
+    invViewManageSource.includes("Manage Stock Categories") &&
+    invViewManageSource.includes("canManageStockCategories"),
+  "stock categories: the stock screen fetches the list and exposes a Manager-only Manage dialog",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

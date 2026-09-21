@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useRef, useState } from "react";
-import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2, Pencil } from "lucide-react";
 import { can } from "@/lib/permissions";
 import type { InventoryImportValidation } from "@/lib/inventoryImport";
 import { isPanelCategory, validateDimensions } from "@/lib/inventoryDimensions";
+import { DEFAULT_INVENTORY_CATEGORIES } from "@/lib/inventoryCategories";
 
 interface InventoryViewProps {
   items: any[];
@@ -31,6 +32,12 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [location, setLocation] = useState("Rack 1-A");
   const [dimensions, setDimensions] = useState("");
   const [dimensionsError, setDimensionsError] = useState("");
+  const [stockCategories, setStockCategories] = useState<string[]>(DEFAULT_INVENTORY_CATEGORIES);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageRows, setManageRows] = useState<Array<{ key: string; original: string; name: string }>>([]);
+  const [manageError, setManageError] = useState("");
+  const [manageSaving, setManageSaving] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -41,7 +48,21 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const importInputRef = useRef<HTMLInputElement>(null);
   const canImportStock = can(currentUser?.role, "inventory:write");
 
-  const categories = ["All", "Wood & MDF Panels", "Edge Banding", "Hardware & Fittings", "Coatings & Adhesives"];
+  // Manager-editable category list (defaults until the first fetch).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/inventory-categories", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !Array.isArray(d?.categories) || d.categories.length === 0) return;
+        setStockCategories(d.categories);
+        setCategory((c) => (d.categories.some((x: string) => x === c) ? c : d.categories[0]));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const categories = ["All", ...stockCategories];
 
   const filtered = categoryFilter === "All" ? items : items.filter((i) => i.category === categoryFilter);
 
@@ -99,6 +120,48 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       onRefresh();
     } catch (err) {
       console.error("Delete inventory error", err);
+    }
+  };
+
+  // ---- manager-editable category list (add / rename / remove) ----
+  const canManageStockCategories = currentUser?.role === "Manager";
+
+  const openManageCategories = () => {
+    setManageRows(stockCategories.map((c) => ({ key: c, original: c, name: c })));
+    setNewCategory("");
+    setManageError("");
+    setManageOpen(true);
+  };
+
+  const saveManageCategories = async () => {
+    const rows = manageRows.map((row) => ({ ...row, name: row.name.trim() }));
+    const nextCategories = rows.map((row) => row.name).filter(Boolean);
+    const renames = rows
+      .filter((row) => row.original && row.name && row.name !== row.original)
+      .map((row) => ({ from: row.original, to: row.name }));
+    if (nextCategories.length === 0) {
+      setManageError("Keep at least one stock category.");
+      return;
+    }
+    setManageSaving(true);
+    setManageError("");
+    try {
+      const res = await fetch("/api/inventory-categories", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: nextCategories, renames }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to save stock categories.");
+      const list: string[] = Array.isArray(data.categories) ? data.categories : nextCategories;
+      setStockCategories(list);
+      setCategory((c) => (list.some((x) => x === c) ? c : list[0]));
+      setManageOpen(false);
+      await onRefresh();
+    } catch (err) {
+      setManageError(err instanceof Error ? err.message : "Failed to save stock categories.");
+    } finally {
+      setManageSaving(false);
     }
   };
 
@@ -273,6 +336,15 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               {c}
             </button>
           ))}
+          {canManageStockCategories && (
+            <button
+              onClick={openManageCategories}
+              title="Add, rename or remove stock categories"
+              className="ml-1 flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs font-bold text-slate-300 transition hover:border-slate-500 hover:text-white"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Manage
+            </button>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {canImportStock && (
@@ -673,6 +745,82 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 <button type="submit" className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow">Register Item</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Manage categories modal (Manager) */}
+      {manageOpen && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Manage Stock Categories</h3>
+              <button onClick={() => setManageOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-400">
+              Rename in place, remove empty rows or add new ones. A category that still has items cannot be
+              removed (rename it instead). Names containing “Panel” show the Dimensions field on the item form.
+            </p>
+            <div className="space-y-2">
+              {manageRows.map((row) => (
+                <div key={row.key} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={row.name}
+                    onChange={(e) =>
+                      setManageRows((rows) => rows.map((r) => (r.key === row.key ? { ...r, name: e.target.value } : r)))
+                    }
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setManageRows((rows) => rows.filter((r) => r.key !== row.key))}
+                    title="Remove this category"
+                    className="rounded-xl border border-slate-700 bg-slate-950 p-2 text-slate-400 hover:border-rose-500/60 hover:text-rose-300"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="New category, e.g. Hardware & Fittings"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const name = newCategory.trim();
+                  if (!name) return;
+                  if (manageRows.some((r) => r.name.trim().toLowerCase() === name.toLowerCase())) return;
+                  setManageRows((rows) => [...rows, { key: `new-${name}`, original: "", name }]);
+                  setNewCategory("");
+                }}
+                className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700"
+              >
+                <Plus className="h-4 w-4" /> Add
+              </button>
+            </div>
+            {manageError && <p className="text-[11px] font-bold text-rose-400">{manageError}</p>}
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+              <button type="button" onClick={() => setManageOpen(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveManageCategories()}
+                disabled={manageSaving}
+                className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow disabled:opacity-50"
+              >
+                {manageSaving ? "Saving…" : "Save Categories"}
+              </button>
+            </div>
           </div>
         </div>
       )}
