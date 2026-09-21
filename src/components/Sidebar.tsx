@@ -76,6 +76,7 @@ const ICONS: Record<string, any> = {
   recipes: Workflow,
   schedule: CalendarDays,
   gantt: GanttChartSquare,
+  production: BarChart3,
   machines: Cpu,
   cmms: Zap,
   downtime: Zap,

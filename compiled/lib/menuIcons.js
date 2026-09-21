@@ -19,6 +19,7 @@ exports.MENU_ICON_CHOICES = [
     { key: "recipes", label: "Workflow", Icon: lucide_react_1.Workflow },
     { key: "schedule", label: "Calendar", Icon: lucide_react_1.CalendarDays },
     { key: "gantt", label: "Timeline", Icon: lucide_react_1.GanttChartSquare },
+    { key: "production", label: "Production", Icon: lucide_react_1.BarChart3 },
     { key: "machines", label: "Machine", Icon: lucide_react_1.Cpu },
     { key: "cmms", label: "Bolt", Icon: lucide_react_1.Zap },
     { key: "downtime", label: "Alert", Icon: lucide_react_1.AlertTriangle },

@@ -32,6 +32,7 @@ const WarehouseView = dynamic(() => import("@/components/WarehouseView"), { load
 const FloorReceptionView = dynamic(() => import("@/components/FloorReceptionView"), { loading: ScreenLoading });
 const ScheduleView = dynamic(() => import("@/components/ScheduleView"), { loading: ScreenLoading });
 const GanttView = dynamic(() => import("@/components/GanttView"), { loading: ScreenLoading });
+const ProductionReportView = dynamic(() => import("@/components/ProductionReportView"), { loading: ScreenLoading });
 const CmmsView = dynamic(() => import("@/components/CmmsView"), { loading: ScreenLoading });
 const ReportView = dynamic(() => import("@/components/ReportView"), { loading: ScreenLoading });
 const WorkforceView = dynamic(() => import("@/components/WorkforceView"), { loading: ScreenLoading });
@@ -551,7 +552,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -680,6 +681,7 @@ export default function WoodTekERP() {
           {activeTab === "gantt" && (
             <GanttView machines={machines} onSelectOrder={handleSelectOrder} searchQuery={searchQuery} />
           )}
+          {activeTab === "production" && <ProductionReportView currentUser={currentUser} />}
           {activeTab === "cmms" && (
             <CmmsView currentUser={currentUser} machines={machines} searchQuery={searchQuery} />
           )}

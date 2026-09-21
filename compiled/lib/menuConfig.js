@@ -23,7 +23,7 @@ exports.GROUP_MAX = 30;
 // (the target screen's own icon). Keys are validated at the edges.
 exports.MENU_ICON_KEYS = [
     // built-in screens (keep today's automatic look available explicitly)
-    "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "machines",
+    "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "production", "machines",
     "cmms", "downtime", "quality", "workforce", "station", "customers",
     "inventory", "pims", "reports", "settings", "designer", "warehouse",
     "reception", "plant",
@@ -46,6 +46,7 @@ exports.MENU_REGISTRY = [
     { id: "recipes", label: "Routing Recipes", badge: "Recipe", group: "settings" },
     { id: "schedule", label: "Dispatch Schedule", badge: "Plan", group: "top" },
     { id: "gantt", label: "Gantt Chart", badge: "Timeline", group: "top" },
+    { id: "production", label: "Production Report", badge: "Live", group: "top" },
     { id: "machines", label: "Shop Floor Monitor", badge: "", group: "settings" },
     { id: "cmms", label: "Asset CMMS", badge: "PM", group: "top" },
     { id: "downtime", label: "Downtime Log", badge: "Down", group: "settings" },

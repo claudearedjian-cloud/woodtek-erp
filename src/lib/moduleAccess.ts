@@ -19,6 +19,7 @@ export type ModuleId =
   | "inventory"
   | "schedule"
   | "gantt"
+  | "production"
   | "cmms"
   | "reports"
   | "settings"
@@ -47,6 +48,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "inventory",
     "schedule",
     "gantt",
+    "production",
     "cmms",
     "reports",
     "settings",
@@ -134,6 +136,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   inventory: "Wood & Edge Stock",
   schedule: "Dispatch Schedule",
   gantt: "Gantt Chart",
+  production: "Production Report",
   cmms: "Asset CMMS",
   reports: "System Reports",
   settings: "General Settings",

@@ -83,6 +83,7 @@ export const MENU_ICON_CHOICES: MenuIconChoice[] = [
   { key: "recipes", label: "Workflow", Icon: Workflow },
   { key: "schedule", label: "Calendar", Icon: CalendarDays },
   { key: "gantt", label: "Timeline", Icon: GanttChartSquare },
+  { key: "production", label: "Production", Icon: BarChart3 },
   { key: "machines", label: "Machine", Icon: Cpu },
   { key: "cmms", label: "Bolt", Icon: Zap },
   { key: "downtime", label: "Alert", Icon: AlertTriangle },

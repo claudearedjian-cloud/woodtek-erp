@@ -24,6 +24,7 @@ function compile(file, outName) {
 }
 
 compile("src/lib/moduleAccess.ts", "lib/moduleAccess.js");
+compile("src/lib/productionReport.ts", "lib/productionReport.js");
 compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
@@ -1113,6 +1114,52 @@ check(
     floorReceptionSource.includes("First Start claims one"),
   "reception board: machine assignment is a multi-select candidate offer, not a single reassignment",
 );
+
+// ---- bundle 32: production & utilization report model ----
+const pr = require("./compiled/lib/productionReport.js");
+const dt = (y, mo, day, h, mi) => new Date(y, mo, day, h, mi, 0, 0);
+const now32 = dt(2026, 8, 16, 14, 0); // Wednesday, local time
+const prMachines = [
+  { id: 1, code: "BEAM-01", name: "Beam 1", category: "Beam Saw", status: "Active" },
+  { id: 2, code: "BEAM-02", name: "Beam 2", category: "Beam Saw", status: "In-Use" },
+  { id: 3, code: "EDGE-01", name: "Edge 1", category: "Edge Banding", status: "Maintenance" },
+];
+const prOp = (over) => ({
+  id: 0, orderId: 1, operationName: "Step", status: "Pending",
+  estimatedMinutes: 60, actualMinutes: 0,
+  machineId: null, machineCode: null, machineCategory: null,
+  operatorId: null, operatorName: null,
+  startTime: null, endTime: null, scheduledStart: null, scheduledEnd: null,
+  ...over,
+});
+const prOps = [
+  prOp({ id: 1, machineId: 1, operatorId: 10, operatorName: "Rami", status: "Completed", estimatedMinutes: 60, actualMinutes: 75, startTime: dt(2026, 8, 16, 9, 0), endTime: dt(2026, 8, 16, 10, 10), scheduledStart: dt(2026, 8, 16, 9, 0) }),
+  prOp({ id: 2, machineId: 2, operatorId: 20, operatorName: "Khalil", status: "Completed", startTime: dt(2026, 8, 16, 10, 0), endTime: dt(2026, 8, 16, 11, 30), scheduledStart: dt(2026, 8, 16, 11, 0) }),
+  prOp({ id: 3, machineId: 1, operatorId: 10, operatorName: "Rami", status: "In Progress", estimatedMinutes: 90, startTime: dt(2026, 8, 16, 13, 0) }),
+  prOp({ id: 4, machineId: 3, operatorId: 10, operatorName: "Rami", status: "Pending", scheduledStart: dt(2026, 8, 16, 8, 0) }),
+  prOp({ id: 5, machineId: 1, operatorId: 10, operatorName: "Rami", status: "Completed", estimatedMinutes: 45, actualMinutes: 50, startTime: dt(2026, 8, 15, 16, 0), endTime: dt(2026, 8, 15, 17, 0), scheduledStart: dt(2026, 8, 15, 16, 0) }),
+  prOp({ id: 6, machineId: 2, operatorId: 20, operatorName: "Khalil", status: "In Progress", estimatedMinutes: 30, startTime: dt(2026, 8, 16, 10, 15), scheduledStart: dt(2026, 8, 16, 10, 0) }),
+  prOp({ id: 7, machineId: 2, operatorId: 20, operatorName: "Khalil", status: "In Progress", estimatedMinutes: 30, startTime: dt(2026, 8, 16, 12, 16), scheduledStart: dt(2026, 8, 16, 12, 0) }),
+];
+const prToday = pr.buildProductionReport({ ops: prOps, machines: prMachines, range: "today", now: now32 });
+check(pr.rangeWindow("today", now32).from.getTime() === dt(2026, 8, 16, 0, 0).getTime(), "production report: today window starts at local midnight");
+check(pr.rangeWindow("week", now32).from.getDay() === 0, "production report: week window starts on Sunday");
+check(pr.rangeWindow("yesterday", now32).from.getTime() === dt(2026, 8, 15, 0, 0).getTime() && pr.rangeWindow("yesterday", now32).to.getTime() === dt(2026, 8, 16, 0, 0).getTime(), "production report: yesterday window is the full prior day");
+check(prToday.kpis.completed === 2 && prToday.kpis.actualMinutes === 165, "production report: only Completed jobs with endTime in window count, start→end span fills missing actuals");
+check(prToday.kpis.plannedMinutes === 120 && Math.abs(prToday.kpis.planCoverage - 1.375) < 1e-9, "production report: plan coverage is actual/planned for completed jobs");
+check(prToday.kpis.onTimeEligible === 4 && prToday.kpis.onTimeStarts === 3 && Math.abs(prToday.kpis.onTimeRate - 0.75) < 1e-9, "production report: on-time grace is inclusive at 15 minutes and early starts count");
+check(prToday.kpis.inProgress === 3 && prToday.kpis.overdue === 1, "production report: in-flight jobs are live, overdue means scheduled but not started");
+const prBeam2 = prToday.machines.find((m) => m.code === "BEAM-02");
+const prBeam1 = prToday.machines.find((m) => m.code === "BEAM-01");
+const prEdge1 = prToday.machines.find((m) => m.code === "EDGE-01");
+check(prToday.machines[0].code === "BEAM-02" && prBeam2.actualMinutes === 90 && prBeam2.onTimeStarts === 2, "production report: machine rows aggregate per station and sort by worked time");
+check(prBeam1.completed === 1 && prBeam1.actualMinutes === 75 && prBeam1.avgEstimatedMinutes === 60, "production report: stored actuals win over the start→end span");
+check(prEdge1.completed === 0 && prEdge1.overdue === 1, "production report: idle machines stay listed with their overdue backlog");
+check(prToday.operators[0].name === "Khalil" && prToday.operators[0].actualMinutes === 90 && prToday.operators[1].name === "Rami", "production report: operator ranking by completions then worked time");
+const prYesterday = pr.buildProductionReport({ ops: prOps, machines: prMachines, range: "yesterday", now: now32 });
+check(prYesterday.kpis.completed === 1 && prYesterday.kpis.overdue === 0 && prYesterday.kpis.onTimeRate === 1, "production report: period windowing keeps jobs in their own day");
+const prEmpty = pr.buildProductionReport({ ops: [], machines: prMachines, range: "today", now: now32 });
+check(prEmpty.kpis.planCoverage === null && prEmpty.kpis.onTimeRate === null && prEmpty.machines.length === 3, "production report: no work yields null rates and the full roster of zeros");
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");

@@ -157,7 +157,7 @@ export function can(role: string | null | undefined, action: Action): boolean {
 /** Module ids a restricted custom role may see ("" list = full base access). */
 const KNOWN_MODULE_IDS = [
   "dashboard", "orders", "machines", "operator", "customers", "inventory",
-  "schedule", "gantt", "cmms", "reports", "settings", "workforce", "wip",
+  "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip",
   "quality", "downtime", "recipes", "pims", "warehouse", "plant", "reception",
 ];
 

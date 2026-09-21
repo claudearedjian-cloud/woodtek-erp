@@ -18,6 +18,7 @@ const ICONS = {
     recipes: lucide_react_1.Workflow,
     schedule: lucide_react_1.CalendarDays,
     gantt: lucide_react_1.GanttChartSquare,
+    production: lucide_react_1.BarChart3,
     machines: lucide_react_1.Cpu,
     cmms: lucide_react_1.Zap,
     downtime: lucide_react_1.Zap,
