@@ -271,6 +271,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Customer, Title, and Due Date are required." }, { status: 400 });
     }
 
+    // Owner rule (2026-09-21): an order cannot be issued without materials —
+    // there would be nothing to produce. Either v2 material jobs
+    // (productionItems) or legacy BOM lines (bom) must exist.
+    const hasMaterialJobs = Array.isArray(body.productionItems) && body.productionItems.length > 0;
+    const hasBomLines = Array.isArray(body.bom) && body.bom.length > 0;
+    if (!hasMaterialJobs && !hasBomLines) {
+      return NextResponse.json(
+        { error: "An order cannot be issued without materials. Add at least one material job (batch) to the order first." },
+        { status: 400 },
+      );
+    }
+
     // Sales Coordinator creating an order: ensure the customer belongs to them.
     // Manager can create orders for any customer.
     if (user.role === "Sales Coordinator") {

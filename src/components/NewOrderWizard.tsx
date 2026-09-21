@@ -570,12 +570,9 @@ export default function NewOrderWizard({
     }
     if (target === "materials" || target === "review") {
       if (materials.length === 0) {
-        if (routePayload(defaultSteps).length === 0) {
-          setError("Add at least one material job, or define a default route for an order without materials.");
-          setPage("materials");
-          return false;
-        }
-        return true;
+        setError("An order cannot be issued without materials. Add at least one material job (batch) first.");
+        setPage("materials");
+        return false;
       }
       for (let index = 0; index < materials.length; index++) {
         const material = materials[index];
@@ -974,7 +971,13 @@ export default function NewOrderWizard({
           </button>
           <div className="hidden items-center gap-4 text-[10px] font-bold text-slate-500 sm:flex"><span>{materials.length} material batches</span><span>{totalJobs} station jobs</span><span>{totalMinutes} estimated minutes</span></div>
           {page === "review" ? (
-            <button type="button" onClick={submit} disabled={submitting} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-950/40 hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={submitting || materials.length === 0}
+              title={materials.length === 0 ? "Add at least one material job (batch) before issuing" : undefined}
+              className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-950/40 hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-50"
+            >
               <CheckCircle2 className="h-4 w-4" /> {submitting ? "Issuing & booking slots…" : "Issue Order & Auto-book Dispatch"}
             </button>
           ) : (

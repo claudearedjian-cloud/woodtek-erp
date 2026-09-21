@@ -1234,6 +1234,20 @@ const wizardAlertSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "
 check(createRouteSource.includes("computeAvailability()") && createRouteSource.includes("stockCheck"), "stock check: order issue evaluates stock from a pre-issue snapshot on both create paths");
 check(wizardAlertSource.includes("Stock check:"), "stock check: the wizard surfaces the stock check in the post-issue alert");
 
+// ---- bundle 37: no order can be issued without materials ----
+const ordersPostSource = fs.readFileSync("src/app/api/orders/route.ts", "utf8");
+const wizardMaterialsSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
+check(
+  ordersPostSource.includes("hasMaterialJobs") &&
+    ordersPostSource.includes("An order cannot be issued without materials"),
+  "material rule: the API rejects orders with no material jobs or BOM lines",
+);
+check(
+  wizardMaterialsSource.includes("An order cannot be issued without materials") &&
+    wizardMaterialsSource.includes("disabled={submitting || materials.length === 0}"),
+  "material rule: the wizard blocks review and disables Issue with zero materials",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");
