@@ -17,7 +17,8 @@ import {
   type ProductionRouteStep,
 } from "@/lib/productionPlan";
 import { saveOrderProductionPlan } from "@/lib/productionPlan.server";
-import { applyMaterialsStatus } from "@/lib/materials";
+import { applyMaterialsStatus, computeAvailability } from "@/lib/materials";
+import { evaluateStockLine, stockCheckSummary, type StockCheckLine } from "@/lib/stockCheck";
 import { ensureDispatchBatches, ensureLegacyDispatchOrder } from "@/lib/dispatch.server";
 import { autoScheduleDispatchSlots, type DispatchSchedulingResult } from "@/lib/dispatchScheduling.server";
 
@@ -200,6 +201,34 @@ async function prepareProductionAssignments(
   }));
 }
 
+/**
+ * Classify the stock impact of the just-issued order's lines from a
+ * PRE-ISSUE snapshot (taken before this order's reservation rows land), so
+ * the post-issue alert names anything that goes short or below reorder.
+ */
+function buildStockCheck(
+  entries: Array<{ itemId: number; quantity: number }>,
+  details: Map<number, { sku: string; name: string; reorderLevel: number }>,
+  snapshot: Map<number, { stockQuantity: number; reserved: number; available: number }>,
+) {
+  const lines = entries
+    .map((entry) => {
+      const detail = details.get(entry.itemId);
+      const availability = snapshot.get(entry.itemId);
+      if (!detail || !availability) return null;
+      return evaluateStockLine({
+        sku: detail.sku,
+        name: detail.name,
+        quantity: entry.quantity,
+        stockQuantity: availability.stockQuantity,
+        reservedBefore: availability.reserved,
+        reorderLevel: detail.reorderLevel,
+      });
+    })
+    .filter((line): line is StockCheckLine => line !== null);
+  return stockCheckSummary(lines);
+}
+
 type IssuedOrderScheduling = DispatchSchedulingResult & { failed?: boolean };
 
 async function scheduleIssuedOrder(orderId: number): Promise<IssuedOrderScheduling> {
@@ -288,7 +317,13 @@ export async function POST(request: Request) {
 
       const requestedItemIds = Array.from(new Set(cleanItems.map((item) => item.itemId)));
       const stockRows = await db
-        .select({ id: inventoryItems.id, unitCost: inventoryItems.unitCost })
+        .select({
+          id: inventoryItems.id,
+          unitCost: inventoryItems.unitCost,
+          sku: inventoryItems.sku,
+          name: inventoryItems.name,
+          reorderLevel: inventoryItems.reorderLevel,
+        })
         .from(inventoryItems)
         .where(inArray(inventoryItems.id, requestedItemIds));
       if (stockRows.length !== requestedItemIds.length) {
@@ -308,6 +343,13 @@ export async function POST(request: Request) {
       const preparedItems = await prepareProductionAssignments(allMachines, cleanItems);
       const cleanDefaultSteps = sanitizeProductionRoute(body.defaultSteps);
       const materialTargets: Array<{ materialId: number; machineId: number | null }> = [];
+
+      // Pre-issue stock snapshot (this order's reservation rows don't exist
+      // yet), used for the post-issue "Stock check" alert.
+      const stockSnapshot = await computeAvailability();
+      const stockDetails = new Map(
+        stockRows.map((item) => [item.id, { sku: item.sku, name: item.name, reorderLevel: item.reorderLevel }]),
+      );
 
       const created = await db.transaction(async (tx) => {
         const [newOrder] = await tx.insert(orders).values({
@@ -421,6 +463,11 @@ export async function POST(request: Request) {
       } catch (error) {
         console.warn("Initial material availability status could not be computed:", error);
       }
+      const stockCheck = buildStockCheck(
+        created.productionPlan.items.map((item) => ({ itemId: item.itemId, quantity: item.quantityUsed })),
+        stockDetails,
+        stockSnapshot,
+      );
       logAudit(
         user,
         "order.create",
@@ -435,6 +482,7 @@ export async function POST(request: Request) {
           createdMaterials: created.createdMaterials,
           productionPlan: created.productionPlan,
           dispatchScheduling,
+          stockCheck,
         },
         { status: 201 },
       );
@@ -500,16 +548,25 @@ export async function POST(request: Request) {
     // Optional BOM lines entered on the new-order form. They land in the same
     // orderMaterials table as manual allocations (warehouse board + BOM tab).
     let createdMaterials: { id: number }[] = [];
+    let stockCheck: { warnings: string[]; lines: StockCheckLine[] } = { warnings: [], lines: [] };
     if (Array.isArray(body.bom) && body.bom.length > 0) {
       const lines = (body.bom as any[])
         .map((b) => ({ itemId: Number(b?.itemId), qty: Math.max(1, Number(b?.quantityUsed) || 1) }))
         .filter((b) => Number.isInteger(b.itemId) && b.itemId > 0);
       if (lines.length > 0) {
         const items = await db
-          .select({ id: inventoryItems.id, unitCost: inventoryItems.unitCost })
+          .select({
+            id: inventoryItems.id,
+            unitCost: inventoryItems.unitCost,
+            sku: inventoryItems.sku,
+            name: inventoryItems.name,
+            reorderLevel: inventoryItems.reorderLevel,
+          })
           .from(inventoryItems)
           .where(inArray(inventoryItems.id, lines.map((l) => l.itemId)));
         const costOf = new Map(items.map((i) => [i.id, i.unitCost]));
+        // Pre-issue snapshot for the post-issue "Stock check" alert.
+        const stockSnapshot = await computeAvailability();
         const inserted = await db
           .insert(orderMaterials)
           .values(
@@ -534,6 +591,11 @@ export async function POST(request: Request) {
         for (const row of inserted) {
           setBomStatus(row.id, "Requested", firstMachine);
         }
+        stockCheck = buildStockCheck(
+          lines.map((l) => ({ itemId: l.itemId, quantity: l.qty })),
+          new Map(items.map((i) => [i.id, { sku: i.sku, name: i.name, reorderLevel: i.reorderLevel }])),
+          stockSnapshot,
+        );
       }
     }
 
@@ -566,7 +628,7 @@ export async function POST(request: Request) {
       `${newOrder.orderNumber} created for ${title} · ${dispatchScheduling.planned}/${dispatchScheduling.attempted} Dispatch slot(s) booked`,
       newOrder.id,
     );
-    return NextResponse.json({ ...newOrder, createdMaterials, dispatchScheduling }, { status: 201 });
+    return NextResponse.json({ ...newOrder, createdMaterials, dispatchScheduling, stockCheck }, { status: 201 });
   } catch (error: any) {
     console.error("POST order error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create order" }, { status: 500 });

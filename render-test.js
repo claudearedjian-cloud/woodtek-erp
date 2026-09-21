@@ -1218,6 +1218,22 @@ check(
   "station alerts: beep + browser notification are wired to the fresh-queue detection",
 );
 
+// ---- bundle 36: stock check at order issue ----
+compile("src/lib/stockCheck.ts", "lib/stockCheck.js");
+const sc = require("./compiled/lib/stockCheck.js");
+const scShort = sc.evaluateStockLine({ sku: "MDF-18", name: "MDF 18mm", quantity: 30, stockQuantity: 40, reservedBefore: 15, reorderLevel: 10 });
+check(scShort.status === "short" && scShort.availableBefore === 25 && scShort.message.includes("short by 5"), "stock check: request beyond available-after-other-reservations is short with exact margin");
+check(sc.evaluateStockLine({ sku: "MDF-18", name: "MDF 18mm", quantity: 5, stockQuantity: 12, reservedBefore: 0, reorderLevel: 10 }).status === "below-reorder", "stock check: fulfilling still leaves stock below the reorder point");
+const scOk = sc.evaluateStockLine({ sku: "MDF-18", name: "MDF 18mm", quantity: 2, stockQuantity: 50, reservedBefore: 0, reorderLevel: 10 });
+check(scOk.status === "ok" && scOk.message === null && scOk.availableAfter === 48, "stock check: healthy lines carry no warning and report the post-issue balance");
+const scSummary = sc.stockCheckSummary([scShort, scOk]);
+check(scSummary.warnings.length === 1 && scSummary.warnings[0].startsWith("MDF-18: "), "stock check: summary warnings are SKU-prefixed, one per unhealthy line");
+check(sc.evaluateStockLine({ sku: "MDF-18", name: "MDF 18mm", quantity: 10, stockQuantity: 12, reservedBefore: 0, reorderLevel: 0 }).status === "ok", "stock check: no reorder point set means no below-reorder warning");
+const createRouteSource = fs.readFileSync("src/app/api/orders/route.ts", "utf8");
+const wizardAlertSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
+check(createRouteSource.includes("computeAvailability()") && createRouteSource.includes("stockCheck"), "stock check: order issue evaluates stock from a pre-issue snapshot on both create paths");
+check(wizardAlertSource.includes("Stock check:"), "stock check: the wizard surfaces the stock check in the post-issue alert");
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");

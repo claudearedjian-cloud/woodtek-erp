@@ -647,7 +647,8 @@ export default function NewOrderWizard({
       const scheduling = data?.dispatchScheduling;
       const skippedDetails = Array.isArray(scheduling?.skippedDetails) ? scheduling.skippedDetails : [];
       const dueDateWarnings = Array.isArray(scheduling?.dueDateWarnings) ? scheduling.dueDateWarnings : [];
-      if (skippedDetails.length > 0 || dueDateWarnings.length > 0) {
+      const stockWarnings = Array.isArray(data?.stockCheck?.warnings) ? data.stockCheck.warnings : [];
+      if (skippedDetails.length > 0 || dueDateWarnings.length > 0 || stockWarnings.length > 0) {
         const parts: string[] = [
           `${data.orderNumber || "Order"} was issued and ${Number(scheduling?.planned) || 0}/${Number(scheduling?.attempted) || totalJobs} operation slots were booked automatically.`,
         ];
@@ -656,6 +657,9 @@ export default function NewOrderWizard({
         }
         if (dueDateWarnings.length > 0) {
           parts.push(`Due-date check:\n• ${dueDateWarnings.slice(0, 5).join("\n• ")}`);
+        }
+        if (stockWarnings.length > 0) {
+          parts.push(`Stock check:\n• ${stockWarnings.slice(0, 5).join("\n• ")}`);
         }
         window.alert(parts.join("\n\n"));
       }
