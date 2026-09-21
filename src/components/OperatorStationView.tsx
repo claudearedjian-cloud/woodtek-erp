@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import { allowedStages } from "@/lib/materialProgress";
 import { jobLockedByOther } from "@/lib/jobLock";
 import { reconcileStationSelection } from "@/lib/stationAssignment";
+import { newStationJobRows, stationAlertBody, stationAlertTitle } from "@/lib/stationAlerts";
 import {
   Tablet,
   Play,
@@ -20,6 +21,7 @@ import {
   Timer,
   X,
   BellRing,
+  BellOff,
   Star,
   Zap,
   Trash2,
@@ -203,6 +205,66 @@ export default function OperatorStationView({
   const actionInFlight = useRef(false);
   const newJobTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [newJobFlash, setNewJobFlash] = useState(false);
+
+  // New-job alerts: a short beep + an OS-level browser notification when a
+  // fresh job lands on this station (the amber flash above stays the
+  // in-screen cue). Persists per browser; initial queue never triggers it.
+  const [alertsEnabled, setAlertsEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem("woodtek.station.alerts") !== "0"; } catch { return true; }
+  });
+  const alertsEnabledRef = useRef(alertsEnabled);
+  useEffect(() => { alertsEnabledRef.current = alertsEnabled; }, [alertsEnabled]);
+  const [notifPermission, setNotifPermission] = useState<string>(() =>
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported",
+  );
+  const playAlertBeep = useCallback(() => {
+    try {
+      const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctor) return;
+      const ctx = new Ctor();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+      osc.onended = () => { ctx.close().catch(() => {}); };
+    } catch {
+      /* audio unavailable (autoplay policy) — flash + notification still work */
+    }
+  }, []);
+  const announceNewJobs = useCallback((rows: any[]) => {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      const list = rows
+        .map((op: any) => ({ id: Number(op.id), orderNumber: op.orderNumber, operationName: op.operationName }))
+        .slice(0, 4);
+      new Notification(stationAlertTitle(list.length), {
+        body: stationAlertBody(list),
+        tag: "woodtek-new-job",
+      });
+    } catch {
+      /* notifications unavailable in this browser */
+    }
+  }, []);
+  const toggleAlerts = () => {
+    setAlertsEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("woodtek.station.alerts", next ? "1" : "0"); } catch { /* private mode */ }
+      return next;
+    });
+  };
+  const requestNotifPermission = useCallback(async () => {
+    try {
+      if (typeof Notification === "undefined") return;
+      const perm = await Notification.requestPermission();
+      setNotifPermission(perm);
+    } catch { /* ignore */ }
+  }, []);
   const [scanValue, setScanValue] = useState("");
   const [scannedOpId, setScannedOpId] = useState<number | null>(null);
 
@@ -320,12 +382,16 @@ export default function OperatorStationView({
 
       const previousIds = knownOpIds.current;
       const ids = new Set<number>(rows.map((operation: any) => Number(operation.id)));
-      const fresh = previousIds.size > 0 && rows.some((operation: any) => !previousIds.has(Number(operation.id)));
+      const freshRows = newStationJobRows(previousIds, rows);
       knownOpIds.current = ids;
-      if (fresh) {
+      if (freshRows.length > 0) {
         setNewJobFlash(true);
         if (newJobTimer.current) clearTimeout(newJobTimer.current);
         newJobTimer.current = setTimeout(() => setNewJobFlash(false), 5000);
+        if (alertsEnabledRef.current) {
+          playAlertBeep();
+          announceNewJobs(freshRows);
+        }
       }
 
       const byOrder: Record<number, any[]> = {};
@@ -720,6 +786,36 @@ export default function OperatorStationView({
             <BellRing className="w-5 h-5" /> NEW JOB ARRIVED AT THIS STATION — check the queue below.
           </div>
         )}
+
+        {/* New-job alerts: beep + browser notification toggle */}
+        <div className="mt-3 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={toggleAlerts}
+            title={alertsEnabled ? "Turn off new-job alerts (sound + notification)" : "Turn on new-job alerts"}
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wider transition ${
+              alertsEnabled
+                ? "border-amber-500/60 bg-amber-500/15 text-amber-300"
+                : "border-slate-700 bg-slate-900 text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            {alertsEnabled ? <BellRing className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+            {alertsEnabled ? "Alerts on" : "Alerts off"}
+          </button>
+          {alertsEnabled && notifPermission === "default" && (
+            <button
+              type="button"
+              onClick={() => void requestNotifPermission()}
+              title="Allow this site to send notifications (the beep works either way)"
+              className="rounded-full border border-sky-500/50 bg-sky-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-sky-300 hover:bg-sky-500/20"
+            >
+              Enable browser alerts
+            </button>
+          )}
+          {alertsEnabled && notifPermission === "denied" && (
+            <span className="text-[10px] font-bold text-slate-500">Browser alerts blocked — allow notifications for this site to get OS pop-ups (beep stays on).</span>
+          )}
+        </div>
 
         {/* Tactile Station Buttons Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3 pt-6">

@@ -1203,6 +1203,21 @@ check(
   "nightly backup: installer registers the daily scheduled task and runs a first backup",
 );
 
+// ---- bundle 35: station new-job alerts (beep + browser notification) ----
+compile("src/lib/stationAlerts.ts", "lib/stationAlerts.js");
+const sa = require("./compiled/lib/stationAlerts.js");
+check(sa.newStationJobRows(new Set(), [{ id: 1, orderNumber: "PO-1", operationName: "Cut" }]).length === 0, "station alerts: the initial queue is never announced");
+check(sa.newStationJobRows(new Set([1, 2]), [{ id: 1 }, { id: 2 }, { id: 3, orderNumber: "PO-2", operationName: "Edge" }]).map((r) => r.id).join(",") === "3", "station alerts: only rows new since the previous poll are announced");
+check(sa.stationAlertTitle(1) === "WoodTek — 1 new job" && sa.stationAlertTitle(2) === "WoodTek — 2 new jobs", "station alerts: title singular/plural");
+check(sa.stationAlertBody([{ id: 3, orderNumber: "PO-2", operationName: "Edge" }]) === "PO-2 · Edge", "station alerts: one body line per fresh job");
+const stationAlertSource = fs.readFileSync("src/components/OperatorStationView.tsx", "utf8");
+check(
+  stationAlertSource.includes("playAlertBeep()") &&
+    stationAlertSource.includes("announceNewJobs(freshRows)") &&
+    stationAlertSource.includes("Notification.requestPermission()"),
+  "station alerts: beep + browser notification are wired to the fresh-queue detection",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");
