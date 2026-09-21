@@ -1191,6 +1191,18 @@ check(ddfServerSource.includes("evaluateDueDateFit(") && ddfServerSource.include
 check(ddfWizardSource.includes("Due-date check:"), "due-date fit: order issue surfaces the due-date warning to the user");
 check(ddfScheduleSource.includes("Due-date risk") && ddfScheduleSource.includes("evaluateDueDateFit("), "due-date fit: the Dispatch board shows a live due-date risk panel");
 
+// ---- bundle 34: automated nightly backup (Postgres + JSON overlay) ----
+const backupScriptSource = fs.readFileSync("backup/backup-woodtek.ps1", "utf8");
+const backupInstallerSource = fs.readFileSync("backup/install-backup-task.bat", "utf8");
+check(
+  backupScriptSource.includes("pg_dump") && backupScriptSource.includes("RetentionDays") && backupScriptSource.includes("Compress-Archive") && backupScriptSource.includes("DATABASE_URL"),
+  "nightly backup: script dumps Postgres, zips the data overlay and applies retention",
+);
+check(
+  backupInstallerSource.includes('schtasks /Create /F /TN "WoodTek Nightly Backup"') && backupInstallerSource.includes("/SC DAILY"),
+  "nightly backup: installer registers the daily scheduled task and runs a first backup",
+);
+
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
 check(pt.reconcileProjectType(["Kitchen", "Wardrobe"], "wardrobe") === "Wardrobe", "project types: valid selection follows saved casing");
