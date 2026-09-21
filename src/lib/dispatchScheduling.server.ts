@@ -15,6 +15,7 @@ import {
   DISPATCH_PLAN_STATUSES,
   type DispatchSlotPlacement,
 } from "@/lib/dispatchScheduling";
+import { evaluateDueDateFit, formatOverrun } from "@/lib/dueDateFit";
 import { readProductionPlanStore, updateProductionStepMachine } from "@/lib/productionPlan.server";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 
@@ -23,6 +24,8 @@ export interface DispatchSchedulingResult {
   planned: number;
   skipped: number;
   skippedDetails: string[];
+  /** Due-date fit warnings for the scheduled orders (issue-time check). */
+  dueDateWarnings: string[];
   placements: Array<{
     operationId: number;
     machineId: number;
@@ -53,14 +56,14 @@ export async function autoScheduleDispatchSlots(options: {
 } = {}): Promise<DispatchSchedulingResult> {
   const targetOrderIds = validTargetIds(options.orderIds);
   if (targetOrderIds && targetOrderIds.length === 0) {
-    return { attempted: 0, planned: 0, skipped: 0, skippedDetails: [], placements: [] };
+    return { attempted: 0, planned: 0, skipped: 0, skippedDetails: [], dueDateWarnings: [], placements: [] };
   }
 
   const transactionResult = await db.transaction(async (tx) => {
     await lockDispatchSchedule(tx);
     const [allOperations, orderRows, machineRows] = await Promise.all([
       tx.select().from(orderOperations),
-      tx.select({ id: orders.id, priority: orders.priority, dueDate: orders.dueDate }).from(orders),
+      tx.select({ id: orders.id, orderNumber: orders.orderNumber, priority: orders.priority, dueDate: orders.dueDate }).from(orders),
       tx.select().from(machines),
     ]);
 
@@ -151,6 +154,46 @@ export async function autoScheduleDispatchSlots(options: {
       else raceSkips.push(`${placement.operationName}: operation changed while its slot was being booked`);
     }
 
+    // Due-date fit for the scheduled orders only (issue-time check): warn when
+    // the EARLIEST possible finish already crosses the due date, or when
+    // passes are still unscheduled and the date therefore cannot be confirmed.
+    const dueDateWarnings: string[] = [];
+    if (targetOrderIds) {
+      const placementsByOp = new Map(plan.placements.map((p) => [p.operationId, p.endMs]));
+      const dateFmt = (value: Date | number) =>
+        new Date(value).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+      const scope = new Set(targetOrderIds);
+      for (const order of orderRows) {
+        if (!scope.has(order.id)) continue;
+        const due = order.dueDate ? new Date(order.dueDate) : null;
+        if (!due || Number.isNaN(due.getTime())) continue;
+        const orderOps = operationsByOrder.get(order.id) ?? [];
+        if (orderOps.length === 0) continue;
+        const fit = evaluateDueDateFit(
+          due,
+          orderOps.map((op) => ({
+            status: op.status,
+            scheduledEnd: placementsByOp.has(op.id)
+              ? new Date(placementsByOp.get(op.id)!)
+              : op.scheduledEnd,
+            endTime: op.endTime,
+          })),
+          Date.now(),
+        );
+        const label = order.orderNumber || `Order #${order.id}`;
+        if (fit.fits === false && fit.overrunMs !== null && fit.plannedFinishMs !== null) {
+          dueDateWarnings.push(
+            `${label}: planned finish ${dateFmt(fit.plannedFinishMs)} is ${formatOverrun(fit.overrunMs)} past the due date ${dateFmt(due)} — earliest possible given current machine availability`,
+          );
+        } else if (fit.fits === null && fit.unscheduledCount > 0) {
+          dueDateWarnings.push(
+            `${label}: ${fit.unscheduledCount} pass(es) still unscheduled — the ${dateFmt(due)} due date cannot be confirmed yet`,
+          );
+        }
+        if (dueDateWarnings.length >= 12) break;
+      }
+    }
+
     return {
       attempted: plan.attempted,
       persisted,
@@ -159,6 +202,7 @@ export async function autoScheduleDispatchSlots(options: {
         ...plan.skipped.map((entry) => `${entry.operationName}: ${entry.reason}`),
         ...raceSkips,
       ],
+      dueDateWarnings,
     };
   });
 
@@ -192,6 +236,7 @@ export async function autoScheduleDispatchSlots(options: {
     planned: transactionResult.persisted.length,
     skipped: transactionResult.skippedDetails.length,
     skippedDetails: transactionResult.skippedDetails.slice(0, 12),
+    dueDateWarnings: transactionResult.dueDateWarnings.slice(0, 12),
     placements: transactionResult.persisted.map((placement) => ({
       operationId: placement.operationId,
       machineId: placement.machineId,

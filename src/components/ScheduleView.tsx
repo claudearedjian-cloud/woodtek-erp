@@ -29,6 +29,7 @@ import {
   isServiceFlow,
   nextStage,
 } from "@/lib/dispatch";
+import { evaluateDueDateFit, formatOverrun, type DueDateFitResult } from "@/lib/dueDateFit";
 import { checklistComplete, checklistProgress, templateGates } from "@/lib/packingQc";
 
 interface ScheduleViewProps {
@@ -480,6 +481,29 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     });
   }, [operations, searchQuery]);
 
+  // Due-date risk: live fit evaluation per open order (scheduled ends, actual
+  // ends of completed passes and in-flight work all count; waiting passes
+  // without a slot keep the order "cannot confirm").
+  const dueDateRisks = useMemo(() => {
+    const opsByOrder = new Map<number, any[]>();
+    for (const operation of operations) {
+      const list = opsByOrder.get(operation.orderId) ?? [];
+      list.push(operation);
+      opsByOrder.set(operation.orderId, list);
+    }
+    const risks: Array<{ order: any; fit: DueDateFitResult }> = [];
+    for (const order of dispatchOrders) {
+      if (order.status === "Delivered" || order.status === "Cancelled") continue;
+      const fit = evaluateDueDateFit(order.dueDate, opsByOrder.get(order.id) ?? []);
+      if (!fit.hasDueDate) continue;
+      if (fit.fits === false || (fit.fits === null && fit.unscheduledCount > 0)) {
+        risks.push({ order, fit });
+      }
+    }
+    risks.sort((a, b) => (b.fit.overrunMs ?? -1) - (a.fit.overrunMs ?? -1));
+    return risks;
+  }, [operations, dispatchOrders]);
+
   const unscheduled = visibleOperations.filter(operation => !operation.scheduledStart || !operation.scheduledEnd);
   const scheduled = visibleOperations.filter(operation => Boolean(operation.scheduledStart && operation.scheduledEnd));
   const visibleDayKeys = new Set(days.map((day) => day.key));
@@ -864,7 +888,8 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
-        <section className="h-fit rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm xl:sticky xl:top-24">
+        <div className="h-fit space-y-6 xl:sticky xl:top-24">
+        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-sm font-black text-white"><ListFilter className="h-4 w-4 text-amber-400" /> Automatic slot exceptions</h2>
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-black text-amber-300">{unscheduled.length}</span>
@@ -899,6 +924,48 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           )}
           {!canSchedule && <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] leading-relaxed text-slate-400">Read-only view. Manager and Sales Coordinator roles can create or change dispatch appointments.</p>}
         </section>
+
+        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-sm font-black text-white"><CalendarDays className="h-4 w-4 text-rose-400" /> Due-date risk</h2>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${dueDateRisks.length ? "bg-rose-500/15 text-rose-300" : "bg-emerald-500/15 text-emerald-300"}`}>{dueDateRisks.length}</span>
+          </div>
+          {dueDateRisks.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-emerald-500/30 bg-emerald-500/5 p-5 text-center text-xs text-emerald-200">
+              <CheckCircle2 className="mx-auto mb-2 h-7 w-7 text-emerald-400" />
+              {dispatchOrders.some(o => o.status !== "Delivered" && o.status !== "Cancelled")
+                ? "Every open order fits its due date."
+                : "No open orders to check."}
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {dueDateRisks.map(({ order, fit }) => (
+                <div key={order.id} className={`rounded-xl border p-3 ${fit.fits === false ? "border-rose-500/40 bg-rose-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+                  <div className="truncate text-xs font-black text-white">
+                    {order.orderNumber} <span className="font-semibold text-slate-400">· {order.title}</span>
+                  </div>
+                  <div className={`mt-1 text-[11px] font-bold leading-snug ${fit.fits === false ? "text-rose-300" : "text-amber-300"}`}>
+                    {fit.fits === false && fit.overrunMs !== null && fit.plannedFinishMs !== null ? (
+                      <>
+                        Planned finish {new Date(fit.plannedFinishMs).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} is {formatOverrun(fit.overrunMs)} past the due date {new Date(fit.dueMs!).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}.
+                      </>
+                    ) : (
+                      <>
+                        {fit.unscheduledCount} pass{fit.unscheduledCount === 1 ? "" : "es"} still unscheduled — the {new Date(fit.dueMs!).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })} due date cannot be confirmed yet.
+                      </>
+                    )}
+                  </div>
+                  {fit.fits === false && (
+                    <div className="mt-1.5 text-[10px] leading-snug text-slate-400">
+                      This is the earliest the work can finish with the current machine load — free a station and Auto-plan, or move the due date.
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+        </div>
 
         <section className="min-w-0">
           <div className="mb-3 flex items-center justify-between px-1">

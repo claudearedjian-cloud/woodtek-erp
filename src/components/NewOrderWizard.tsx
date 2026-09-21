@@ -645,13 +645,19 @@ export default function NewOrderWizard({
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "The production order could not be created.");
       const scheduling = data?.dispatchScheduling;
-      if (Number(scheduling?.skipped) > 0) {
-        const details = Array.isArray(scheduling.skippedDetails)
-          ? scheduling.skippedDetails.slice(0, 5).join("\n• ")
-          : "Check machine availability in Dispatch.";
-        window.alert(
-          `${data.orderNumber || "Order"} was issued and ${Number(scheduling.planned) || 0}/${Number(scheduling.attempted) || totalJobs} operation slots were booked automatically.\n\nStill needs attention:\n• ${details}`,
-        );
+      const skippedDetails = Array.isArray(scheduling?.skippedDetails) ? scheduling.skippedDetails : [];
+      const dueDateWarnings = Array.isArray(scheduling?.dueDateWarnings) ? scheduling.dueDateWarnings : [];
+      if (skippedDetails.length > 0 || dueDateWarnings.length > 0) {
+        const parts: string[] = [
+          `${data.orderNumber || "Order"} was issued and ${Number(scheduling?.planned) || 0}/${Number(scheduling?.attempted) || totalJobs} operation slots were booked automatically.`,
+        ];
+        if (skippedDetails.length > 0) {
+          parts.push(`Still needs attention:\n• ${skippedDetails.slice(0, 5).join("\n• ")}`);
+        }
+        if (dueDateWarnings.length > 0) {
+          parts.push(`Due-date check:\n• ${dueDateWarnings.slice(0, 5).join("\n• ")}`);
+        }
+        window.alert(parts.join("\n\n"));
       }
       reset();
       onClose();

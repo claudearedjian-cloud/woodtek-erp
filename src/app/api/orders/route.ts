@@ -212,6 +212,7 @@ async function scheduleIssuedOrder(orderId: number): Promise<IssuedOrderScheduli
       planned: 0,
       skipped: 1,
       skippedDetails: ["Automatic slot booking failed. Open Dispatch and use Auto-plan after checking machine availability."],
+      dueDateWarnings: [],
       placements: [],
       failed: true,
     };

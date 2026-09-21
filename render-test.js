@@ -25,6 +25,7 @@ function compile(file, outName) {
 
 compile("src/lib/moduleAccess.ts", "lib/moduleAccess.js");
 compile("src/lib/productionReport.ts", "lib/productionReport.js");
+compile("src/lib/dueDateFit.ts", "lib/dueDateFit.js");
 compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
@@ -1160,6 +1161,35 @@ const prYesterday = pr.buildProductionReport({ ops: prOps, machines: prMachines,
 check(prYesterday.kpis.completed === 1 && prYesterday.kpis.overdue === 0 && prYesterday.kpis.onTimeRate === 1, "production report: period windowing keeps jobs in their own day");
 const prEmpty = pr.buildProductionReport({ ops: [], machines: prMachines, range: "today", now: now32 });
 check(prEmpty.kpis.planCoverage === null && prEmpty.kpis.onTimeRate === null && prEmpty.machines.length === 3, "production report: no work yields null rates and the full roster of zeros");
+
+// ---- bundle 33: due-date fit detection (issue-time + Dispatch panel) ----
+const ddf = require("./compiled/lib/dueDateFit.js");
+const ddfNow = new Date(2026, 8, 18, 12, 0, 0).getTime();
+const ddfDue = new Date(2026, 8, 25, 17, 0, 0);
+const ddfFits = (ops) => ddf.evaluateDueDateFit(ddfDue, ops, ddfNow);
+check(ddfFits([
+  { status: "Completed", scheduledEnd: null, endTime: new Date(2026, 8, 18, 10, 0, 0) },
+  { status: "Ready", scheduledEnd: new Date(2026, 8, 24, 15, 0, 0), endTime: null },
+]).fits === true, "due-date fit: known work finishing before the due date fits");
+const ddfOverrun = ddfFits([{ status: "Ready", scheduledEnd: new Date(2026, 8, 26, 15, 0, 0), endTime: null }]);
+check(ddfOverrun.fits === false && ddfOverrun.overrunMs === 22 * 3600 * 1000, "due-date fit: a scheduled end past the due date is an overrun with the exact margin");
+check(ddfFits([{ status: "Pending", scheduledEnd: null, endTime: null }]).fits === null, "due-date fit: waiting passes without a slot make the date unconfirmable");
+check(ddfFits([
+  { status: "Ready", scheduledEnd: new Date(2026, 8, 26, 9, 0, 0), endTime: null },
+  { status: "Pending", scheduledEnd: null, endTime: null },
+]).fits === false, "due-date fit: a known overrun stays definite even with unscheduled passes left");
+const ddfLate = ddfFits([{ status: "Completed", scheduledEnd: null, endTime: new Date(2026, 8, 26, 8, 0, 0) }]);
+check(ddfLate.fits === false && ddfLate.hasCompletedLate === true, "due-date fit: work already finished late is an overrun");
+const ddfInFlight = ddfFits([{ status: "In Progress", scheduledEnd: null, endTime: null }]);
+check(ddfInFlight.fits === true && ddfInFlight.hasInFlight === true, "due-date fit: in-flight work is assumed to finish after now and can still fit");
+check(ddf.formatOverrun(76 * 3600 * 1000) === "3d 4h" && ddf.formatOverrun(260 * 60 * 1000) === "4h 20m" && ddf.formatOverrun(25 * 60 * 1000) === "25m", "due-date fit: human overrun formatting");
+check(ddf.evaluateDueDateFit(null, [{ status: "Pending", scheduledEnd: null, endTime: null }], ddfNow).hasDueDate === false, "due-date fit: a missing due date is not a risk");
+const ddfServerSource = fs.readFileSync("src/lib/dispatchScheduling.server.ts", "utf8");
+const ddfWizardSource = fs.readFileSync("src/components/NewOrderWizard.tsx", "utf8");
+const ddfScheduleSource = fs.readFileSync("src/components/ScheduleView.tsx", "utf8");
+check(ddfServerSource.includes("evaluateDueDateFit(") && ddfServerSource.includes("dueDateWarnings"), "due-date fit: the planner reports due-date warnings at issue time");
+check(ddfWizardSource.includes("Due-date check:"), "due-date fit: order issue surfaces the due-date warning to the user");
+check(ddfScheduleSource.includes("Due-date risk") && ddfScheduleSource.includes("evaluateDueDateFit("), "due-date fit: the Dispatch board shows a live due-date risk panel");
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
