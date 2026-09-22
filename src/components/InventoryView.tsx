@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2, Pencil } from "lucide-react";
+import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2, Pencil, Database } from "lucide-react";
 import { can } from "@/lib/permissions";
 import type { InventoryImportValidation } from "@/lib/inventoryImport";
 import { isPanelCategory, validateDimensions } from "@/lib/inventoryDimensions";
@@ -46,6 +46,13 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const [schemaTables, setSchemaTables] = useState<Array<{
+    table: string; expected: string[]; actual: string[];
+    missing: string[]; unexpected: string[]; foreignKeys: Array<{ conname: string; def: string }>;
+  }>>([]);
+  const [schemaBusy, setSchemaBusy] = useState(false);
+  const [schemaMessage, setSchemaMessage] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -161,6 +168,51 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
     } catch (err) {
       console.error("Save inventory error", err);
       alert(err instanceof Error && err.message !== "Failed to create item" ? err.message : "Error saving item.");
+    }
+  };
+
+  // ---- live schema check & repair (Manager) ----
+  const runSchemaCheck = async () => {
+    try {
+      const res = await fetch("/api/inventory/schema-check", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Schema check failed");
+      setSchemaTables(data.tables ?? []);
+    } catch (err) {
+      setSchemaMessage(err instanceof Error ? err.message : "Schema check failed");
+    }
+  };
+
+  const openSchemaCheck = async () => {
+    setSchemaOpen(true);
+    setSchemaTables([]);
+    setSchemaMessage("Checking live database…");
+    setSchemaBusy(true);
+    try {
+      await runSchemaCheck();
+    } finally {
+      setSchemaBusy(false);
+      setSchemaMessage("");
+    }
+  };
+
+  const runSchemaRepair = async () => {
+    setSchemaBusy(true);
+    setSchemaMessage("Repairing…");
+    try {
+      const res = await fetch("/api/inventory/schema-check", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Schema repair failed");
+      setSchemaTables(data.after ?? []);
+      setSchemaMessage(
+        data.applied?.length
+          ? `Applied ${data.applied.length} statement(s):\n${data.applied.join("\n")}`
+          : "Nothing to repair — all expected columns exist.",
+      );
+    } catch (err) {
+      setSchemaMessage(err instanceof Error ? err.message : "Schema repair failed");
+    } finally {
+      setSchemaBusy(false);
     }
   };
 
@@ -430,6 +482,13 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 className="flex items-center gap-1.5 rounded-xl border border-rose-900/70 bg-rose-950/40 px-3 py-1 text-xs font-bold text-rose-300 transition hover:border-rose-600 hover:bg-rose-900/40"
               >
                 <Trash2 className="h-3.5 w-3.5" /> Delete All
+              </button>
+              <button
+                onClick={openSchemaCheck}
+                title="Compare the live database tables with what the app expects, and add any missing columns"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-1 text-xs font-bold text-slate-300 transition hover:border-sky-500/60 hover:text-sky-300"
+              >
+                <Database className="h-3.5 w-3.5" /> Schema Check
               </button>
             </>
           )}
@@ -1017,6 +1076,73 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               >
                 {deleteBusy ? "Deleting…" : "Delete Item"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Database schema check & repair (Manager) */}
+      {schemaOpen && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Database Schema Check</h3>
+              <button onClick={() => setSchemaOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-400">
+              Compares the live stock tables with the columns the app expects. Repair only
+              <span className="font-bold text-slate-200"> adds missing columns</span> (nothing is dropped or
+              altered) — use it when deletes fail with “column … does not exist”.
+            </p>
+            {schemaBusy && (
+              <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] font-bold text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin text-sky-400" /> Working…
+              </div>
+            )}
+            {schemaTables.map((t) => (
+              <div key={t.table} className={`rounded-xl border p-3 ${t.missing.length ? "border-rose-500/40 bg-rose-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-white">{t.table}</span>
+                  {t.missing.length ? (
+                    <span className="text-[10px] font-black uppercase text-rose-300">{t.missing.length} missing</span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-black uppercase text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" /> OK
+                    </span>
+                  )}
+                </div>
+                {t.missing.length > 0 && (
+                  <p className="mt-1 font-mono text-[11px] text-rose-300">missing: {t.missing.join(", ")}</p>
+                )}
+                {t.unexpected.length > 0 && (
+                  <p className="mt-1 font-mono text-[11px] text-amber-300/90">extra (left untouched): {t.unexpected.join(", ")}</p>
+                )}
+                {t.foreignKeys.length > 0 && (
+                  <p className="mt-1 font-mono text-[10px] leading-relaxed text-slate-500">
+                    {t.foreignKeys.map((f) => `${f.conname}: ${f.def}`).join(" | ")}
+                  </p>
+                )}
+              </div>
+            ))}
+            {schemaMessage && (
+              <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-sky-300">{schemaMessage}</p>
+            )}
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+              <button type="button" onClick={() => setSchemaOpen(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">
+                Close
+              </button>
+              {schemaTables.some((t) => t.missing.length > 0) && (
+                <button
+                  type="button"
+                  onClick={() => void runSchemaRepair()}
+                  disabled={schemaBusy}
+                  className="px-5 py-2 bg-sky-600 text-white font-black text-xs rounded-xl shadow hover:bg-sky-500 disabled:opacity-40"
+                >
+                  {schemaBusy ? "Working…" : "Add Missing Columns"}
+                </button>
+              )}
             </div>
           </div>
         </div>

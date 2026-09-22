@@ -1331,6 +1331,28 @@ check(
 );
 const invAllRoute40e = fs.readFileSync("src/app/api/inventory/all/route.ts", "utf8");
 check(invAllRoute40e.includes("causeMessage"), "delete-all: root-cause DB error surfaced (Bundle 40e)");
+
+// ---- bundle 40f: live schema check & repair for the stock tables ----
+const schemaLib = fs.readFileSync("src/lib/inventorySchemaCheck.server.ts", "utf8");
+check(
+  schemaLib.includes("ADD COLUMN IF NOT EXISTS") &&
+    schemaLib.includes("information_schema.columns") &&
+    schemaLib.includes("material_consumptions"),
+  "schema check: compares live stock tables to expected columns; repair only adds missing columns",
+);
+const schemaRouteSource = fs.readFileSync("src/app/api/inventory/schema-check/route.ts", "utf8");
+check(
+  schemaRouteSource.includes('authorize("users:manage")') &&
+    schemaRouteSource.includes("repairInventorySchema()"),
+  "schema check: Manager-only endpoint with GET check + POST repair",
+);
+const invView40f = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(
+  invView40f.includes("Schema Check") &&
+    invView40f.includes("/api/inventory/schema-check") &&
+    invView40f.includes("Add Missing Columns"),
+  "schema check: Manager-only dialog on the stock screen with one-click repair",
+);
 const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
   invView40d.includes("setConfirmDelete(") &&
