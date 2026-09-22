@@ -215,12 +215,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     // If the caller is trying to mark the order as Completed, run the
-    // material-consumption flow first (in the same transaction).
+    // material-consumption flow first. The ledger (stock + allocations) is
+    // committed automatically; only a broken audit table can degrade this
+    // into a warning, never into a failed completion.
+    let completionWarning: string | undefined;
     if (body.status === "Completed") {
       const { consumeMaterialsForOrder } = await import("@/lib/materials");
-      await consumeMaterialsForOrder(orderId, user.id, {
+      const consumeResult = await consumeMaterialsForOrder(orderId, user.id, {
         notes: "Order marked Completed",
       });
+      if (consumeResult.auditError) {
+        completionWarning = `Order completed and stock consumed, but the consumption audit could not be recorded: ${consumeResult.auditError}. Fix it with Wood & Edge Stock -> Schema Check -> Add Missing Columns.`;
+      }
     }
 
     // If the order is being put On Hold or some other inactive state,
@@ -250,7 +256,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     } else if (Object.keys(updateFields).length > 0) {
       logAudit(user, "order.edit", "order", `${updatedOrder.orderNumber}: edited (${Object.keys(updateFields).join(", ")})`, orderId);
     }
-    return NextResponse.json(updatedOrder);
+    return NextResponse.json(completionWarning ? { ...updatedOrder, warning: completionWarning } : updatedOrder);
   } catch (error: any) {
     console.error("PATCH order error:", error);
     const detail = error?.cause?.message || error?.message || "Failed to update order";

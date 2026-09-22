@@ -1369,8 +1369,24 @@ check(
   owd40g.includes("retryConsumeMaterials") &&
     owd40g.includes("Run consumption now") &&
     owd40g.includes('order.status !== "On Hold"') &&
-    owd40g.includes("materials.length > 0"),
-  "orders: re-consume button shows on any order with allocated unconsumed materials (incl. orders stuck before Completed)",
+    owd40g.includes("materials.length > 0") &&
+    owd40g.includes("actionWarning") &&
+    owd40g.includes("result.warning"),
+  "orders: re-consume button + amber warning banner for degraded completions",
+);
+
+// ---- bundle 40i: automatic completion must never be blocked by the audit table ----
+const materials40i = fs.readFileSync("src/lib/materials.ts", "utf8");
+check(
+  materials40i.includes("Phase 1") &&
+    materials40i.includes("Phase 2") &&
+    materials40i.includes("auditError"),
+  "consume: ledger commits first, audit write is best-effort (two phases) so completion stays automatic",
+);
+check(
+  ordersIdRoute40g.includes("completionWarning") &&
+    ordersIdRoute40g.includes("warning: completionWarning"),
+  "order PATCH: degraded completion returns 200 with a warning instead of failing",
 );
 const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(

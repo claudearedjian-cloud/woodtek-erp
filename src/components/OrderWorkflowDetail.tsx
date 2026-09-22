@@ -57,6 +57,7 @@ export default function OrderWorkflowDetail({
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState("");
+  const [actionWarning, setActionWarning] = useState("");
   // Per-material production stage: where each BOM line is right now
   // ("" = not started, a step name from this order, or DONE).
   const [matProgress, setMatProgress] = useState<Record<string, { stage: string; at: string; by: string }>>({});
@@ -517,6 +518,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
   const handleOrderStatusChange = async (newStatus: string) => {
     if (!newStatus || newStatus === order.status) return;
     setActionError("");
+    setActionWarning("");
     try {
       const response = await fetch(`/api/orders/${orderId}`, {
         method: "PATCH",
@@ -525,6 +527,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `Unable to set status to "${newStatus}".`);
+      if (result.warning) setActionWarning(result.warning);
       await fetchOrderDetail();
       onRefresh();
     } catch (error) {
@@ -811,6 +814,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
           </div>
         )}
       </div>
+
+      {actionWarning && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/50 bg-amber-500/10 p-4 text-sm font-bold text-amber-200" role="alert">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />{actionWarning}</span>
+          <button onClick={() => setActionWarning("")} className="rounded-lg px-2 py-1 text-xs text-amber-300 hover:bg-amber-500/20">Dismiss</button>
+        </div>
+      )}
 
       {actionError && (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-rose-500/50 bg-rose-500/10 p-4 text-sm font-bold text-rose-200" role="alert">

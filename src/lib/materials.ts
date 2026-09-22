@@ -168,6 +168,8 @@ export async function applyMaterialsStatus(orderId: number): Promise<MaterialsSt
 
 // -------------------------------------------------------------------- lifecycle
 
+// -------------------------------------------------------------------- lifecycle
+
 /**
  * Consume materials for an order that is being marked Completed.
  * For every non-released, non-consumed allocation:
@@ -176,14 +178,23 @@ export async function applyMaterialsStatus(orderId: number): Promise<MaterialsSt
  *   3. Write a row to material_consumptions (audit trail)
  *   4. Mark the order's materialsStatus as 'consumed'
  *
- * Runs inside a single transaction. If any step fails, everything rolls back.
+ * TWO PHASES: the ledger (stock + allocations + order status) commits first
+ * and is business-critical; the audit write is best-effort in its own
+ * transaction. A drifted material_consumptions table (old build) must be
+ * able to break the audit row only - never the completion itself. When the
+ * audit fails, `auditError` carries the root cause for the UI to surface.
  */
 export async function consumeMaterialsForOrder(
   orderId: number,
   consumedByUserId: number | null,
   options: { operationId?: number; notes?: string } = {}
-): Promise<{ consumed: number; totalUnits: number }> {
-  return db.transaction(async (tx) => {
+): Promise<{ consumed: number; totalUnits: number; auditError?: string }> {
+  let consumed = 0;
+  let totalUnits = 0;
+  const consumedAllocs: Array<{ itemId: number; quantityUsed: number }> = [];
+
+  // Phase 1 - ledger (business-critical), committed on its own.
+  await db.transaction(async (tx) => {
     const allocs = await tx
       .select()
       .from(orderMaterials)
@@ -195,7 +206,6 @@ export async function consumeMaterialsForOrder(
         ),
       );
 
-    let totalUnits = 0;
     for (const a of allocs) {
       totalUnits += a.quantityUsed;
       // 1. Decrement stock
@@ -210,18 +220,10 @@ export async function consumeMaterialsForOrder(
         .update(orderMaterials)
         .set({ consumed: true, consumedAt: new Date() })
         .where(eq(orderMaterials.id, a.id));
-      // 3. Audit log
-      await tx.insert(materialConsumptions).values({
-        orderId,
-        itemId: a.itemId,
-        quantity: a.quantityUsed,
-        consumedBy: consumedByUserId ?? null,
-        operationId: options.operationId ?? null,
-        notes: options.notes ?? null,
-      });
+      consumedAllocs.push({ itemId: a.itemId, quantityUsed: a.quantityUsed });
     }
 
-    // 4. Mark the order as fully consumed (only when there were allocations;
+    // 3. Mark the order as fully consumed (only when there were allocations;
     //    an order with no materials keeps its previous status)
     if (allocs.length > 0) {
       await tx
@@ -229,9 +231,34 @@ export async function consumeMaterialsForOrder(
         .set({ materialsStatus: "consumed" })
         .where(eq(orders.id, orderId));
     }
-
-    return { consumed: allocs.length, totalUnits };
+    consumed = allocs.length;
   });
+
+  // Phase 2 - audit (best-effort). Must not undo phase 1 when the live
+  // material_consumptions table is out of sync with the app schema.
+  let auditError: string | undefined;
+  if (consumedAllocs.length > 0) {
+    try {
+      await db.transaction(async (tx) => {
+        for (const a of consumedAllocs) {
+          await tx.insert(materialConsumptions).values({
+            orderId,
+            itemId: a.itemId,
+            quantity: a.quantityUsed,
+            consumedBy: consumedByUserId ?? null,
+            operationId: options.operationId ?? null,
+            notes: options.notes ?? null,
+          });
+        }
+      });
+    } catch (e: unknown) {
+      const cause = (e as { cause?: unknown })?.cause;
+      auditError = cause instanceof Error ? cause.message : e instanceof Error ? e.message : "unknown error";
+      console.error("consumeMaterialsForOrder: audit write failed (ledger already committed):", e);
+    }
+  }
+
+  return auditError ? { consumed, totalUnits, auditError } : { consumed, totalUnits };
 }
 
 /**
