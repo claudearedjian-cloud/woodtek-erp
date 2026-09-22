@@ -253,7 +253,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return NextResponse.json(updatedOrder);
   } catch (error: any) {
     console.error("PATCH order error:", error);
-    return NextResponse.json({ error: error?.message || "Failed to update order" }, { status: 500 });
+    const detail = error?.cause?.message || error?.message || "Failed to update order";
+    return NextResponse.json({ error: detail }, { status: 500 });
   }
 }
 

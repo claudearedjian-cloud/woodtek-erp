@@ -532,6 +532,26 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
     }
   };
 
+  // Re-run material consumption for an order that is Completed/Delivered but
+  // whose stock was never consumed (e.g. the consumption transaction failed
+  // and rolled back when the database schema was out of sync).
+  const retryConsumeMaterials = async () => {
+    setActionError("");
+    try {
+      const response = await fetch(`/api/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "Completed" }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Consumption failed.");
+      await fetchOrderDetail();
+      onRefresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to run material consumption.");
+    }
+  };
+
   const handleDeleteOrder = async () => {
     if (!confirm("Are you sure you want to permanently delete this production order?")) return;
     setActionError("");
@@ -1143,7 +1163,19 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                       <Boxes className="w-4 h-4" />
                       Stock status: {b.label}
                     </div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-70">{status}</span>
+                    <div className="flex items-center gap-3">
+                      {status !== "consumed" && (order.status === "Completed" || order.status === "Delivered") && (
+                        <button
+                          type="button"
+                          onClick={() => void retryConsumeMaterials()}
+                          title="This order is completed but its stock was never consumed (the consumption step failed). Run the consumption now."
+                          className="rounded-xl bg-rose-600/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-rose-500"
+                        >
+                          Run consumption now
+                        </button>
+                      )}
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-70">{status}</span>
+                    </div>
                   </div>
                 );
               })()}

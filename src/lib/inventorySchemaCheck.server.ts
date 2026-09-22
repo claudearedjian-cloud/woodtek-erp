@@ -19,6 +19,10 @@ export interface InventorySchemaCheck {
   actual: string[];
   missing: string[];
   unexpected: string[];
+  /** Extra columns that are NOT NULL without a default — they break app inserts. */
+  blocking: string[];
+  /** True when the id column has no default (inserts using DEFAULT will fail). */
+  idHasDefault: boolean;
   foreignKeys: Array<{ conname: string; def: string }>;
 }
 
@@ -76,12 +80,28 @@ export async function checkInventorySchema(): Promise<InventorySchemaCheck[]> {
   const out: InventorySchemaCheck[] = [];
   for (const table of Object.keys(EXPECTED_COLUMNS)) {
     const { rows: cols } = (await db.execute(
-      sql`select column_name from information_schema.columns where table_name = ${table} order by ordinal_position`,
-    )) as { rows: Array<{ column_name: unknown }> };
+      sql`select column_name, is_nullable, column_default
+          from information_schema.columns
+          where table_name = ${table} order by ordinal_position`,
+    )) as {
+      rows: Array<{ column_name: unknown; is_nullable: unknown; column_default: unknown }>;
+    };
     const actual = cols.map((r) => String(r.column_name));
     const expected = EXPECTED_COLUMNS[table];
     const missing = expected.filter((c) => !actual.includes(c));
     const unexpected = actual.filter((c) => !expected.includes(c));
+    // Extra columns that are NOT NULL with no default break the app's inserts
+    // (the insert only sets the app's columns; everything else becomes NULL).
+    const blocking = cols
+      .filter(
+        (r) =>
+          !expected.includes(String(r.column_name)) &&
+          String(r.is_nullable) === "NO" &&
+          r.column_default == null,
+      )
+      .map((r) => String(r.column_name));
+    const idRow = cols.find((r) => String(r.column_name) === "id");
+    const idHasDefault = idRow != null && idRow.column_default != null;
 
     let foreignKeys: Array<{ conname: string; def: string }> = [];
     try {
@@ -93,7 +113,7 @@ export async function checkInventorySchema(): Promise<InventorySchemaCheck[]> {
       /* FK introspection is best-effort */
     }
 
-    out.push({ table, expected, actual, missing, unexpected, foreignKeys });
+    out.push({ table, expected, actual, missing, unexpected, blocking, idHasDefault, foreignKeys });
   }
   return out;
 }
@@ -110,6 +130,12 @@ export async function repairInventorySchema(): Promise<{
       const typeSql = REPAIR_TYPES[t.table]?.[col];
       if (!typeSql) continue; // only repair columns we know the type of
       const stmt = `ALTER TABLE ${t.table} ADD COLUMN IF NOT EXISTS ${col} ${typeSql}`;
+      await db.execute(sql.raw(stmt));
+      applied.push(stmt);
+    }
+    // Relax NOT NULL on extra (legacy) columns so app inserts can omit them.
+    for (const col of t.blocking) {
+      const stmt = `ALTER TABLE ${t.table} ALTER COLUMN ${col} DROP NOT NULL`;
       await db.execute(sql.raw(stmt));
       applied.push(stmt);
     }

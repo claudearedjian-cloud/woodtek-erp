@@ -49,7 +49,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [schemaTables, setSchemaTables] = useState<Array<{
     table: string; expected: string[]; actual: string[];
-    missing: string[]; unexpected: string[]; foreignKeys: Array<{ conname: string; def: string }>;
+    missing: string[]; unexpected: string[]; blocking?: string[]; idHasDefault?: boolean;
+    foreignKeys: Array<{ conname: string; def: string }>;
   }>>([]);
   const [schemaBusy, setSchemaBusy] = useState(false);
   const [schemaMessage, setSchemaMessage] = useState("");
@@ -1092,9 +1093,11 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </button>
             </div>
             <p className="text-[11px] leading-relaxed text-slate-400">
-              Compares the live stock tables with the columns the app expects. Repair only
-              <span className="font-bold text-slate-200"> adds missing columns</span> (nothing is dropped or
-              altered) — use it when deletes fail with “column … does not exist”.
+              Compares the live stock tables with the columns the app expects. Repair
+              <span className="font-bold text-slate-200"> adds missing columns</span> and
+              <span className="font-bold text-slate-200"> relaxes NOT NULL</span> on legacy extra
+              columns — nothing is dropped or renamed. Use it when stock operations fail with
+              database schema errors.
             </p>
             {schemaBusy && (
               <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] font-bold text-slate-400">
@@ -1116,8 +1119,16 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 {t.missing.length > 0 && (
                   <p className="mt-1 font-mono text-[11px] text-rose-300">missing: {t.missing.join(", ")}</p>
                 )}
+                {Array.isArray(t.blocking) && t.blocking.length > 0 && (
+                  <p className="mt-1 font-mono text-[11px] text-rose-300">
+                    blocking (NOT NULL, no default): {t.blocking.join(", ")}
+                  </p>
+                )}
+                {t.idHasDefault === false && (
+                  <p className="mt-1 font-mono text-[11px] text-rose-300">id column has no default (needs manual fix)</p>
+                )}
                 {t.unexpected.length > 0 && (
-                  <p className="mt-1 font-mono text-[11px] text-amber-300/90">extra (left untouched): {t.unexpected.join(", ")}</p>
+                  <p className="mt-1 font-mono text-[11px] text-amber-300/90">extra columns: {t.unexpected.join(", ")}</p>
                 )}
                 {t.foreignKeys.length > 0 && (
                   <p className="mt-1 font-mono text-[10px] leading-relaxed text-slate-500">
@@ -1133,7 +1144,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               <button type="button" onClick={() => setSchemaOpen(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">
                 Close
               </button>
-              {schemaTables.some((t) => t.missing.length > 0) && (
+              {schemaTables.some((t) => t.missing.length > 0 || (Array.isArray(t.blocking) && t.blocking.length > 0)) && (
                 <button
                   type="button"
                   onClick={() => void runSchemaRepair()}

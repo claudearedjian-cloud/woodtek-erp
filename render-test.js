@@ -1350,8 +1350,24 @@ const invView40f = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
   invView40f.includes("Schema Check") &&
     invView40f.includes("/api/inventory/schema-check") &&
-    invView40f.includes("Add Missing Columns"),
-  "schema check: Manager-only dialog on the stock screen with one-click repair",
+    invView40f.includes("Add Missing Columns") &&
+    invView40f.includes("blocking (NOT NULL, no default)"),
+  "schema check: Manager-only dialog on the stock screen with one-click repair (missing + blocking columns)",
+);
+
+// ---- bundle 40g: NOT NULL repair, consume cause surfacing, re-consume ----
+check(
+  schemaLib.includes("DROP NOT NULL") &&
+    schemaLib.includes("is_nullable") &&
+    schemaLib.includes("idHasDefault"),
+  "schema check: detects legacy NOT NULL columns without defaults and relaxes them on repair",
+);
+const ordersIdRoute40g = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+check(ordersIdRoute40g.includes('console.error("PATCH order error:", error);\r\n    const detail = error?.cause?.message'), "order PATCH: consume failures surface the root-cause DB error");
+const owd40g = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
+check(
+  owd40g.includes("retryConsumeMaterials") && owd40g.includes("Run consumption now"),
+  "orders: stuck Completed orders expose a one-click re-consume action",
 );
 const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
