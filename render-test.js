@@ -1315,6 +1315,13 @@ check(
   invViewEditSource.includes("Reorder Level") && invViewEditSource.includes("Shop Location"),
   "item form: reorder level and shop location are visible fields on create and edit (Bundle 40b)",
 );
+const layoutSource = fs.readFileSync("src/app/layout.tsx", "utf8");
+check(
+  layoutSource.includes("woodtek-err-banner") &&
+    layoutSource.includes("unhandledrejection") &&
+    layoutSource.includes("window.addEventListener(\"error\""),
+  "layout: inline window-error banner surfaces JS failures (incl. chunk 404) instead of a silent freeze (Bundle 40c)",
+);
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");
