@@ -25,6 +25,7 @@ import {
   FileText,
   QrCode,
   Copy,
+  Printer,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -34,6 +35,7 @@ import autoTable from "jspdf-autotable";
 import { can, canAssignMachines } from "@/lib/permissions";
 import { machineCategoryMatches } from "@/lib/operationMachineCandidates";
 import { allowedStages } from "@/lib/materialProgress";
+import { buildJobTicketHtml } from "@/lib/jobTicket";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -304,6 +306,26 @@ export default function OrderWorkflowDetail({
     w.document.close();
     w.focus();
     w.print();
+  };
+
+  const printJobTicket = async () => {
+    if (!order) return;
+    const link = `${window.location.origin}/?order=${order.id}`;
+    let qrData: string | null = null;
+    try {
+      qrData = await QRCode.toDataURL(link, { width: 300, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } });
+    } catch {
+      qrData = null;
+    }
+    const html = buildJobTicketHtml(order, { inventoryItems, machines, qrDataUrl: qrData });
+    const w = window.open("", "_blank", "width=900,height=1100");
+    if (!w) {
+      setActionError("Allow pop-ups to print the job ticket.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 700);
   };
 
   // Branded client-facing quotation built from the order, its BOM and its
@@ -757,6 +779,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             title="Print a QR sticker for this order"
           >
             <QrCode className="w-4 h-4" /> QR Sticker
+          </button>
+          <button
+            onClick={printJobTicket}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500 border border-amber-500 text-xs font-black text-slate-950 hover:bg-amber-400 transition shadow-md shadow-amber-500/20"
+            title="Print a job ticket — one sheet per order with every cut list, material, dimensions & station routing for the floor"
+          >
+            <Printer className="w-4 h-4" /> Job Ticket
           </button>
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
