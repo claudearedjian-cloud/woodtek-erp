@@ -320,3 +320,87 @@ export async function checkAvailabilityForAllocation(
     missing: Math.max(0, quantity - available),
   };
 }
+
+// -------------------------------------------------------------------- BOM sends
+/**
+ * Consume (or restore) stock when a Warehouse & BOM line's sent tally changes.
+ * The warehouse keeper's Send button moves units from warehouse stock to the
+ * production floor - that is when stock is actually consumed, not when the
+ * order is marked Completed.
+ *
+ * prevSent/newSent are the cumulative units physically sent (the BOM tally in
+ * the bom-status overlay). delta > 0 consumes, delta < 0 restores (undo).
+ * Same two-phase rule as consumeMaterialsForOrder: the ledger commits first,
+ * the material_consumptions audit write is best-effort and never blocks the
+ * warehouse action. When a line is fully sent its allocation is marked
+ * consumed, so the order-completion flow skips it (no double debit).
+ */
+export async function applyBomSendDelta(params: {
+  orderId: number;
+  allocationId: number;
+  itemId: number;
+  quantityUsed: number;
+  prevSent: number;
+  newSent: number;
+  consumedBy: number | null;
+}): Promise<{ delta: number; auditError?: string }> {
+  const delta = params.newSent - params.prevSent;
+  if (delta === 0) return { delta: 0 };
+  const fullySent = params.quantityUsed > 0 && params.newSent >= params.quantityUsed;
+
+  // Phase 1 - ledger (business-critical).
+  await db.transaction(async (tx) => {
+    if (delta > 0) {
+      await tx
+        .update(inventoryItems)
+        .set({ stockQuantity: sql`GREATEST(0, ${inventoryItems.stockQuantity} - ${delta})` })
+        .where(eq(inventoryItems.id, params.itemId));
+    } else {
+      await tx
+        .update(inventoryItems)
+        .set({ stockQuantity: sql`${inventoryItems.stockQuantity} + ${-delta}` })
+        .where(eq(inventoryItems.id, params.itemId));
+    }
+    if (delta > 0 && fullySent) {
+      await tx
+        .update(orderMaterials)
+        .set({ consumed: true, consumedAt: new Date() })
+        .where(eq(orderMaterials.id, params.allocationId));
+    } else if (delta < 0 && !fullySent) {
+      await tx
+        .update(orderMaterials)
+        .set({ consumed: false, consumedAt: null })
+        .where(eq(orderMaterials.id, params.allocationId));
+    }
+  });
+
+  // Refresh the order's materialsStatus (best-effort).
+  try {
+    await applyMaterialsStatus(params.orderId);
+  } catch {
+    /* non-critical */
+  }
+
+  // Phase 2 - audit (best-effort).
+  let auditError: string | undefined;
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(materialConsumptions).values({
+        orderId: params.orderId,
+        itemId: params.itemId,
+        quantity: delta,
+        consumedBy: params.consumedBy,
+        notes:
+          delta > 0
+            ? `BOM line sent to floor (${params.newSent}/${params.quantityUsed})`
+            : `BOM send undone, stock restored (now ${params.newSent}/${params.quantityUsed})`,
+      });
+    });
+  } catch (e: unknown) {
+    const cause = (e as { cause?: unknown })?.cause;
+    auditError = cause instanceof Error ? cause.message : e instanceof Error ? e.message : "unknown error";
+    console.error("applyBomSendDelta: audit write failed (ledger already committed):", e);
+  }
+
+  return auditError ? { delta, auditError } : { delta };
+}

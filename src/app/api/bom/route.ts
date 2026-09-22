@@ -248,7 +248,7 @@ export async function PUT(request: Request) {
     // keeps the line in "Prepared" with a tally. Undo to Requested clears it.
     let deliveredQty: number | null = null;
     const [line] = await db
-      .select({ id: orderMaterials.id, orderId: orderMaterials.orderId, quantityUsed: orderMaterials.quantityUsed })
+      .select({ id: orderMaterials.id, orderId: orderMaterials.orderId, itemId: orderMaterials.itemId, quantityUsed: orderMaterials.quantityUsed })
       .from(orderMaterials)
       .where(eq(orderMaterials.id, allocationId));
     if (!line) {
@@ -283,7 +283,29 @@ export async function PUT(request: Request) {
       : linkedTarget;
     setBomStatus(allocationId, status, machineId, deliveredQty);
     logAudit(user, status === "Delivered" ? "bom.deliver" : `bom.${status.toLowerCase()}`, "bom_line", `BOM line -> ${status}${deliveredQty != null && deliveredQty < (line?.quantityUsed ?? 0) ? ` (${deliveredQty}/${line?.quantityUsed} sent)` : ""}`, allocationId);
-    return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty });
+
+    // Sending material to the floor is when stock is actually consumed (not
+    // when the order is marked Completed); undoing a send restores it.
+    const prevSent = existing?.deliveredQty ?? 0;
+    const newSent = deliveredQty ?? 0;
+    let sendWarning: string | undefined;
+    if (newSent !== prevSent) {
+      const { applyBomSendDelta } = await import("@/lib/materials");
+      const result = await applyBomSendDelta({
+        orderId: line.orderId,
+        allocationId,
+        itemId: line.itemId,
+        quantityUsed: line.quantityUsed,
+        prevSent,
+        newSent,
+        consumedBy: user.id,
+      });
+      if (result.auditError) {
+        sendWarning = `Stock updated, but the consumption audit could not be recorded: ${result.auditError}. Fix with Wood & Edge Stock -> Schema Check -> Add Missing Columns.`;
+      }
+    }
+
+    return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty, warning: sendWarning });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update status";
     return NextResponse.json({ error: message }, { status: 500 });

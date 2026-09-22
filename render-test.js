@@ -1425,6 +1425,42 @@ check(whr.includes("Warehouse &amp; BOM"), "restricted role sees its allowlisted
 check(!whr.includes("Scrap &amp; Rework"), "restricted role loses base screens (quality)");
 check(!whr.includes("Live WIP Board"), "restricted role loses WIP");
 check(!whr.includes("Executive Dashboard"), "restricted role loses dashboard");
+// ---- bundle 40j: send-time consumption, modal placement, full order history ----
+const materialsLib40j = fs.readFileSync("src/lib/materials.ts", "utf8");
+const warehouseViewSource40j = fs.readFileSync("src/components/WarehouseView.tsx", "utf8");
+const invOrdersApi40j = fs.readFileSync("src/app/api/inventory/[id]/orders/route.ts", "utf8");
+check(
+  bomBoardSource.includes("applyBomSendDelta") &&
+    bomBoardSource.includes("itemId: orderMaterials.itemId") &&
+    bomBoardSource.includes("prevSent") && bomBoardSource.includes("newSent !== prevSent") &&
+    bomBoardSource.includes("warning: sendWarning"),
+  "warehouse send consumes stock: BOM PUT applies the send delta to the stock ledger",
+);
+check(
+  materialsLib40j.includes("applyBomSendDelta") &&
+    materialsLib40j.includes("GREATEST(0, ${inventoryItems.stockQuantity} - ${delta})") &&
+    materialsLib40j.includes("BOM line sent to floor") &&
+    materialsLib40j.includes("BOM send undone, stock restored"),
+  "applyBomSendDelta: consumes on send (never below zero), restores on undo, audit best-effort",
+);
+check(
+  warehouseViewSource40j.includes("setWarn(data.warning") &&
+    warehouseViewSource40j.includes("Sending consumes the shop stock immediately"),
+  "warehouse screen: send warnings are surfaced + subtitle explains send = consumption",
+);
+check(
+  !invOrdersApi40j.includes("eq(orderMaterials.released, false)") &&
+    !invOrdersApi40j.includes('ne(orders.status, "Cancelled")') &&
+    invOrdersApi40j.includes("a.consumed || a.released"),
+  "per-material Orders: lists ALL orders using the item, incl. completed/delivered history",
+);
+check(
+  (inventoryViewSource.match(/createPortal\(/g) || []).length >= 7 &&
+    inventoryViewSource.includes("document.body") &&
+    inventoryViewSource.includes("consumed, completed & delivered orders"),
+  "inventory modals portal to document.body (always centered on the visible screen)",
+);
+
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

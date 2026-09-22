@@ -52,6 +52,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
   const [orders, setOrders] = useState<BoardOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [warn, setWarn] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [hideDone, setHideDone] = useState(false);
 
@@ -92,6 +93,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed to update status");
+      setWarn(data.warning || "");
       await load();
     } catch (e: any) {
       setError(e.message || "Failed to update status");
@@ -136,6 +138,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
             </h1>
             <p className="text-xs text-slate-400">
               Materials requested by open orders — prepare them, then send them to the machine.
+              Sending consumes the shop stock immediately; undoing a send restores it.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -162,6 +165,12 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
         {error && (
           <div className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
             <TriangleAlert className="h-4 w-4" /> {error}
+          </div>
+        )}
+        {warn && (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <span className="flex items-center gap-2"><TriangleAlert className="h-4 w-4 shrink-0" /> {warn}</span>
+            <button onClick={() => setWarn("")} className="rounded px-1.5 text-amber-400 hover:bg-amber-500/20">✕</button>
           </div>
         )}
 

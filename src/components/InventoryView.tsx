@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2, Pencil, Database } from "lucide-react";
 import { can } from "@/lib/permissions";
 import type { InventoryImportValidation } from "@/lib/inventoryImport";
@@ -644,7 +645,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       </div>
 
       {/* Excel stock import — visible from the tab-level action above. */}
-      {showImportModal && (
+      {showImportModal ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60">
             <div className="flex items-start justify-between gap-4 border-b border-slate-800 p-5">
@@ -838,11 +839,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </div>
             )}
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* Add Item Modal */}
-      {showModal && (
+      {showModal ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
@@ -922,11 +922,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </div>
             </form>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* Manage categories modal (Manager) */}
-      {manageOpen && (
+      {manageOpen ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
@@ -998,11 +997,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* Delete ALL stock confirmation (Manager) */}
-      {deleteAllOpen && (
+      {deleteAllOpen ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="w-full max-w-md space-y-4 rounded-2xl border border-rose-900/70 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
@@ -1047,11 +1045,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* Single-item delete confirmation (in-app, with visible errors) */}
-      {confirmDelete && (
+      {confirmDelete ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="w-full max-w-sm space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
@@ -1079,11 +1076,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* Database schema check & repair (Manager) */}
-      {schemaOpen && (
+      {schemaOpen ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
@@ -1156,11 +1152,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               )}
             </div>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
 
       {/* "Which orders use this material?" modal */}
-      {showOrdersModal && (
+      {showOrdersModal ? createPortal(
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60">
             <div className="flex justify-between items-center p-5 border-b border-slate-800">
@@ -1222,15 +1217,26 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                   {ordersForItem.consumed?.length > 0 && (
                     <section>
                       <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
-                        Already consumed ({ordersForItem.consumed.length})
+                        History — consumed, completed & delivered orders ({ordersForItem.consumed.length})
                       </h4>
                       <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-slate-500 text-[10px] uppercase">
+                            <th className="text-left py-1.5 px-2">Order</th>
+                            <th className="text-left py-2 px-2">Customer</th>
+                            <th className="text-left py-1.5 px-2">Status</th>
+                            <th className="text-right py-1.5 px-2">Qty</th>
+                          </tr>
+                        </thead>
                         <tbody className="divide-y divide-slate-800/60">
                           {ordersForItem.consumed.map((a) => (
                             <tr key={a.allocationId} className="text-slate-400">
                               <td className="py-2 px-2 font-mono">{a.orderNumber}</td>
                               <td className="py-2 px-2">{a.customerCompany || a.customerName || "—"}</td>
-                              <td className="py-2 px-2 text-right font-mono">{a.quantityUsed} (consumed)</td>
+                              <td className="py-2 px-2">
+                                <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded">{a.orderStatus}</span>
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono">{a.quantityUsed} {a.released ? "(released)" : "(consumed)"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1241,8 +1247,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               )}
             </div>
           </div>
-        </div>
-      )}
+        </div>, document.body) : null}
     </div>
   );
 }

@@ -5,10 +5,9 @@ import { eq, and, isNull, ne, or, desc, inArray } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 
 /**
- * Returns all open orders that have allocated the given inventory item,
- * along with how much they reserved and how much is still unconsumed.
- *
- * Used by the inventory page to answer: "Which orders are using this material?"
+ * Returns ALL orders that have ever allocated the given inventory item,
+ * including completed and delivered ones (their allocations appear in the
+ * "consumed" history list), so the owner sees every order that used the material.
  */
 export async function GET(
   request: Request,
@@ -46,22 +45,14 @@ export async function GET(
       .from(orderMaterials)
       .innerJoin(orders, eq(orders.id, orderMaterials.orderId))
       .leftJoin(customers, eq(customers.id, orders.customerId))
-      .where(
-        and(
-          eq(orderMaterials.itemId, itemId),
-          eq(orderMaterials.released, false),
-          or(
-            eq(orderMaterials.consumed, false),
-            isNull(orderMaterials.consumed),
-          ),
-          ne(orders.status, "Cancelled"),
-        ),
-      )
+      .where(eq(orderMaterials.itemId, itemId))
       .orderBy(orders.dueDate);
 
-    // Partition: active (not consumed yet) vs consumed (already used up)
-    const active = allocs.filter((a) => !a.consumed);
-    const consumed = allocs.filter((a) => a.consumed);
+    // Partition: active (still reserving, not consumed nor released) vs
+    // history (consumed by the order, or released with it - completed,
+    // delivered and cancelled orders all appear here).
+    const active = allocs.filter((a) => !a.consumed && !a.released);
+    const consumed = allocs.filter((a) => a.consumed || a.released);
 
     return NextResponse.json({
       itemId,
