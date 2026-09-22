@@ -52,6 +52,7 @@ compile("src/lib/inventoryImport.ts", "lib/inventoryImport.js");
 compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
 compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
+compile("src/lib/jobTicket.ts", "lib/jobTicket.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -1461,6 +1462,116 @@ check(
   "inventory modals portal to document.body (always centered on the visible screen)",
 );
 
+
+
+// ---- bundle 41: printable job ticket (one sheet per order, per-batch cut lists) ----
+const jt = require("./compiled/lib/jobTicket.js");
+check(jt.jobTicketFilename("PO-0099/2026") === "JobTicket-PO-0099-2026.pdf", "job ticket: filename sanitises slashes to dashes");
+check(jt.jobTicketFilename("  a/b:c  ").startsWith("JobTicket-"), "job ticket: filename handles weird characters");
+check(jt.formatJobDate("2026-09-30T12:00:00Z").includes("2026") || jt.formatJobDate("2026-09-30T12:00:00Z") === "—", "job ticket: date formatting never throws");
+check(jt.formatJobDate("invalid") === "—", "job ticket: invalid date falls back to dash");
+const sampleTicketOrder = {
+  id: 99,
+  orderNumber: "PO-0099/2026",
+  title: "Kitchen & Wardrobe <test>",
+  projectType: "Custom Kitchens",
+  priority: "Urgent",
+  status: "In Production",
+  dueDate: "2026-09-30T12:00:00Z",
+  createdAt: "2026-09-18T08:00:00Z",
+  progressPercent: 40,
+  customerCompany: "ACME Joinery",
+  customerName: "Owner",
+  customerPhone: "03 12345",
+  customerEmail: "a@b.com",
+  notes: "Handle with care & check <edges>",
+  productionPlan: {
+    orderId: 99,
+    createdAt: "2026-09-18T08:00:00Z",
+    defaultSteps: [],
+    items: [
+      {
+        materialId: 71,
+        itemId: 12,
+        name: "Kitchen doors",
+        quantityUsed: 8,
+        routeSource: "recipe",
+        recipeId: 3,
+        recipeName: "Cut + edge",
+        steps: [
+          { operationId: 800, position: 1, stageKey: "1. First Saw", operationName: "First Saw", machineCategory: "Beam Saw", estimatedMinutes: 90, auto: true, machineId: 1 },
+          { operationId: 801, position: 2, stageKey: "2. Edge Banding", operationName: "Edge Banding", machineCategory: "Edge Bander", estimatedMinutes: 60, auto: true, machineId: 2 },
+        ],
+      },
+      {
+        materialId: 72,
+        itemId: 13,
+        name: "Wall panels",
+        quantityUsed: 5,
+        routeSource: "custom",
+        recipeId: null,
+        recipeName: "",
+        steps: [
+          { operationId: 802, position: 1, stageKey: "1. Press", operationName: "Press", machineCategory: "Press", estimatedMinutes: 120, auto: false, machineId: 5 },
+        ],
+      },
+    ],
+  },
+  operations: [
+    { id: 800, stepOrder: 1, operationName: "First Saw", machineCategory: "Beam Saw", machineId: 1, machineCode: "BEAM-01", machineName: "Beam Saw", estimatedMinutes: 90, status: "Ready", scheduledStart: "2026-09-19T08:00:00Z", scheduledEnd: "2026-09-19T09:30:00Z" },
+    { id: 801, stepOrder: 2, operationName: "Edge Banding", machineCategory: "Edge Bander", machineId: 2, machineCode: "EDGE-01", machineName: "Edge", estimatedMinutes: 60, status: "Pending", scheduledStart: null, scheduledEnd: null },
+    { id: 802, stepOrder: 3, operationName: "Press", machineCategory: "Press", machineId: 5, machineCode: "PRESS-01", machineName: "Press", estimatedMinutes: 120, status: "Pending", scheduledStart: null, scheduledEnd: null },
+  ],
+  materials: [
+    { id: 71, itemId: 12, itemName: "MDF 18mm", itemSku: "MDF-18", itemUnit: "sheets", quantityUsed: 8, costPerUnit: "12.00" },
+    { id: 72, itemId: 13, itemName: "Oak Veneer", itemSku: "VEN-OAK", itemUnit: "sheets", quantityUsed: 5, costPerUnit: "20.00" },
+  ],
+};
+const ticketInv = [
+  { id: 12, sku: "MDF-18", name: "MDF 18mm", unit: "sheets", dimensions: "2440 x 1220 x 18", location: "Rack A1" },
+  { id: 13, sku: "VEN-OAK", name: "Oak Veneer", unit: "sheets", dimensions: "", location: "Rack B2" },
+];
+const ticketMachines = [
+  { id: 1, code: "BEAM-01", name: "Beam Saw", category: "Beam Saw", status: "Active" },
+  { id: 2, code: "EDGE-01", name: "Edge", category: "Edge Bander", status: "Active" },
+  { id: 5, code: "PRESS-01", name: "Press", category: "Press", status: "Active" },
+];
+const ticketHtml = jt.buildJobTicketHtml(sampleTicketOrder, { inventoryItems: ticketInv, machines: ticketMachines, qrDataUrl: "data:image/png;base64,abc123" });
+check(ticketHtml.includes("WOODTEK") && ticketHtml.includes("Job Ticket") && ticketHtml.includes("PO-0099/2026"), "job ticket: HTML header with branding, ticket label and order number");
+check(ticketHtml.includes("ACME Joinery") && ticketHtml.includes("03 12345"), "job ticket: client block with company and phone");
+check(ticketHtml.includes("Kitchen &amp; Wardrobe &lt;test&gt;"), "job ticket: title is HTML-escaped");
+check(ticketHtml.includes("Handle with care &amp; check &lt;edges&gt;"), "job ticket: notes are HTML-escaped");
+check(ticketHtml.includes("CUT LIST") && ticketHtml.includes("BATCH 1") && ticketHtml.includes("Kitchen doors") && ticketHtml.includes("BATCH 2") && ticketHtml.includes("Wall panels"), "job ticket: every material batch has its own cut-list card with batch number and name");
+check(ticketHtml.includes("2440 x 1220 x 18") && ticketHtml.includes("Rack A1") && ticketHtml.includes("Rack B2"), "job ticket: panel dimensions and shop location appear per batch");
+check(ticketHtml.includes("BEAM-01") && ticketHtml.includes("First Saw") && ticketHtml.includes("EDGE-01") && ticketHtml.includes("PRESS-01"), "job ticket: each pass shows operation name and assigned station code");
+check(ticketHtml.includes("Done") && ticketHtml.includes("Operator") && ticketHtml.includes("data:image/png;base64,abc123"), "job ticket: tick-boxes, operator column and QR code embedded");
+check(ticketHtml.includes("Floor instructions") && ticketHtml.includes("one batch at a time") && ticketHtml.includes("Operator signature") && ticketHtml.includes("Supervisor"), "job ticket: floor instructions and sign-off lines for the shop");
+check(ticketHtml.includes("2 material batch") && ticketHtml.includes("3 station pass"), "job ticket: summary chips count batches, passes and estimated time");
+const legacyOrder = {
+  id: 100,
+  orderNumber: "PO-0100/2026",
+  title: "Legacy table",
+  projectType: "Wardrobes",
+  priority: "Normal",
+  status: "Pending",
+  dueDate: "2026-10-01T00:00:00Z",
+  createdAt: "2026-09-18T08:00:00Z",
+  progressPercent: 0,
+  customerCompany: "Globex",
+  operations: [
+    { id: 901, stepOrder: 1, operationName: "Cutting", machineCategory: "Beam Saw", machineId: null, estimatedMinutes: 60, status: "Ready", scheduledStart: null, scheduledEnd: null },
+    { id: 902, stepOrder: 2, operationName: "Assembly", machineCategory: "Assembly", machineId: null, estimatedMinutes: 45, status: "Pending", scheduledStart: null, scheduledEnd: null },
+  ],
+  materials: [
+    { id: 81, itemId: 20, itemName: "Chipboard", itemSku: "CHIP-01", itemUnit: "sheets", quantityUsed: 3 },
+  ],
+};
+const legacyHtml = jt.buildJobTicketHtml(legacyOrder, { inventoryItems: [{ id: 20, sku: "CHIP-01", name: "Chipboard", unit: "sheets", dimensions: "", location: "" }], machines: [] });
+check(legacyHtml.includes("Materials / Cut list") && legacyHtml.includes("CHIP-01") && legacyHtml.includes("Cutting") && legacyHtml.includes("Assembly"), "job ticket: legacy orders without a plan fall back to combined Materials + Routing tables");
+check(legacyHtml.includes('JobTicket-PO-') === false, "job ticket: HTML does not leak the filename helper text");
+const owdSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
+check(owdSource.includes("printJobTicket") && owdSource.includes("buildJobTicketHtml") && owdSource.includes("Job Ticket") && owdSource.includes("Printer"), "job ticket: order workflow exposes printable job ticket (button + print window via buildJobTicketHtml + QR)");
+check(owdSource.includes("inventoryItems, machines, qrDataUrl"), "job ticket: ticket builder receives live inventory dimensions and machine assignments");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;
