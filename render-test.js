@@ -1311,6 +1311,10 @@ check(
     invViewEditSource.includes("Delete ALL Stock Items"),
   "delete-all stock: Manager-only button with type-to-confirm dialog",
 );
+check(
+  invViewEditSource.includes("Reorder Level") && invViewEditSource.includes("Shop Location"),
+  "item form: reorder level and shop location are visible fields on create and edit (Bundle 40b)",
+);
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");

@@ -831,6 +831,16 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                   <input type="number" step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Reorder Level</label>
+                  <input type="number" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Shop Location</label>
+                  <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+                </div>
+              </div>
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
                 <button type="button" onClick={() => { setShowModal(false); setEditingId(null); }} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Cancel</button>
                 <button type="submit" className="px-5 py-2 bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow">{editingId ? "Save Changes" : "Register Item"}</button>
