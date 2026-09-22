@@ -1366,8 +1366,11 @@ const ordersIdRoute40g = fs.readFileSync("src/app/api/orders/[id]/route.ts", "ut
 check(ordersIdRoute40g.includes('console.error("PATCH order error:", error);\r\n    const detail = error?.cause?.message'), "order PATCH: consume failures surface the root-cause DB error");
 const owd40g = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
 check(
-  owd40g.includes("retryConsumeMaterials") && owd40g.includes("Run consumption now"),
-  "orders: stuck Completed orders expose a one-click re-consume action",
+  owd40g.includes("retryConsumeMaterials") &&
+    owd40g.includes("Run consumption now") &&
+    owd40g.includes('order.status !== "On Hold"') &&
+    owd40g.includes("materials.length > 0"),
+  "orders: re-consume button shows on any order with allocated unconsumed materials (incl. orders stuck before Completed)",
 );
 const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(

@@ -1164,16 +1164,19 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                       Stock status: {b.label}
                     </div>
                     <div className="flex items-center gap-3">
-                      {status !== "consumed" && (order.status === "Completed" || order.status === "Delivered") && (
-                        <button
-                          type="button"
-                          onClick={() => void retryConsumeMaterials()}
-                          title="This order is completed but its stock was never consumed (the consumption step failed). Run the consumption now."
-                          className="rounded-xl bg-rose-600/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-rose-500"
-                        >
-                          Run consumption now
-                        </button>
-                      )}
+                      {status !== "consumed" &&
+                        materials.length > 0 &&
+                        order.status !== "On Hold" &&
+                        order.status !== "Cancelled" && (
+                          <button
+                            type="button"
+                            onClick={() => void retryConsumeMaterials()}
+                            title="Marks the order Completed and consumes its reserved stock. Use this when the automatic consumption failed while marking the order Completed (the order then keeps its previous status)."
+                            className="rounded-xl bg-rose-600/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white transition hover:bg-rose-500"
+                          >
+                            Run consumption now
+                          </button>
+                        )}
                       <span className="text-[10px] font-extrabold uppercase tracking-wider opacity-70">{status}</span>
                     </div>
                   </div>
