@@ -62,6 +62,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("DELETE inventory error:", error);
-    return NextResponse.json({ error: error?.message || "Failed to delete item" }, { status: 500 });
+    const detail = error?.cause?.message || error?.message || "Failed to delete item";
+    return NextResponse.json({ error: detail }, { status: 500 });
   }
 }

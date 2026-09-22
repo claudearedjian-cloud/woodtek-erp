@@ -1325,9 +1325,12 @@ check(
 const invIdRoute40d = fs.readFileSync("src/app/api/inventory/[id]/route.ts", "utf8");
 check(
   invIdRoute40d.includes('logAudit(user, "inventory.item.delete"') &&
-    invIdRoute40d.includes("import { logAudit }"),
-  "single-item delete: server writes an audit entry (Bundle 40d)",
+    invIdRoute40d.includes("import { logAudit }") &&
+    invIdRoute40d.includes("error?.cause?.message"),
+  "single-item delete: audit entry + root-cause DB error surfaced (Bundle 40d/40e)",
 );
+const invAllRoute40e = fs.readFileSync("src/app/api/inventory/all/route.ts", "utf8");
+check(invAllRoute40e.includes("causeMessage"), "delete-all: root-cause DB error surfaced (Bundle 40e)");
 const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
   invView40d.includes("setConfirmDelete(") &&

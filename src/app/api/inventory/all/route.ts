@@ -34,7 +34,13 @@ export async function DELETE() {
       deletedConsumptions: consumptions.length,
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to delete all stock items";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const causeMessage = (e as { cause?: unknown })?.cause;
+    const detail =
+      causeMessage instanceof Error
+        ? `Failed to delete all stock items: ${causeMessage.message}`
+        : e instanceof Error
+          ? e.message
+          : "Failed to delete all stock items";
+    return NextResponse.json({ error: detail }, { status: 500 });
   }
 }
