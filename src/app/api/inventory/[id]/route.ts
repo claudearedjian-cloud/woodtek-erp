@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { inventoryItems, materialConsumptions, orderMaterials } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { logAudit } from "@/lib/audit.server";
 import { setInventoryDimension, deleteInventoryDimension, readInventoryDimensions } from "@/lib/inventoryDimensions.server";
 import { normalizeDimensions, validateDimensions } from "@/lib/inventoryDimensions";
 
@@ -47,7 +48,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("inventory:write");
+  const { user, error: authError } = await authorize("inventory:write");
   if (authError) return authError;
 
   try {
@@ -57,6 +58,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     await db.delete(orderMaterials).where(eq(orderMaterials.itemId, Number(id)));
     await db.delete(inventoryItems).where(eq(inventoryItems.id, Number(id)));
     deleteInventoryDimension(Number(id));
+    logAudit(user, "inventory.item.delete", "inventory", "Stock item deleted (with its allocations and consumption rows)", Number(id));
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("DELETE inventory error:", error);

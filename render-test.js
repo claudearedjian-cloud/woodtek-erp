@@ -1322,6 +1322,20 @@ check(
     layoutSource.includes("window.addEventListener(\"error\""),
   "layout: inline window-error banner surfaces JS failures (incl. chunk 404) instead of a silent freeze (Bundle 40c)",
 );
+const invIdRoute40d = fs.readFileSync("src/app/api/inventory/[id]/route.ts", "utf8");
+check(
+  invIdRoute40d.includes('logAudit(user, "inventory.item.delete"') &&
+    invIdRoute40d.includes("import { logAudit }"),
+  "single-item delete: server writes an audit entry (Bundle 40d)",
+);
+const invView40d = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(
+  invView40d.includes("setConfirmDelete(") &&
+    invView40d.includes("Remove Stock Item") &&
+    invView40d.includes("Delete failed:") &&
+    !/if \(!confirm\(/.test(invView40d),
+  "single-item delete: in-app confirm dialog replaces native confirm; server errors are shown, not swallowed (Bundle 40d)",
+);
 
 // ---- project category selection ----
 const pt = require("./compiled/lib/projectTypes.js");

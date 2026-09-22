@@ -43,6 +43,9 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [wipeConfirm, setWipeConfirm] = useState("");
   const [wipeBusy, setWipeBusy] = useState(false);
   const [wipeError, setWipeError] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -88,6 +91,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       onRefresh();
     } catch (err) {
       console.error("Adjust error", err);
+      alert("Stock adjustment failed. Try again.");
     }
   };
 
@@ -177,13 +181,24 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
     }
   };
 
-  const handleDelete = async (id: number, itemName: string) => {
-    if (!confirm(`Remove ${itemName} from shop stock?`)) return;
+  // Single-item delete uses an in-app confirmation dialog (not the browser's
+  // native confirm) and reports server failures instead of swallowing them.
+  const deleteItem = async () => {
+    if (!confirmDelete) return;
+    const { id, name } = confirmDelete;
+    setDeleteBusy(true);
+    setDeleteError("");
     try {
-      await fetch(`/api/inventory/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/inventory/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Server error (HTTP ${res.status})`);
+      setConfirmDelete(null);
       onRefresh();
     } catch (err) {
       console.error("Delete inventory error", err);
+      setDeleteError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -551,7 +566,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                           </button>
                         )}
                         <button
-                          onClick={() => handleDelete(item.id, item.name)}
+                          onClick={() => { setDeleteError(""); setConfirmDelete({ id: item.id, name: item.name }); }}
                           className="p-1.5 hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 rounded-lg transition"
                           title="Delete item"
                         >
@@ -969,6 +984,38 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 className="px-5 py-2 bg-rose-600 text-white font-black text-xs rounded-xl shadow hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {wipeBusy ? "Deleting…" : "Delete Everything"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Single-item delete confirmation (in-app, with visible errors) */}
+      {confirmDelete && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="w-full max-w-sm space-y-4 rounded-2xl border border-slate-700/80 bg-slate-900 p-6 shadow-2xl shadow-black/60">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Remove Stock Item</h3>
+              <button onClick={() => setConfirmDelete(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs leading-relaxed text-slate-300">
+              Remove <span className="font-black text-white">{confirmDelete.name}</span> from shop stock? Its
+              allocations on orders and its consumption history are removed too.
+            </p>
+            {deleteError && <p className="text-[11px] font-bold text-rose-400">Delete failed: {deleteError}</p>}
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+              <button type="button" onClick={() => setConfirmDelete(null)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteItem()}
+                disabled={deleteBusy}
+                className="px-5 py-2 bg-rose-600 text-white font-black text-xs rounded-xl shadow hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleteBusy ? "Deleting…" : "Delete Item"}
               </button>
             </div>
           </div>
