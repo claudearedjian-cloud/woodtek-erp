@@ -38,6 +38,7 @@ import { machineCategoryMatches } from "@/lib/operationMachineCandidates";
 import { allowedStages } from "@/lib/materialProgress";
 import { buildJobTicketHtml } from "@/lib/jobTicket";
 import { buildDeliveryNoteHtml } from "@/lib/deliveryNote";
+import { buildDispatchPackHtml } from "@/lib/dispatchPack";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -343,6 +344,99 @@ export default function OrderWorkflowDetail({
     const w = window.open("", "_blank", "width=900,height=1100");
     if (!w) {
       setActionError("Allow pop-ups to print the delivery note.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 700);
+  };
+
+  const printDispatchPack = async () => {
+    if (!order) return;
+    const link = `${window.location.origin}/?order=${order.id}`;
+    let qrData: string | null = null;
+    try {
+      qrData = await QRCode.toDataURL(link, { width: 300, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } });
+    } catch {
+      qrData = null;
+    }
+    // Best-effort fetch of QC and photos and dispatch stage
+    let packingTemplate: string[] | null = null;
+    let packingChecks: boolean[] | null = null;
+    let batchPackingChecks: Record<string, boolean[]> | null = null;
+    let deliveryPhotos: any[] | null = null;
+    let batchDeliveryPhotos: Record<string, any[]> | null = null;
+    let dispatchStage: string | null = null;
+    let dispatchProof: any = null;
+    let batchDispatchStages: Record<string, any> | null = null;
+    try {
+      const qcRes = await fetch(`/api/packing-qc`, { cache: "no-store" });
+      if (qcRes.ok) {
+        const qcData = await qcRes.json();
+        packingTemplate = qcData.template || [];
+        const orderChecks = qcData.checks?.[String(order.id)] || qcData.checks?.[order.id];
+        if (Array.isArray(orderChecks)) packingChecks = orderChecks;
+        batchPackingChecks = qcData.batchChecks || {};
+      }
+    } catch {}
+    try {
+      const phRes = await fetch(`/api/delivery-photos?orderId=${order.id}`, { cache: "no-store" });
+      if (phRes.ok) {
+        const phData = await phRes.json();
+        deliveryPhotos = phData.photos || [];
+      }
+      // Try batch photos for each material
+      if (order.materials?.length) {
+        batchDeliveryPhotos = {};
+        for (const m of order.materials) {
+          try {
+            const bRes = await fetch(`/api/delivery-photos?orderId=${order.id}&batchId=${m.id}`, { cache: "no-store" });
+            if (bRes.ok) {
+              const bData = await bRes.json();
+              if (Array.isArray(bData.photos) && bData.photos.length > 0) {
+                batchDeliveryPhotos[String(m.id)] = bData.photos;
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+    try {
+      const dRes = await fetch(`/api/dispatch`, { cache: "no-store" });
+      if (dRes.ok) {
+        const dData = await dRes.json();
+        const row = (dData.orders || []).find((o: any) => Number(o.orderId) === Number(order.id));
+        if (row) {
+          dispatchStage = row.stage || null;
+          dispatchProof = row.proof || null;
+        }
+        // Batch stages
+        const batches = dData.batches || {};
+        batchDispatchStages = {};
+        for (const [bid, info] of Object.entries(batches)) {
+          const inf: any = info as any;
+          if (Number(inf.orderId) === Number(order.id)) {
+            batchDispatchStages[bid] = { stage: inf.stage, proof: inf.proof };
+          }
+        }
+      }
+    } catch {}
+    const html = buildDispatchPackHtml(order, {
+      inventoryItems,
+      machines,
+      qrDataUrl: qrData,
+      packingTemplate,
+      packingChecks,
+      batchPackingChecks,
+      deliveryPhotos,
+      batchDeliveryPhotos,
+      dispatchStage,
+      dispatchProof,
+      batchDispatchStages,
+    });
+    const w = window.open("", "_blank", "width=900,height=1100");
+    if (!w) {
+      setActionError("Allow pop-ups to print the dispatch pack.");
       return;
     }
     w.document.write(html);
@@ -815,6 +909,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             title="Print a delivery note — client-facing, address & signatures, qty-only"
           >
             <Truck className="w-4 h-4" /> Delivery Note
+          </button>
+          <button
+            onClick={printDispatchPack}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-500 border border-indigo-500 text-xs font-black text-white hover:bg-indigo-400 transition shadow-md shadow-indigo-500/20"
+            title="Print dispatch pack — job ticket + delivery note + QC + photos + proof in one stapled pack"
+          >
+            <Package className="w-4 h-4" /> Dispatch Pack
           </button>
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
