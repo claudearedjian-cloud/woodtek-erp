@@ -27,6 +27,7 @@ import {
   Copy,
   Printer,
   Truck,
+  Mail,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -39,6 +40,7 @@ import { allowedStages } from "@/lib/materialProgress";
 import { buildJobTicketHtml } from "@/lib/jobTicket";
 import { buildDeliveryNoteHtml } from "@/lib/deliveryNote";
 import { buildDispatchPackHtml } from "@/lib/dispatchPack";
+import { buildDeliveryEmailSubject } from "@/lib/emailDispatch";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -442,6 +444,75 @@ export default function OrderWorkflowDetail({
     w.document.write(html);
     w.document.close();
     setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 700);
+  };
+
+  // ---- Email Docs — send this order's printable documents by email --------
+  // Permission mirrors the API (canSendEmail): orders:write, quality:write,
+  // inventory:write or users:manage. The server rebuilds every document from
+  // live data, so nothing sensitive is sent from the browser.
+  const canSendEmail =
+    can(currentUser?.role, "orders:write") ||
+    can(currentUser?.role, "quality:write") ||
+    can(currentUser?.role, "inventory:write") ||
+    can(currentUser?.role, "users:manage");
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailCc, setEmailCc] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailMessage, setEmailMessage] = useState("");
+  const [emailIncludes, setEmailIncludes] = useState({ deliveryNote: true, dispatchPack: true, jobTicket: false });
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailResult, setEmailResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const openEmailModal = () => {
+    if (!order) return;
+    setEmailTo(order.customerEmail || "");
+    setEmailCc("");
+    setEmailSubject(buildDeliveryEmailSubject(order));
+    setEmailMessage(
+      `Please find attached the documents for order ${order.orderNumber}${order.title ? ` — ${order.title}` : ""}. ` +
+        `Any question on the packing or the schedule, just reply to this email.`,
+    );
+    setEmailIncludes({ deliveryNote: true, dispatchPack: true, jobTicket: false });
+    setEmailResult(null);
+    setEmailOpen(true);
+  };
+
+  const sendEmailDispatch = async () => {
+    if (!order) return;
+    setEmailBusy(true);
+    setEmailResult(null);
+    try {
+      const res = await fetch("/api/email-dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: order.id,
+          to: emailTo,
+          cc: emailCc,
+          subject: emailSubject,
+          message: emailMessage,
+          includeDeliveryNote: emailIncludes.deliveryNote,
+          includeDispatchPack: emailIncludes.dispatchPack,
+          includeJobTicket: emailIncludes.jobTicket,
+        }),
+      });
+      const d = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        setEmailResult({ ok: false, text: d.error || "Could not send the email." });
+        return;
+      }
+      setEmailResult({ ok: true, text: d.message || "Email sent." });
+      // Result banner stays visible briefly, then the modal closes on its own.
+      setTimeout(() => {
+        setEmailOpen(false);
+        setEmailResult(null);
+      }, 2600);
+    } catch {
+      setEmailResult({ ok: false, text: "Could not send the email — check the connection and try again." });
+    } finally {
+      setEmailBusy(false);
+    }
   };
 
   // Branded client-facing quotation built from the order, its BOM and its
@@ -917,6 +988,15 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
           >
             <Package className="w-4 h-4" /> Dispatch Pack
           </button>
+          {canSendEmail && (
+            <button
+              onClick={openEmailModal}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500 border border-sky-500 text-xs font-black text-slate-950 hover:bg-sky-400 transition shadow-md shadow-sky-500/20"
+              title="Email this order's documents (delivery note, dispatch pack, job ticket) to any recipient"
+            >
+              <Mail className="w-4 h-4" /> Email Docs
+            </button>
+          )}
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
               onClick={() => setActiveTab("workflow")}
@@ -1691,6 +1771,122 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             <div className="mt-4 flex justify-center gap-2">
               <button onClick={() => setQrOpen(false)} className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700">Close</button>
               <button onClick={printQr} className="rounded-xl bg-sky-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-sky-400">Print sticker</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {emailOpen && order && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-black text-white">
+                <Mail className="h-4 w-4 text-sky-400" /> Email documents — {order.orderNumber}
+              </h3>
+              <button onClick={() => setEmailOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {emailResult && (
+              <div
+                className={`mb-3 rounded-xl border px-3 py-2 text-xs font-bold ${
+                  emailResult.ok
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                }`}
+              >
+                {emailResult.text}
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">To</span>
+                <input
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  placeholder="name@company.com — comma or newline for several"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Cc (optional)</span>
+                <input
+                  value={emailCc}
+                  onChange={(e) => setEmailCc(e.target.value)}
+                  placeholder="leave empty for no cc"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Subject</span>
+                <input
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-sky-500 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Message</span>
+                <textarea
+                  value={emailMessage}
+                  onChange={(e) => setEmailMessage(e.target.value)}
+                  rows={3}
+                  placeholder="Short note for the recipient…"
+                  className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+                />
+              </label>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                <span className="mb-1.5 block text-[10px] font-black uppercase tracking-wider text-slate-500">Documents to attach</span>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={emailIncludes.deliveryNote}
+                      onChange={(e) => setEmailIncludes({ ...emailIncludes, deliveryNote: e.target.checked })}
+                      className="h-4 w-4 accent-sky-500"
+                    />
+                    Delivery note <span className="text-slate-500">— client-facing, qty-only</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={emailIncludes.dispatchPack}
+                      onChange={(e) => setEmailIncludes({ ...emailIncludes, dispatchPack: e.target.checked })}
+                      className="h-4 w-4 accent-sky-500"
+                    />
+                    Dispatch pack <span className="text-slate-500">— ticket + note + QC + photos + proof</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={emailIncludes.jobTicket}
+                      onChange={(e) => setEmailIncludes({ ...emailIncludes, jobTicket: e.target.checked })}
+                      className="h-4 w-4 accent-sky-500"
+                    />
+                    Job ticket <span className="text-slate-500">— floor sheet with cut lists & routing</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setEmailOpen(false)}
+                disabled={emailBusy}
+                className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendEmailDispatch}
+                disabled={emailBusy || !emailTo.trim()}
+                className="flex items-center gap-1.5 rounded-xl bg-sky-500 px-5 py-2 text-xs font-black text-slate-950 hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Mail className="h-3.5 w-3.5" />
+                {emailBusy ? "Sending…" : "Send email"}
+              </button>
             </div>
           </div>
         </div>

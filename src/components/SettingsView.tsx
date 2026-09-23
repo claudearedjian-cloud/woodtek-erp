@@ -109,6 +109,92 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     }
   };
 
+  // ---- SMTP email settings (Manager only) — the account used for "Email Docs" ----
+  const [emailCfg, setEmailCfg] = useState<{ host: string; port: number; secure: boolean; user: string; pass: string; fromName: string; fromEmail: string }>({
+    host: "",
+    port: 587,
+    secure: false,
+    user: "",
+    pass: "",
+    fromName: "WoodTek",
+    fromEmail: "",
+  });
+  const [emailCfgMsg, setEmailCfgMsg] = useState("");
+  const [emailCfgMsgOk, setEmailCfgMsgOk] = useState(true);
+  const [emailTestTo, setEmailTestTo] = useState("");
+  const [emailTestMsg, setEmailTestMsg] = useState("");
+  const [emailTestMsgOk, setEmailTestMsgOk] = useState(true);
+  const [emailHasPass, setEmailHasPass] = useState(false);
+  useEffect(() => {
+    if (!isManager) return;
+    fetch("/api/email-config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setEmailCfg({
+          host: d.host || "",
+          port: Number(d.port) || 587,
+          secure: !!d.secure,
+          user: d.user || "",
+          pass: d.pass || "",
+          fromName: d.fromName != null ? d.fromName : "WoodTek",
+          fromEmail: d.fromEmail || "",
+        });
+        setEmailHasPass(!!d.hasPass);
+      })
+      .catch(() => {});
+  }, [isManager]);
+  const saveEmailConfig = async () => {
+    setEmailCfgMsg("");
+    try {
+      const payload = {
+        ...emailCfg,
+        // Keep the stored password when the field still shows the mask placeholder
+        // or was left empty while a password is known.
+        pass: emailHasPass && (!emailCfg.pass.trim() || emailCfg.pass === "***") ? "***" : emailCfg.pass.trim(),
+      };
+      const res = await fetch("/api/email-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json().catch(() => ({} as any));
+      if (!res.ok) {
+        setEmailCfgMsg(d.error || "Save failed.");
+        setEmailCfgMsgOk(false);
+        return;
+      }
+      setEmailHasPass(!!d.hasPass);
+      setEmailCfg((prev) => ({ ...prev, pass: d.pass || "" }));
+      setEmailCfgMsg("SMTP settings saved.");
+      setEmailCfgMsgOk(true);
+    } catch {
+      setEmailCfgMsg("Save failed.");
+      setEmailCfgMsgOk(false);
+    }
+  };
+  const testEmailConfig = async () => {
+    setEmailTestMsg("");
+    try {
+      const res = await fetch("/api/email-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test", to: emailTestTo }),
+      });
+      const d = await res.json().catch(() => ({} as any));
+      if (res.ok && d.ok) {
+        setEmailTestMsg(d.message || "Test email sent.");
+        setEmailTestMsgOk(true);
+      } else {
+        setEmailTestMsg(d.error || "The test email could not be sent.");
+        setEmailTestMsgOk(false);
+      }
+    } catch {
+      setEmailTestMsg("The test email could not be sent.");
+      setEmailTestMsgOk(false);
+    }
+  };
+
   const loadAudit = async (q: string = auditQuery) => {
     if (!isManager) return;
     setAuditLoading(true);
@@ -774,6 +860,116 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             {qcTpl.length === 0 && <span className="text-[11px] font-black uppercase tracking-wider text-amber-400">Gate is currently OFF</span>}
           </div>
           {qcTplMsg && <div className="mt-2 text-[11px] font-bold text-emerald-400">{qcTplMsg}</div>}
+        </div>
+      )}
+
+      {/* SMTP email settings (Manager only) — powers "Email Docs" on the order screen */}
+      {isManager && (
+        <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
+          <h3 className="flex items-center gap-2 text-sm font-black text-white">
+            <Mail className="h-4 w-4 text-sky-400" /> SMTP email — dispatch documents
+          </h3>
+          <p className="mt-1 text-xs text-slate-400">
+            The account WoodTek uses to email delivery notes, dispatch packs and job tickets
+            from the order screen (Email Docs). Any signed-in role can read this panel's status,
+            only a Manager can change it.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">SMTP host</span>
+              <input
+                value={emailCfg.host}
+                onChange={(e) => setEmailCfg({ ...emailCfg, host: e.target.value })}
+                placeholder="mail.yourfactory.com"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Port</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={emailCfg.port}
+                onChange={(e) => setEmailCfg({ ...emailCfg, port: Number(e.target.value) })}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">SMTP user (optional)</span>
+              <input
+                value={emailCfg.user}
+                onChange={(e) => setEmailCfg({ ...emailCfg, user: e.target.value })}
+                placeholder="no user = open relay"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Password</span>
+              <input
+                type="password"
+                value={emailCfg.pass}
+                onChange={(e) => setEmailCfg({ ...emailCfg, pass: e.target.value })}
+                placeholder={emailHasPass ? "*** stored — leave empty to keep" : ""}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">From name</span>
+              <input
+                value={emailCfg.fromName}
+                onChange={(e) => setEmailCfg({ ...emailCfg, fromName: e.target.value })}
+                placeholder="WoodTek"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">From email</span>
+              <input
+                value={emailCfg.fromEmail}
+                onChange={(e) => setEmailCfg({ ...emailCfg, fromEmail: e.target.value })}
+                placeholder="dispatch@yourfactory.com"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={emailCfg.secure}
+                onChange={(e) => setEmailCfg({ ...emailCfg, secure: e.target.checked })}
+                className="h-4 w-4 accent-sky-500"
+              />
+              <span className="text-xs font-bold text-slate-300">
+                Use TLS (secure) — tick for port 465; leave off for 587 STARTTLS
+              </span>
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={saveEmailConfig}
+              className="rounded-xl bg-sky-500 px-4 py-1.5 text-xs font-black text-slate-950 hover:bg-sky-400"
+            >
+              Save SMTP settings
+            </button>
+            <input
+              value={emailTestTo}
+              onChange={(e) => setEmailTestTo(e.target.value)}
+              placeholder="you@example.com"
+              className="w-48 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+            />
+            <button
+              onClick={testEmailConfig}
+              className="rounded-xl border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-300 hover:bg-sky-500/20"
+            >
+              Send test email
+            </button>
+          </div>
+          {emailCfgMsg && (
+            <div className={`mt-2 text-[11px] font-bold ${emailCfgMsgOk ? "text-emerald-400" : "text-rose-400"}`}>{emailCfgMsg}</div>
+          )}
+          {emailTestMsg && (
+            <div className={`mt-1 text-[11px] font-bold ${emailTestMsgOk ? "text-emerald-400" : "text-rose-400"}`}>{emailTestMsg}</div>
+          )}
         </div>
       )}
 
