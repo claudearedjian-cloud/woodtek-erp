@@ -53,6 +53,7 @@ compile("src/lib/materialProgress.ts", "lib/materialProgress.js");
 compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
 compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
 compile("src/lib/jobTicket.ts", "lib/jobTicket.js");
+compile("src/lib/deliveryNote.ts", "lib/deliveryNote.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -1572,6 +1573,109 @@ check(legacyHtml.includes('JobTicket-PO-') === false, "job ticket: HTML does not
 const owdSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
 check(owdSource.includes("printJobTicket") && owdSource.includes("buildJobTicketHtml") && owdSource.includes("Job Ticket") && owdSource.includes("Printer"), "job ticket: order workflow exposes printable job ticket (button + print window via buildJobTicketHtml + QR)");
 check(owdSource.includes("inventoryItems, machines, qrDataUrl"), "job ticket: ticket builder receives live inventory dimensions and machine assignments");
+
+// ---- bundle 42: printable delivery note (client-facing, address & signatures) ----
+const dn = require("./compiled/lib/deliveryNote.js");
+check(dn.DELIVERY_NOTE_VERSION === 1, "delivery note: VERSION is 1");
+check(dn.deliveryNoteFilename("PO-0101/2026") === "DeliveryNote-PO-0101-2026.pdf", "delivery note: filename sanitises slashes to dashes");
+check(dn.deliveryNoteFilename("  a/b:c  ").startsWith("DeliveryNote-"), "delivery note: filename handles weird characters");
+check(dn.formatDeliveryDate("2026-09-30T12:00:00Z").includes("2026") || dn.formatDeliveryDate("2026-09-30T12:00:00Z") === "—", "delivery note: date formatting never throws");
+check(dn.formatDeliveryDate("invalid") === "—", "delivery note: invalid date falls back to dash");
+check(dn.formatDeliveryDate(null) === "—" && dn.formatDeliveryDate("") === "—", "delivery note: empty date falls back to dash");
+const sampleDeliveryOrder = {
+  id: 101,
+  orderNumber: "PO-0101/2026",
+  title: "Dining set <special>",
+  projectType: "Dining",
+  priority: "High",
+  status: "Completed",
+  dueDate: "2026-10-05T12:00:00Z",
+  createdAt: "2026-09-20T08:00:00Z",
+  progressPercent: 100,
+  customerCompany: "ACME Joinery",
+  customerName: "Owner",
+  customerPhone: "03 123456",
+  customerEmail: "owner@acme.test",
+  customerAddress: "Beirut, Main St 123\nLebanon",
+  notes: "Deliver after 5pm & call <owner>",
+  productionPlan: {
+    orderId: 101,
+    createdAt: "2026-09-20T08:00:00Z",
+    defaultSteps: [],
+    items: [
+      {
+        materialId: 91,
+        itemId: 22,
+        name: "Dining table top",
+        quantityUsed: 1,
+        routeSource: "recipe",
+        recipeId: 4,
+        recipeName: "Cut + finish",
+        steps: [
+          { operationId: 910, position: 1, stageKey: "1. Cutting", operationName: "Cutting", machineCategory: "Beam Saw", estimatedMinutes: 60, auto: true, machineId: 1 },
+        ],
+      },
+      {
+        materialId: 92,
+        itemId: 23,
+        name: "Chairs x4",
+        quantityUsed: 4,
+        routeSource: "custom",
+        recipeId: null,
+        recipeName: "",
+        steps: [
+          { operationId: 911, position: 1, stageKey: "1. Assembly", operationName: "Assembly", machineCategory: "Assembly", estimatedMinutes: 120, auto: false, machineId: 6 },
+        ],
+      },
+    ],
+  },
+  operations: [],
+  materials: [
+    { id: 91, itemId: 22, itemName: "Oak Panel 40mm", itemSku: "OAK-40", itemUnit: "pcs", quantityUsed: 1 },
+    { id: 92, itemId: 23, itemName: "Chair frame", itemSku: "CHAIR-F", itemUnit: "pcs", quantityUsed: 4 },
+  ],
+};
+const deliveryInv = [
+  { id: 22, sku: "OAK-40", name: "Oak Panel 40mm", unit: "pcs", dimensions: "2000 x 1000 x 40", location: "Rack C1" },
+  { id: 23, sku: "CHAIR-F", name: "Chair frame", unit: "pcs", dimensions: "500 x 500 x 900", location: "Rack D2" },
+];
+const deliveryHtml = dn.buildDeliveryNoteHtml(sampleDeliveryOrder, { inventoryItems: deliveryInv, machines: [], qrDataUrl: "data:image/png;base64,xyz789" });
+check(deliveryHtml.includes("WOODTEK") && deliveryHtml.includes("Delivery Note") && deliveryHtml.includes("PO-0101/2026"), "delivery note: HTML header with branding, delivery label and order number");
+check(deliveryHtml.includes("#134e4a") || deliveryHtml.includes("#2dd4bf") || deliveryHtml.includes("teal") || deliveryHtml.includes("134e4a"), "delivery note: teal header styling");
+check(deliveryHtml.includes("Bill to") && deliveryHtml.includes("Deliver to") && deliveryHtml.includes("ACME Joinery"), "delivery note: Bill to / Deliver to sections with company");
+check(deliveryHtml.includes("Beirut, Main St 123"), "delivery note: delivery address from customerAddress");
+check(deliveryHtml.includes("Dining set &lt;special&gt;"), "delivery note: title is HTML-escaped");
+check(deliveryHtml.includes("Deliver after 5pm &amp; call &lt;owner&gt;"), "delivery note: notes are HTML-escaped");
+check(deliveryHtml.includes("BATCH 1") && deliveryHtml.includes("Dining table top") && deliveryHtml.includes("BATCH 2") && deliveryHtml.includes("Chairs x4"), "delivery note: every material batch has its own card with batch number and name");
+check(deliveryHtml.includes("2000 x 1000 x 40") && deliveryHtml.includes("Rack C1") || deliveryHtml.includes("Rack D2"), "delivery note: panel dimensions and location appear per batch");
+check(deliveryHtml.includes("Qty") && deliveryHtml.includes("Check") && !deliveryHtml.includes("$") || deliveryHtml.includes("qty-only") || deliveryHtml.includes("Qty only"), "delivery note: qty-only table, no cost leaked (client-facing)");
+check(deliveryHtml.includes("data:image/png;base64,xyz789"), "delivery note: QR code embedded");
+check(deliveryHtml.includes("Delivery instructions") && deliveryHtml.includes("quantities") && deliveryHtml.includes("property of"), "delivery note: delivery instructions present");
+check(deliveryHtml.includes("Prepared by") && deliveryHtml.includes("Delivered by") && deliveryHtml.includes("Received by") && deliveryHtml.includes("Client stamp"), "delivery note: 4-signature footer (prepared, delivered, received, stamp)");
+const legacyDeliveryOrder = {
+  id: 102,
+  orderNumber: "PO-0102/2026",
+  title: "Legacy wardrobe",
+  projectType: "Wardrobes",
+  priority: "Normal",
+  status: "Completed",
+  dueDate: "2026-10-10T00:00:00Z",
+  createdAt: "2026-09-21T08:00:00Z",
+  progressPercent: 100,
+  customerCompany: "Globex",
+  customerAddress: "Mount Lebanon, Baabda",
+  operations: [],
+  materials: [
+    { id: 95, itemId: 30, itemName: "Wardrobe panel", itemSku: "WARD-P", itemUnit: "pcs", quantityUsed: 6 },
+  ],
+};
+const legacyDeliveryHtml = dn.buildDeliveryNoteHtml(legacyDeliveryOrder, { inventoryItems: [{ id: 30, sku: "WARD-P", name: "Wardrobe panel", unit: "pcs", dimensions: "2200 x 600 x 18", location: "" }], machines: [] });
+check(legacyDeliveryHtml.includes("Delivery list") || legacyDeliveryHtml.includes("WARD-P") && legacyDeliveryHtml.includes("Wardrobe panel"), "delivery note: legacy orders without a plan fall back to combined Materials table");
+check(legacyDeliveryHtml.includes("Mount Lebanon") && legacyDeliveryHtml.includes("Baabda"), "delivery note: legacy still shows customer address");
+check(owdSource.includes("printDeliveryNote") && owdSource.includes("buildDeliveryNoteHtml") && owdSource.includes("Delivery Note") && owdSource.includes("Truck"), "delivery note: order workflow exposes printable delivery note (button + print window via buildDeliveryNoteHtml + QR)");
+check(owdSource.includes("bg-teal-500") && owdSource.includes("Delivery Note"), "delivery note: teal Delivery Note button styling");
+const orderDetailApiSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+check(orderDetailApiSource.includes("customerAddress") && orderDetailApiSource.includes("customers.address") || orderDetailApiSource.includes("customerAddress: customers.address"), "delivery note: orders/[id] API selects customerAddress for Bill to / Deliver to");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

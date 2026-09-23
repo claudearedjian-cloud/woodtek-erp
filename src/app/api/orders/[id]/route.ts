@@ -37,6 +37,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         customerCompany: customers.company,
         customerEmail: customers.email,
         customerPhone: customers.phone,
+        customerAddress: customers.address,
       })
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
