@@ -54,6 +54,7 @@ compile("src/lib/materialRoutes.ts", "lib/materialRoutes.js");
 compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
 compile("src/lib/jobTicket.ts", "lib/jobTicket.js");
 compile("src/lib/deliveryNote.ts", "lib/deliveryNote.js");
+compile("src/lib/dispatchPack.ts", "lib/dispatchPack.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -1676,6 +1677,137 @@ check(owdSource.includes("printDeliveryNote") && owdSource.includes("buildDelive
 check(owdSource.includes("bg-teal-500") && owdSource.includes("Delivery Note"), "delivery note: teal Delivery Note button styling");
 const orderDetailApiSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
 check(orderDetailApiSource.includes("customerAddress") && orderDetailApiSource.includes("customers.address") || orderDetailApiSource.includes("customerAddress: customers.address"), "delivery note: orders/[id] API selects customerAddress for Bill to / Deliver to");
+
+// ---- bundle 43: combined dispatch pack (job ticket + delivery note + QC + photos + proof) ----
+const dpack = require("./compiled/lib/dispatchPack.js");
+check(dpack.DISPATCH_PACK_VERSION === 1, "dispatch pack: VERSION is 1");
+check(dpack.dispatchPackFilename("PO-0103/2026") === "DispatchPack-PO-0103-2026.pdf", "dispatch pack: filename sanitises slashes to dashes");
+check(dpack.dispatchPackFilename("  a/b:c  ").startsWith("DispatchPack-"), "dispatch pack: filename handles weird characters");
+check(dpack.formatPackDate("2026-09-30T12:00:00Z").includes("2026") || dpack.formatPackDate("2026-09-30T12:00:00Z") === "—", "dispatch pack: date formatting never throws");
+check(dpack.formatPackDate("invalid") === "—", "dispatch pack: invalid date falls back to dash");
+check(dpack.formatPackDate(null) === "—" && dpack.formatPackDate("") === "—", "dispatch pack: empty date falls back to dash");
+check(dpack.formatPackDateTime("invalid") === "—" && dpack.formatPackDateTime(null) === "—", "dispatch pack: invalid datetime falls back to dash");
+const samplePackOrder = {
+  id: 103,
+  orderNumber: "PO-0103/2026",
+  title: "Combined kitchen <pack>",
+  projectType: "Kitchens",
+  priority: "Urgent",
+  status: "Completed",
+  dueDate: "2026-10-15T12:00:00Z",
+  createdAt: "2026-09-22T08:00:00Z",
+  progressPercent: 100,
+  customerCompany: "ACME Joinery",
+  customerName: "Owner",
+  customerPhone: "03 123456",
+  customerEmail: "owner@acme.test",
+  customerAddress: "Beirut, Main St 123\nLebanon",
+  notes: "Pack all & verify <edges>",
+  productionPlan: {
+    orderId: 103,
+    createdAt: "2026-09-22T08:00:00Z",
+    defaultSteps: [],
+    items: [
+      {
+        materialId: 101,
+        itemId: 32,
+        name: "Kitchen top",
+        quantityUsed: 1,
+        routeSource: "recipe",
+        recipeId: 5,
+        recipeName: "Cut + edge",
+        steps: [
+          { operationId: 1001, position: 1, stageKey: "1. Saw", operationName: "Saw", machineCategory: "Beam Saw", estimatedMinutes: 90, auto: true, machineId: 1 },
+        ],
+      },
+      {
+        materialId: 102,
+        itemId: 33,
+        name: "Shelves x4",
+        quantityUsed: 4,
+        routeSource: "custom",
+        recipeId: null,
+        recipeName: "",
+        steps: [
+          { operationId: 1002, position: 1, stageKey: "1. Press", operationName: "Press", machineCategory: "Press", estimatedMinutes: 60, auto: false, machineId: 2 },
+        ],
+      },
+    ],
+  },
+  operations: [
+    { id: 1001, stepOrder: 1, operationName: "Saw", machineCategory: "Beam Saw", machineId: 1, machineCode: "BEAM-01", machineName: "Beam Saw", estimatedMinutes: 90, status: "Completed" },
+    { id: 1002, stepOrder: 2, operationName: "Press", machineCategory: "Press", machineId: 2, machineCode: "PRESS-01", machineName: "Press", estimatedMinutes: 60, status: "Completed" },
+  ],
+  materials: [
+    { id: 101, itemId: 32, itemName: "MDF 18mm", itemSku: "MDF-18", itemUnit: "pcs", quantityUsed: 1 },
+    { id: 102, itemId: 33, itemName: "Shelf", itemSku: "SHELF-01", itemUnit: "pcs", quantityUsed: 4 },
+  ],
+};
+const packInv = [
+  { id: 32, sku: "MDF-18", name: "MDF 18mm", unit: "pcs", dimensions: "2440 x 1220 x 18", location: "Rack A1" },
+  { id: 33, sku: "SHELF-01", name: "Shelf", unit: "pcs", dimensions: "800 x 300 x 18", location: "Rack B1" },
+];
+const packMachines = [
+  { id: 1, code: "BEAM-01", name: "Beam Saw", category: "Beam Saw", status: "Active" },
+  { id: 2, code: "PRESS-01", name: "Press", category: "Press", status: "Active" },
+];
+const packHtml = dpack.buildDispatchPackHtml(samplePackOrder, {
+  inventoryItems: packInv,
+  machines: packMachines,
+  qrDataUrl: "data:image/png;base64,pack123",
+  packingTemplate: ["All items packed", "Edges checked", "Corners protected"],
+  packingChecks: [true, false, true],
+  batchPackingChecks: { "101": [true, true, true] },
+  deliveryPhotos: [{ id: "ph1", name: "front.jpg", size: 12345, createdAt: "2026-10-14T10:00:00Z", createdBy: "Maroun" }],
+  batchDeliveryPhotos: { "101": [{ id: "ph2", name: "top-detail.jpg", size: 54321, createdAt: "2026-10-14T11:00:00Z", createdBy: "Maroun" }] },
+  dispatchStage: "delivered",
+  dispatchProof: { at: "2026-10-15T09:00:00Z", by: "Driver Joe", note: "Left at reception" },
+  batchDispatchStages: { "101": { stage: "delivered", proof: { at: "2026-10-15T09:00:00Z", by: "Driver Joe" } } },
+});
+check(packHtml.includes("WOODTEK") && packHtml.includes("Dispatch Pack") && packHtml.includes("PO-0103/2026"), "dispatch pack: HTML header with branding, pack label and order number");
+check(packHtml.includes("#312e81") || packHtml.includes("#818cf8") || packHtml.includes("indigo") || packHtml.includes("312e81"), "dispatch pack: indigo header styling distinct from job ticket amber and delivery note teal");
+check(packHtml.includes("Bill to") && packHtml.includes("Deliver to") && packHtml.includes("ACME Joinery"), "dispatch pack: Bill to / Deliver to sections");
+check(packHtml.includes("Beirut, Main St 123"), "dispatch pack: delivery address from customerAddress");
+check(packHtml.includes("Combined kitchen &lt;pack&gt;"), "dispatch pack: title is HTML-escaped");
+check(packHtml.includes("Pack all &amp; verify &lt;edges&gt;"), "dispatch pack: notes are HTML-escaped");
+check(packHtml.includes("BATCH 1") && packHtml.includes("Kitchen top") && packHtml.includes("BATCH 2") && packHtml.includes("Shelves x4"), "dispatch pack: every material batch has its own card with batch number and name");
+check(packHtml.includes("2440 x 1220 x 18") && packHtml.includes("Rack A1"), "dispatch pack: panel dimensions and shop location appear per batch");
+check(packHtml.includes("BEAM-01") && packHtml.includes("Saw") && packHtml.includes("PRESS-01"), "dispatch pack: routing shows operation name and station code");
+check(packHtml.includes("data:image/png;base64,pack123"), "dispatch pack: QR code embedded");
+check(packHtml.toLowerCase().includes("dispatch pack contents") || packHtml.includes("Table of Contents") || packHtml.includes("Contents"), "dispatch pack: table of contents present");
+check(packHtml.includes("Packing QC") || packHtml.includes("Packing Checklist"), "dispatch pack: packing QC checklist section");
+check(packHtml.includes("All items packed") && packHtml.includes("Edges checked"), "dispatch pack: QC template items listed");
+check(packHtml.includes("Delivery Photos") || packHtml.includes("delivery photos") || packHtml.includes("front.jpg"), "dispatch pack: delivery photos section with file name");
+check(packHtml.includes("Dispatch") && (packHtml.includes("delivered") || packHtml.includes("Delivered")), "dispatch pack: dispatch stage and proof");
+check(packHtml.includes("Prepared by") && packHtml.includes("Packed by") && packHtml.includes("Delivered by") && packHtml.includes("Received by"), "dispatch pack: 6-signature footer (prepared, packed, delivered, received, QC, stamp)");
+check(packHtml.includes("page-break-before") && packHtml.includes("@page"), "dispatch pack: page breaks for print sections");
+check(packHtml.includes("Delivery Note") && packHtml.includes("Job Ticket"), "dispatch pack: combines job ticket and delivery note in one document");
+const legacyPackOrder = {
+  id: 104,
+  orderNumber: "PO-0104/2026",
+  title: "Legacy pack",
+  projectType: "Wardrobes",
+  priority: "Normal",
+  status: "Completed",
+  dueDate: "2026-10-20T00:00:00Z",
+  createdAt: "2026-09-23T08:00:00Z",
+  progressPercent: 100,
+  customerCompany: "Globex",
+  customerAddress: "Mount Lebanon, Baabda",
+  operations: [{ id: 1101, stepOrder: 1, operationName: "Cutting", machineCategory: "Beam Saw", machineId: null, estimatedMinutes: 60, status: "Completed" }],
+  materials: [{ id: 110, itemId: 40, itemName: "Panel", itemSku: "PAN-01", itemUnit: "pcs", quantityUsed: 2 }],
+};
+const legacyPackHtml = dpack.buildDispatchPackHtml(legacyPackOrder, {
+  inventoryItems: [{ id: 40, sku: "PAN-01", name: "Panel", unit: "pcs", dimensions: "", location: "" }],
+  machines: [],
+  packingTemplate: ["Check qty"],
+  packingChecks: [true],
+  deliveryPhotos: [],
+  dispatchStage: "ready",
+});
+check(legacyPackHtml.includes("PAN-01") && legacyPackHtml.includes("Mount Lebanon"), "dispatch pack: legacy orders fall back and still show address");
+check(owdSource.includes("printDispatchPack") && owdSource.includes("buildDispatchPackHtml") && owdSource.includes("Dispatch Pack") && owdSource.includes("Package"), "dispatch pack: order workflow exposes printable dispatch pack (button + print window via buildDispatchPackHtml + QR + Package icon)");
+check(owdSource.includes("bg-indigo-500") && owdSource.includes("Dispatch Pack"), "dispatch pack: indigo Dispatch Pack button styling");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;
