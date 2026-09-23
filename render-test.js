@@ -55,6 +55,8 @@ compile("src/lib/productionPlan.ts", "lib/productionPlan.js");
 compile("src/lib/jobTicket.ts", "lib/jobTicket.js");
 compile("src/lib/deliveryNote.ts", "lib/deliveryNote.js");
 compile("src/lib/dispatchPack.ts", "lib/dispatchPack.js");
+compile("src/lib/emailConfig.ts", "lib/emailConfig.js");
+compile("src/lib/emailDispatch.ts", "lib/emailDispatch.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -102,6 +104,10 @@ const packingApiSource = fs.readFileSync("src/app/api/packing-qc/route.ts", "utf
 const deliveryPhotoApiSource = fs.readFileSync("src/app/api/delivery-photos/route.ts", "utf8");
 const ganttViewSource = fs.readFileSync("src/components/GanttView.tsx", "utf8");
 const ganttApiSource = fs.readFileSync("src/app/api/gantt/route.ts", "utf8");
+const emailConfigServerSource = fs.readFileSync("src/lib/emailConfig.server.ts", "utf8");
+const emailConfigApiSource = fs.readFileSync("src/app/api/email-config/route.ts", "utf8");
+const emailDispatchApiSource = fs.readFileSync("src/app/api/email-dispatch/route.ts", "utf8");
+const settingsViewSource = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 check(pageSource.includes("dynamic(() => import(\"@/components/OperatorStationView\")"), "performance: application workspaces are code-split");
 check(!pageSource.includes("onRefresh={fetchAllData}"), "performance: actions never launch the whole-app refresh flood");
 check(pageSource.includes("compactStation ? Promise.resolve(null)"), "performance: locked Operator login skips unrelated administration datasets");
@@ -1808,6 +1814,78 @@ const legacyPackHtml = dpack.buildDispatchPackHtml(legacyPackOrder, {
 check(legacyPackHtml.includes("PAN-01") && legacyPackHtml.includes("Mount Lebanon"), "dispatch pack: legacy orders fall back and still show address");
 check(owdSource.includes("printDispatchPack") && owdSource.includes("buildDispatchPackHtml") && owdSource.includes("Dispatch Pack") && owdSource.includes("Package"), "dispatch pack: order workflow exposes printable dispatch pack (button + print window via buildDispatchPackHtml + QR + Package icon)");
 check(owdSource.includes("bg-indigo-500") && owdSource.includes("Dispatch Pack"), "dispatch pack: indigo Dispatch Pack button styling");
+
+// ---- bundle 44: email dispatch (SMTP settings + Email Docs) ----
+const ecfg = require("./compiled/lib/emailConfig.js");
+const edisp = require("./compiled/lib/emailDispatch.js");
+const sampleOrder44 = { id: 44, orderNumber: "ORD-2026-0044", title: "Executive <mahogany> Conference Table & Wall Paneling" };
+
+check(ecfg.EMAIL_CONFIG_VERSION === 1, "email: emailConfig VERSION is 1");
+check(edisp.EMAIL_DISPATCH_VERSION === 1, "email: emailDispatch VERSION is 1");
+
+const cleaned = ecfg.sanitizeEmailConfig({ host: " mail.factory.com ", port: "99999", user: " smtp-user ", pass: " s3cret ", fromName: " WoodTek ", fromEmail: "FROM@Factory.COM " });
+check(cleaned.host === "mail.factory.com" && cleaned.user === "smtp-user", "email: sanitize trims host and user");
+check(cleaned.fromEmail === "from@factory.com", "email: sanitize lowercases the from address");
+check(cleaned.port === 65535, "email: sanitize clamps an oversized port to 65535");
+check(ecfg.sanitizeEmailConfig({ port: 0 }).port === 1, "email: sanitize clamps port 0 up to 1");
+check(ecfg.sanitizeEmailConfig({ port: "junk" }).port === 587, "email: sanitize falls back to port 587 for non-numeric input");
+check(ecfg.sanitizeEmailConfig(null).version === 1 && ecfg.sanitizeEmailConfig(null).fromEmail === "", "email: sanitize accepts garbage input (null) and returns the default shape");
+
+check(ecfg.validateEmailConfig(ecfg.sanitizeEmailConfig({})).includes("host"), "email: validation requires the SMTP host");
+check(ecfg.validateEmailConfig(ecfg.sanitizeEmailConfig({ host: "smtp.x.com" })).includes("From email"), "email: validation requires the from email");
+check(ecfg.validateEmailConfig(ecfg.sanitizeEmailConfig({ host: "smtp.x.com", fromEmail: "not-an-email" })).includes("valid address"), "email: validation rejects a malformed from email");
+check(ecfg.validateEmailConfig(ecfg.sanitizeEmailConfig({ host: "smtp.x.com", fromEmail: "a@b.com", user: "u" })).includes("password"), "email: validation requires a password when an SMTP user is set");
+check(ecfg.validateEmailConfig(ecfg.sanitizeEmailConfig({ host: "smtp.x.com", fromEmail: "a@b.com", user: "u", pass: "p" })) === null, "email: a complete config passes validation");
+check(ecfg.isEmailConfigured(ecfg.sanitizeEmailConfig({ host: "smtp.x.com", fromEmail: "a@b.com" })) && !ecfg.isEmailConfigured(ecfg.sanitizeEmailConfig({})), "email: isEmailConfigured needs host + from email");
+
+const masked = ecfg.maskEmailConfig({ version: 1, host: "h", port: 465, secure: true, user: "u", pass: "super-secret", fromName: "W", fromEmail: "w@x.com" });
+check(masked.pass === "***" && masked.hasPass === true, "email: mask turns the password into *** and sets hasPass");
+check(!JSON.stringify(masked).includes("super-secret"), "email: mask never leaks the clear password");
+check(ecfg.maskEmailConfig({ version: 1, host: "", port: 587, secure: false, user: "", pass: "", fromName: "", fromEmail: "" }).hasPass === false, "email: mask without a stored password reports hasPass false");
+check(ecfg.buildFromHeader({ version: 1, host: "h", port: 587, secure: false, user: "", pass: "", fromName: "WoodTek", fromEmail: "dispatch@woodtek.local" }) === "WoodTek <dispatch@woodtek.local>", "email: from header is Name <address>");
+check(ecfg.buildFromHeader({ version: 1, host: "h", port: 587, secure: false, user: "", pass: "", fromName: "", fromEmail: "Dispatch@woodtek.local" }) === "dispatch@woodtek.local", "email: from header falls back to the bare lowercased address");
+
+check(edisp.sanitizeRecipient("  Name@Factory.com  ") === "name@factory.com", "email: sanitizeRecipient trims and lowercases one address");
+const parsed = edisp.parseRecipients("a@x.com, B@x.com;C@X.COM\nd@y.org,not-an-email, d@y.org");
+check(parsed.recipients.length === 4 && parsed.recipients[0] === "a@x.com" && parsed.recipients[2] === "c@x.com", "email: parseRecipients splits on comma/semicolon/newline and dedupes case-insensitively");
+check(parsed.rejected.includes("not-an-email"), "email: parseRecipients reports invalid addresses in rejected");
+check(edisp.parseRecipients("").recipients.length === 0, "email: parseRecipients on empty input returns nothing");
+check(edisp.parseRecipients(Array.from({ length: 40 }, (_, i) => `u${i}@x.com`).join(",")).recipients.length === edisp.MAX_EMAIL_RECIPIENTS, "email: parseRecipients caps the recipient count");
+
+check(edisp.buildDeliveryEmailSubject(sampleOrder44) === `Delivery note — ORD-2026-0044 — Executive <mahogany> Conference Table & Wall Paneling`, "email: delivery email subject carries label, order number and title");
+check(edisp.buildDispatchPackEmailSubject(sampleOrder44).startsWith("Dispatch pack — ORD-2026-0044"), "email: dispatch pack email subject carries label and order number");
+check(edisp.buildDeliveryEmailSubject({ id: 7 }).includes("ORDER-7"), "email: subject falls back to ORDER-<id> when no number exists");
+
+const mailHtml = edisp.buildEmailHtmlBody({ title: "Delivery note — ORD-2026-0044 — <b>Table</b> & Wall", message: "Line 1\nLine 2 <script>alert(1)</script>", orderNumber: "ORD-2026-0044", senderName: "Joan <M>", attachments: ["DeliveryNote-ORD.html"] });
+check(mailHtml.includes("Delivery note — ORD-2026-0044 — &lt;b&gt;Table&lt;/b&gt; &amp; Wall"), "email: HTML body escapes the title");
+check(mailHtml.includes("Line 2 &lt;script&gt;alert(1)&lt;/script&gt;") && !mailHtml.includes("<script>alert(1)"), "email: HTML body escapes the message (no live script tag)");
+check(mailHtml.includes("DeliveryNote-ORD.html") && mailHtml.includes("ORD-2026-0044") && mailHtml.includes("Joan &lt;M&gt;"), "email: HTML body lists attachments, order number and sender");
+check(edisp.buildEmailTextBody({ title: "T & P", message: "hello\nworld", orderNumber: "ORD-1", senderName: "Joan", attachments: ["A.html", "B.html"] }).includes("  - A.html"), "email: text body is the plain-text twin with the attachment list");
+check(edisp.describeSendError(new Error("Invalid login: bad password=SEKRIT")).includes("password=***") && !edisp.describeSendError(new Error("x password=SEKRIT")).includes("SEKRIT"), "email: send error messages redact password tokens");
+
+check(emailConfigServerSource.includes("WOODTEK_DATA_DIR") && emailConfigServerSource.includes("email-config.json"), "email: server store reads/writes data/email-config.json via WOODTEK_DATA_DIR");
+check(emailConfigServerSource.includes("renameSync") && emailConfigServerSource.includes(".tmp"), "email: server store writes atomically (temp file + rename)");
+
+check(emailConfigApiSource.includes("authorize()") && emailConfigApiSource.includes("users:manage"), "email: config API gates GET to sign-in and PUT/POST to Manager (users:manage)");
+check(emailConfigApiSource.includes("nodemailer") && emailConfigApiSource.includes("maskEmailConfig"), "email: config API uses nodemailer and answers with maskEmailConfig");
+check(emailConfigApiSource.includes("EMAIL_CONFIG_PLACEHOLDER") && emailConfigApiSource.includes("stored.pass"), "email: config API keeps the stored password when the *** placeholder comes back");
+check(emailConfigApiSource.includes('body?.action ?? ""') && emailConfigApiSource.includes("SMTP test"), "email: config API POST sends a test email only for action=test");
+
+check(emailDispatchApiSource.includes("authorize()") && emailDispatchApiSource.includes("can(user.role, \"orders:write\")") && emailDispatchApiSource.includes("quality:write") && emailDispatchApiSource.includes("inventory:write") && emailDispatchApiSource.includes("users:manage"), "email: dispatch API enforces canSendEmail (orders:write / quality:write / inventory:write / users:manage)");
+check(emailDispatchApiSource.includes("readOrderProductionPlan(orderId)"), "email: dispatch API reads the production plan from the JSON store (no orders.productionPlan column)");
+check(!emailDispatchApiSource.includes("orders.productionPlan"), "email: dispatch API never references a productionPlan column on the orders table");
+check(emailDispatchApiSource.includes("inventoryItems.name") && emailDispatchApiSource.includes("leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))"), "email: dispatch API joins inventoryItems for the material name (no itemName column)");
+check(emailDispatchApiSource.includes("leftJoin(machines, eq(orderOperations.machineId, machines.id))"), "email: dispatch API joins machines for the operation station");
+check(emailDispatchApiSource.includes("buildDeliveryNoteHtml") && emailDispatchApiSource.includes("buildDispatchPackHtml") && emailDispatchApiSource.includes("buildJobTicketHtml"), "email: dispatch API builds the three HTML document attachments");
+check(emailDispatchApiSource.includes("delivery-photos.json") && emailDispatchApiSource.includes("readDispatchStore"), "email: dispatch API reads delivery-photos.json and dispatch-status.json for the pack");
+check(emailDispatchApiSource.includes("nodemailer") && emailDispatchApiSource.includes('logAudit(') && emailDispatchApiSource.includes('"email.dispatch"'), "email: dispatch API sends via nodemailer and audits email.dispatch");
+check(emailDispatchApiSource.includes("customerAddress: customers.address"), "email: dispatch API carries the customer address from the customers join");
+
+check(settingsViewSource.includes("/api/email-config") && settingsViewSource.includes("emailCfg") && settingsViewSource.includes("emailHasPass") && settingsViewSource.includes("SMTP"), "email: settings view has the Manager-only SMTP panel wired to /api/email-config");
+check(settingsViewSource.includes("saveEmailConfig") && settingsViewSource.includes("testEmailConfig") && settingsViewSource.includes('action: "test"'), "email: settings view saves the config and can send a test email");
+check(orderWorkflowSource.includes("openEmailModal") && orderWorkflowSource.includes("Email Docs") && orderWorkflowSource.includes("bg-sky-500"), "email: order workflow exposes the Email Docs button (Mail icon, sky-500)");
+check(orderWorkflowSource.includes("sendEmailDispatch") && orderWorkflowSource.includes("/api/email-dispatch") && orderWorkflowSource.includes("includeDispatchPack"), "email: order workflow posts the dispatch with the document checkboxes");
+check(orderWorkflowSource.includes("emailResult") && orderWorkflowSource.includes("setEmailOpen(false)"), "email: order workflow shows a result banner and auto-closes the modal");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;
