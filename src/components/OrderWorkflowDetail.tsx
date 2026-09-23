@@ -26,6 +26,7 @@ import {
   QrCode,
   Copy,
   Printer,
+  Truck,
   X,
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -36,6 +37,7 @@ import { can, canAssignMachines } from "@/lib/permissions";
 import { machineCategoryMatches } from "@/lib/operationMachineCandidates";
 import { allowedStages } from "@/lib/materialProgress";
 import { buildJobTicketHtml } from "@/lib/jobTicket";
+import { buildDeliveryNoteHtml } from "@/lib/deliveryNote";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -321,6 +323,26 @@ export default function OrderWorkflowDetail({
     const w = window.open("", "_blank", "width=900,height=1100");
     if (!w) {
       setActionError("Allow pop-ups to print the job ticket.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 700);
+  };
+
+  const printDeliveryNote = async () => {
+    if (!order) return;
+    const link = `${window.location.origin}/?order=${order.id}`;
+    let qrData: string | null = null;
+    try {
+      qrData = await QRCode.toDataURL(link, { width: 300, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } });
+    } catch {
+      qrData = null;
+    }
+    const html = buildDeliveryNoteHtml(order, { inventoryItems, machines, qrDataUrl: qrData });
+    const w = window.open("", "_blank", "width=900,height=1100");
+    if (!w) {
+      setActionError("Allow pop-ups to print the delivery note.");
       return;
     }
     w.document.write(html);
@@ -786,6 +808,13 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             title="Print a job ticket — one sheet per order with every cut list, material, dimensions & station routing for the floor"
           >
             <Printer className="w-4 h-4" /> Job Ticket
+          </button>
+          <button
+            onClick={printDeliveryNote}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-500 border border-teal-500 text-xs font-black text-slate-950 hover:bg-teal-400 transition shadow-md shadow-teal-500/20"
+            title="Print a delivery note — client-facing, address & signatures, qty-only"
+          >
+            <Truck className="w-4 h-4" /> Delivery Note
           </button>
           <div className="flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs">
             <button
