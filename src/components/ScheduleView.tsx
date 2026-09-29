@@ -79,6 +79,34 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   const [dispatchOrders, setDispatchOrders] = useState<any[]>([]);
   const [dispatchBusy, setDispatchBusy] = useState<string | null>(null);
   const [dispatchError, setDispatchError] = useState("");
+  // Separate the queue by order: one entry per order in the queue + free-text
+  // search across order number, batch name, customer and SKU.
+  const [dispatchOrderFilter, setDispatchOrderFilter] = useState("");
+  const [dispatchSearch, setDispatchSearch] = useState("");
+
+  const dispatchOrderOptions = useMemo(() => {
+    const byId = new Map<string, any>();
+    for (const o of dispatchOrders) {
+      const key = String(o.orderId);
+      if (!byId.has(key)) byId.set(key, o);
+    }
+    return [...byId.values()];
+  }, [dispatchOrders]);
+
+  // Drop a stale filter if the picked order left the queue (refresh/complete).
+  const activeDispatchOrderFilter = dispatchOrderOptions.some((o: any) => String(o.orderId) === dispatchOrderFilter)
+    ? dispatchOrderFilter
+    : "";
+
+  const visibleDispatchOrders = useMemo(() => {
+    const q = dispatchSearch.trim().toLowerCase();
+    return dispatchOrders.filter((o) => {
+      if (activeDispatchOrderFilter && String(o.orderId) !== activeDispatchOrderFilter) return false;
+      if (!q) return true;
+      return [o.orderNumber, o.title, o.customerCompany, o.batchName, o.itemSku]
+        .some((v) => String(v ?? "").toLowerCase().includes(q));
+    });
+  }, [dispatchOrders, activeDispatchOrderFilter, dispatchSearch]);
 
   // ---- Packing QC: legacy order checks + independent material-batch checks ----
   const [qcTemplate, setQcTemplate] = useState<string[]>([]);
@@ -326,9 +354,10 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     doc.save(`PackingSlip-${String(o.orderNumber ?? o.id)}${o.batchId != null ? `-Batch-${o.batchNumber}` : ""}.pdf`);
   };
 
-  // Delivery manifest: driver's sheet for every order awaiting delivery.
+  // Delivery manifest: driver's sheet for the batches currently shown
+  // (follows the order/search filter, so one order can be printed on its own).
   const printManifest = () => {
-    const stops = dispatchOrders
+    const stops = visibleDispatchOrders
       .filter((o) => o.stage === "awaiting_delivery")
       .sort((a, b) =>
         String(a.customerAddress ?? "").localeCompare(String(b.customerAddress ?? "")) ||
@@ -680,7 +709,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             <button
               type="button"
               onClick={printManifest}
-              title="Print the driver's manifest for every order awaiting delivery"
+              title="Print the driver's manifest for the batches shown — the order filter applies"
               className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
             >
               <Truck className="h-3.5 w-3.5" /> Print manifest
@@ -690,14 +719,58 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
             </span>
           </div>
         </div>
+        {dispatchOrders.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <select
+              value={activeDispatchOrderFilter}
+              onChange={(e) => setDispatchOrderFilter(e.target.value)}
+              title="Show one order's batches only — separate the queue per order"
+              className="max-w-72 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 outline-none focus:border-emerald-500"
+            >
+              <option value="">All orders — {dispatchOrders.length} batch{dispatchOrders.length === 1 ? "" : "es"}</option>
+              {dispatchOrderOptions.map((o: any) => (
+                <option key={String(o.orderId)} value={String(o.orderId)}>
+                  {o.orderNumber} — {o.customerCompany || o.title || `Order ${o.orderId}`}
+                </option>
+              ))}
+            </select>
+            <div className="relative">
+              <ListFilter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <input
+                value={dispatchSearch}
+                onChange={(e) => setDispatchSearch(e.target.value)}
+                placeholder="Search order, batch, customer, SKU…"
+                className="w-60 rounded-lg border border-slate-700 bg-slate-950 py-1.5 pl-8 pr-2.5 text-[11px] font-bold text-slate-200 placeholder-slate-500 outline-none focus:border-emerald-500"
+              />
+            </div>
+            {(activeDispatchOrderFilter || dispatchSearch) && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setDispatchOrderFilter(""); setDispatchSearch(""); }}
+                  className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:bg-slate-800"
+                >
+                  <X className="h-3 w-3" /> Clear filter
+                </button>
+                <span className="text-[11px] font-bold text-emerald-400">
+                  Showing {visibleDispatchOrders.length} of {dispatchOrders.length} batches
+                </span>
+              </>
+            )}
+          </div>
+        )}
         {dispatchError && (
           <div className="mb-2.5 rounded-xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-300">{dispatchError}</div>
         )}
         {dispatchOrders.length === 0 ? (
           <div className="py-6 text-center text-xs text-slate-500">No issued material batches are available for Dispatch.</div>
+        ) : visibleDispatchOrders.length === 0 ? (
+          <div className="py-6 text-center text-xs text-slate-500">
+            No batches match this filter — clear it or pick another order.
+          </div>
         ) : (
           <div className="space-y-2.5">
-            {dispatchOrders.map((o: any) => {
+            {visibleDispatchOrders.map((o: any) => {
               const rowKey = dispatchRowKey(o);
               const flow = flowFor(o.projectType);
               const nxt = nextStage(o.projectType, o.stage);
