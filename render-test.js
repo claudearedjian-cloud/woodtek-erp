@@ -144,6 +144,24 @@ check(
   "batch dispatch: UI delivers one named batch and shows sibling progress",
 );
 check(
+  scheduleSource.includes("dispatchOrderFilter")
+    && scheduleSource.includes("dispatchOrderOptions")
+    && scheduleSource.includes('All orders — {dispatchOrders.length}')
+    && scheduleSource.includes('value={String(o.orderId)}'),
+  "dispatch filter: order selector lists every order in the queue and isolates one order at a time",
+);
+check(
+  scheduleSource.includes("visibleDispatchOrders.map((o: any)")
+    && scheduleSource.includes("No batches match this filter")
+    && scheduleSource.includes("Clear filter"),
+  "dispatch filter: the queue renders filtered rows with a no-match state and a clear action",
+);
+check(
+  scheduleSource.includes("const stops = visibleDispatchOrders")
+    && scheduleSource.includes("const q = dispatchSearch.trim().toLowerCase()"),
+  "dispatch filter: driver manifest follows the active filter and free-text search matches order/batch/customer/SKU",
+);
+check(
   ordersViewSource.includes("Batch-aware Dispatch summary")
     && ordersViewSource.includes("Mixed stages")
     && ordersViewSource.includes(".delivered}/{dispatchByOrder"),
