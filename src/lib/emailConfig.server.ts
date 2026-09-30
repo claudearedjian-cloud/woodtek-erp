@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import {
   DEFAULT_EMAIL_CONFIG,
   sanitizeEmailConfig,
@@ -32,8 +33,5 @@ export function readEmailConfig(): EmailConfig {
 export function writeEmailConfig(cfg: EmailConfig): void {
   const file = fileLocation();
   const clean = sanitizeEmailConfig(cfg);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, clean);
 }

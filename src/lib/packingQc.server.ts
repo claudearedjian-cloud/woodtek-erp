@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { DEFAULT_QC_TEMPLATE, normalizeChecks, sanitizeTemplate } from "@/lib/packingQc";
 
 export interface PackingChecksStore {
@@ -74,9 +75,7 @@ export function writePackingChecksStore(store: PackingChecksStore): void {
     orders: sanitizeCheckMap(store.orders),
     batches: sanitizeCheckMap(store.batches),
   };
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, clean);
 }
 
 /** Legacy whole-order checks, retained for old rows and as migration fallback. */

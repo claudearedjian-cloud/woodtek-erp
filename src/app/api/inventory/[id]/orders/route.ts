@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orderMaterials, orders, customers, orderOperations, inventoryItems } from "@/db/schema";
-import { eq, and, isNull, ne, or, desc, inArray } from "drizzle-orm";
+import { orderMaterials, orders, customers } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 
 /**

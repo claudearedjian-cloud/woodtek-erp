@@ -1,18 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { baseRoleOf, can } from "@/lib/permissions";
+import { baseRoleOf } from "@/lib/permissions";
 import { 
   Cpu, 
   Plus, 
   Wrench, 
   User, 
-  Clock, 
-  CheckCircle2, 
-  AlertTriangle, 
-  DollarSign, 
-  Layers, 
-  Settings,
   Trash2,
   X,
   Filter,

@@ -157,7 +157,6 @@ export function buildJobTicketHtml(order: any, opts: JobTicketBuildOptions = {})
       const unit = inv ? String(inv.unit ?? "") : "";
       const dims = dimFor(itemId);
       const loc = locFor(itemId);
-      const matRow = opsById.size ? null : null; // placeholder
       // Find matching material allocation for SKU fidelity (when order.materials present)
       const matAlloc = (order?.materials ?? []).find((m: any) => Number(m?.id) === Number(batch?.materialId) || Number(m?.itemId) === itemId);
       const allocSku = matAlloc?.itemSku ? String(matAlloc.itemSku) : sku;

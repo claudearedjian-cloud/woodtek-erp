@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import {
   effectiveCandidateMachineIds,
   sanitizeCandidateMachineIds,
@@ -93,10 +94,7 @@ export function readOperationMachineCandidateStore(): CandidateStore {
 export function writeOperationMachineCandidateStore(store: CandidateStore): void {
   const file = fileLocation();
   const clean = sanitizeStore(store);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, clean);
   cacheStore(file, clean);
 }
 

@@ -9,12 +9,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { inventoryItems } from "@/db/schema";
 import { DEFAULT_INVENTORY_CATEGORIES, sanitizeInventoryCategories } from "@/lib/inventoryCategories";
-
-type RawFile = { version: 1; categories: string[] };
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -37,10 +36,7 @@ export function readInventoryCategoriesFile(): string[] | null {
 
 export function writeInventoryCategoriesFile(categories: string[]): void {
   const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify({ version: 1, categories }, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, { version: 1, categories });
 }
 
 /** Categories that already exist on items (for bootstrapping the list). */

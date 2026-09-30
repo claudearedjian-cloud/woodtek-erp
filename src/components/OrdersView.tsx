@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { STAGE_LABELS, type DispatchStage } from "@/lib/dispatch";
+import { useT } from "@/lib/langContext";
 import {
   Archive,
   Calendar,
@@ -59,6 +60,8 @@ export default function OrdersView({
   cloneSeed = null,
   onCloneConsumed,
 }: OrdersViewProps) {
+  // Label language (top-bar EN / AR / FR) — English by default.
+  const t = useT();
   const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
   const [statusFilter, setStatusFilter] = useState(presetStatus ?? "All");
   // Dashboard status buttons: apply the requested filter whenever it changes.
@@ -174,7 +177,7 @@ export default function OrdersView({
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
         <div className="flex items-center gap-3">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-amber-500" />
-          <h2 className="text-sm font-black tracking-wide text-slate-300">Loading orders…</h2>
+          <h2 className="text-sm font-black tracking-wide text-slate-300">{t("Loading orders…")}</h2>
         </div>
         <div className="h-16 animate-pulse rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-800/60 to-slate-800/20" />
         <div className="space-y-3 animate-pulse">
@@ -204,7 +207,7 @@ export default function OrdersView({
                   : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
               }`}
             >
-              {s}
+              {t(s)}
             </button>
           ))}
           <button
@@ -217,7 +220,7 @@ export default function OrdersView({
             title={showArchived ? "Back to the active orders" : `Show the ${archivedIds.length} archived order(s) — nothing is deleted`}
           >
             <Archive className="h-3.5 w-3.5" />
-            Archived{archivedIds.length > 0 ? ` (${archivedIds.length})` : ""}
+            {t("Archived")}{archivedIds.length > 0 ? ` (${archivedIds.length})` : ""}
           </button>
         </div>
 
@@ -228,10 +231,10 @@ export default function OrdersView({
             onChange={(e) => setPriorityFilter(e.target.value)}
             className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 focus:border-amber-500 focus:outline-none"
           >
-            <option value="All">Priority: All</option>
-            <option value="Urgent">Priority: Urgent</option>
-            <option value="High">Priority: High</option>
-            <option value="Normal">Priority: Normal</option>
+            <option value="All">{t("Priority: All")}</option>
+            <option value="Urgent">{t("Priority: Urgent")}</option>
+            <option value="High">{t("Priority: High")}</option>
+            <option value="Normal">{t("Priority: Normal")}</option>
           </select>
 
           {/* View Toggle */}
@@ -269,7 +272,7 @@ export default function OrdersView({
           <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-950/60">
             <ClipboardList className="h-8 w-8 text-amber-500/80 stroke-[1.5]" />
           </div>
-          <h3 className="mb-1 text-lg font-bold text-white">No Orders Matching Filter</h3>
+          <h3 className="mb-1 text-lg font-bold text-white">{t("No Orders Matching Filter")}</h3>
           <p className="mb-6 text-xs text-slate-400">
             There are currently no manufacturing orders matching your criteria. Try resetting filters or create a new order to schedule operations.
           </p>
@@ -298,7 +301,7 @@ export default function OrdersView({
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span className="font-mono text-xl font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
-                      {order.status}
+                      {t(order.status)}
                     </span>
                     {Number(order.totalSteps) > 0 && (
                       <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border ${
@@ -400,7 +403,7 @@ export default function OrdersView({
             return (
               <div key={col.status} className="flex flex-col bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3.5">
                 <div className={`flex items-center justify-between pb-3 mb-3 border-b-2 ${col.color}`}>
-                  <span className="font-extrabold text-sm text-white tracking-tight">{col.title}</span>
+                  <span className="font-extrabold text-sm text-white tracking-tight">{t(col.title)}</span>
                   <span className="bg-slate-800 text-slate-200 text-xs font-mono font-bold px-2 py-0.5 rounded">
                     {colOrders.length}
                   </span>
@@ -462,7 +465,7 @@ export default function OrdersView({
                   ))}
                   {colOrders.length === 0 && (
                     <div className="py-12 text-center text-slate-600 text-xs font-medium italic">
-                      No orders in {col.title}
+                      No orders in {t(col.title)}
                     </div>
                   )}
                 </div>

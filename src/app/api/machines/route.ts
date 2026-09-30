@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { machines, users, orderOperations, orders } from "@/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { machines } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { listMachinesForUser, listOperationsForUser, isManager as userIsManager } from "@/lib/dataAccess";
 import { readMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";

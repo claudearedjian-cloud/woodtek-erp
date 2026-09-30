@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orderMaterials } from "@/db/schema";
@@ -70,11 +71,7 @@ export async function PUT(request: Request) {
       if (template.length > 0 && !templateGates(template)) {
         return NextResponse.json({ error: "The checklist needs at least one item." }, { status: 400 });
       }
-      const file = templateLocation();
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(temp, JSON.stringify({ version: 1, template }, null, 2), "utf8");
-      fs.renameSync(temp, file);
+      writeJsonAtomic(templateLocation(), { version: 1, template });
       logAudit(
         user,
         "packing.qc.template",

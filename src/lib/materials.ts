@@ -23,12 +23,10 @@ import { db } from "@/db";
 import {
   orders,
   orderMaterials,
-  orderOperations,
   inventoryItems,
   materialConsumptions,
-  users,
 } from "@/db/schema";
-import { and, eq, inArray, isNull, ne, or, sql, sum } from "drizzle-orm";
+import { and, eq, inArray, ne, sql, sum } from "drizzle-orm";
 
 export type MaterialsStatus = "unknown" | "in_stock" | "partial" | "out_of_stock" | "consumed";
 

@@ -6,10 +6,11 @@
 // optionally choosing which machine the material goes to.
 // ============================================================================
 
-import React, { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PackageCheck, RefreshCw, Send, TriangleAlert, Undo2, Warehouse as WarehouseIcon } from "lucide-react";
 import { can } from "@/lib/permissions";
 import { sentQty } from "@/lib/bomDelivery";
+import { useT } from "@/lib/langContext";
 
 interface Line {
   id: number;
@@ -49,6 +50,8 @@ const STATUS_STYLE: Record<Line["status"], string> = {
 };
 
 export default function WarehouseView({ currentUser }: { currentUser: any }) {
+  // Label language (top-bar EN / AR / FR) — English by default.
+  const t = useT();
   const [orders, setOrders] = useState<BoardOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -144,22 +147,22 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400">
               <input type="checkbox" checked={hideDone} onChange={(e) => setHideDone(e.target.checked)} />
-              Hide delivered
+              {t("Hide delivered")}
             </label>
             <button
               type="button"
               onClick={load}
               className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:border-slate-500"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              <RefreshCw className="h-3.5 w-3.5" /> {t("Refresh")}
             </button>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 text-[11px] font-bold">
-          <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300">Requested: {counts.Requested}</span>
-          <span className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-sky-300">Prepared: {counts.Prepared}</span>
-          <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">Delivered: {counts.Delivered}</span>
+          <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300">{t("Requested")}: {counts.Requested}</span>
+          <span className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-sky-300">{t("Prepared")}: {counts.Prepared}</span>
+          <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">{t("Delivered")}: {counts.Delivered}</span>
         </div>
 
         {error && (
@@ -196,18 +199,18 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] font-bold">
-                  <span className="rounded-lg bg-slate-800 px-2 py-1 text-slate-300">{order.status}</span>
+                  <span className="rounded-lg bg-slate-800 px-2 py-1 text-slate-300">{t(order.status)}</span>
                   <span className="rounded-lg bg-slate-800 px-2 py-1 text-slate-300">
                     Due {order.dueDate ? new Date(order.dueDate).toLocaleDateString() : "—"}
                   </span>
                   {order.received === true && (
-                    <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">✓ Reception approved</span>
+                    <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">✓ {t("Reception approved")}</span>
                   )}
                   {order.received === false && order.receivedState === "Declined" && (
-                    <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-300">✗ Reception DECLINED</span>
+                    <span className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-rose-300">✗ {t("Reception DECLINED")}</span>
                   )}
                   {order.received === false && order.receivedState !== "Declined" && (
-                    <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-300">✗ NOT received</span>
+                    <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-amber-300">✗ {t("NOT received")}</span>
                   )}
                 </div>
               </div>
@@ -282,7 +285,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                     ) : null}
 
                     <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[line.status]}`}>
-                      {line.status}
+                      {t(line.status)}
                     </span>
 
                     {canUpdate && (
@@ -294,7 +297,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                             onClick={() => setStatus(line, "Prepared")}
                             className="flex items-center gap-1 rounded-lg bg-sky-600 px-2.5 py-1.5 text-[10px] font-black text-white hover:bg-sky-500 disabled:opacity-50"
                           >
-                            <PackageCheck className="h-3.5 w-3.5" /> Prepare
+                            <PackageCheck className="h-3.5 w-3.5" /> {t("Prepare")}
                           </button>
                         )}
                         {line.status === "Prepared" && (
@@ -305,7 +308,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                               onClick={() => setStatus(line, "Delivered")}
                               className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white hover:bg-emerald-500 disabled:opacity-50"
                             >
-                              <Send className="h-3.5 w-3.5" /> Send
+                              <Send className="h-3.5 w-3.5" /> {t("Send")}
                             </button>
                             {line.quantityUsed > 1 && (
                               <button

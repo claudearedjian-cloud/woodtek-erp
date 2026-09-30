@@ -12,7 +12,7 @@ import {
   qualityEvents,
   downtimeEvents,
 } from "@/db/schema";
-import { eq, desc, gte, lte, and } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
 
@@ -102,7 +102,6 @@ export async function POST(request: Request) {
       };
     } else if (type === "Order Status") {
       const allOrders = await db.select().from(orders);
-      const allOps = await db.select().from(orderOperations);
       reportData = {
         byStatus: {
           Pending: allOrders.filter(o => o.status === "Pending").length,

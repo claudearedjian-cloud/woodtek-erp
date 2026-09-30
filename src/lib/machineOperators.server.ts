@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 
 type CrewMap = Record<string, number[]>;
 
@@ -66,18 +67,7 @@ function readRaw(): CrewMap {
 
 function writeRaw(map: CrewMap): void {
   const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(map, null, 2), { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } finally {
-    try {
-      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
-    } catch {
-      /* best-effort cleanup; the original assignment file remains intact */
-    }
-  }
+  writeJsonAtomic(file, map);
   cacheCrews(file, { ...map });
 }
 

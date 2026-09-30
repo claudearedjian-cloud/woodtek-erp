@@ -39,7 +39,7 @@ function makeTransporter(cfg: ReturnType<typeof readEmailConfig>) {
   });
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   const { error: authError } = await authorize();
   if (authError) return authError;
   return NextResponse.json(maskEmailConfig(readEmailConfig()));

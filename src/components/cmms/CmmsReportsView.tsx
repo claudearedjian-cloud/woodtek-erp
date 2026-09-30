@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { FileDown, Eye, FileText, Download, Printer, AlertTriangle, CheckCircle2, X } from "lucide-react";

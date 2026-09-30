@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { SlidersHorizontal, MapPin, Wrench, Save, Plus, X, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 
 interface Props {

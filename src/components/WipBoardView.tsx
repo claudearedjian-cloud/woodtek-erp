@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Tv } from "lucide-react";
 import WallBoardView from "@/components/WallBoardView";
 import {

@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { pimsSettings, pimsImports, orders } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
-import { importPimsInvoice, getServiceMap } from "@/lib/pims";
+import { importPimsInvoice } from "@/lib/pims";
 
 export async function GET() {
   const { user, error: authError } = await authorize("pims:read");

@@ -5,7 +5,7 @@
 // APPROVE stays locked until the warehouse has DELIVERED every line;
 // the server enforces the same rule (PUT /api/bom returns 409).
 // ============================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PackageCheck, RefreshCw, AlertTriangle, ArrowRight } from "lucide-react";
 import { canAssignMachines } from "@/lib/permissions";
 

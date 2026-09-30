@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { clearAllBomOrderState, clearBomOrderState } from "@/lib/bomStatus.server";
 import { clearAllMaterialProgress, clearMaterialProgress } from "@/lib/materialProgress.server";
 import { clearAllMaterialRoutes, clearMaterialRoutes } from "@/lib/materialRoutes.server";
@@ -36,11 +37,7 @@ function readJson(name: string): Record<string, any> | null {
 }
 
 function writeJson(name: string, payload: Record<string, unknown>): void {
-  const file = fileLocation(name);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(payload, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(fileLocation(name), payload);
 }
 
 function removeRecordKey(name: string, field: string, id: number): void {

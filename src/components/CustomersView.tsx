@@ -52,7 +52,7 @@ export default function CustomersView({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
-  const [creditLimit, setCreditLimit] = useState("25000.00");
+  const [creditLimit] = useState("25000.00");
 
   // ---- search -------------------------------------------------------------
   const [search, setSearch] = useState("");

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FileInput,
   FolderOpen,
@@ -11,7 +11,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Import,
-  ArrowRight,
   ExternalLink,
   X,
 } from "lucide-react";

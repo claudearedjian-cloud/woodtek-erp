@@ -32,7 +32,7 @@ const NO_BROWSER = process.argv.includes("--no-browser");
 // Load .env (dotenv is a project dependency).
 try {
   require("dotenv").config({ path: path.join(ROOT, ".env") });
-} catch (e) {
+} catch {
   // dotenv missing — fall back to whatever is already in the environment.
 }
 

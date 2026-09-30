@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { authorize, getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { findKit, sanitizeKitList, sanitizeKitName, type BomKit } from "@/lib/bomKits";
@@ -31,9 +32,9 @@ function readKits(): BomKit[] {
 }
 
 function writeKits(kits: BomKit[]): void {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, kits }, null, 2), "utf8");
+  // Crash-safe write (temp file + rename): a power cut mid-save can never
+  // leave a truncated kit file behind.
+  writeJsonAtomic(fileLocation(), { version: 1, kits });
 }
 
 function canWrite(role: string): boolean {

@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { authorize } from "@/lib/auth";
 import { sanitizeMenuConfig, type MenuConfig } from "@/lib/menuConfig";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
@@ -42,9 +43,9 @@ export async function PUT(request: Request) {
     const body = await request.json();
     const config = sanitizeMenuConfig(body);
     logAudit(null, "menu.save", "system", `Menu Designer saved (${config.items.length} items)`);
-    const file = fileLocation();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(config, null, 2), "utf8");
+    // Crash-safe: a truncated menu-config file would break navigation for
+    // every role, so it is written through the atomic helper.
+    writeJsonAtomic(fileLocation(), config);
     return NextResponse.json({ config });
   } catch (e: any) {
     return NextResponse.json(

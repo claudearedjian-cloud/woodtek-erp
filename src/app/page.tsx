@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
@@ -9,6 +9,7 @@ import FullscreenSplash from "@/components/FullscreenSplash";
 import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/moduleAccess";
 import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
 import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
+import { LangProvider } from "@/lib/langContext";
 import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 
@@ -124,7 +125,7 @@ export default function WoodTekERP() {
   // Show the fullscreen welcome splash when a user signs in.
   // It closes once the dashboard finishes loading.
   const [showSplash, setShowSplash] = useState(false);
-  const [hasShownSplash, setHasShownSplash] = useState(false);
+  const [, setHasShownSplash] = useState(false);
 
   const fetchRoster = async () => {
     try {
@@ -584,6 +585,7 @@ export default function WoodTekERP() {
   }, [currentUser, activeTab, menuConfig]);
 
   return (
+    <LangProvider lang={lang}>
     <div className="app-bg flex h-screen text-slate-100 font-sans overflow-hidden antialiased">
       {idleWarnSec != null && (
         <button
@@ -681,7 +683,7 @@ export default function WoodTekERP() {
           {activeTab === "gantt" && (
             <GanttView machines={machines} onSelectOrder={handleSelectOrder} searchQuery={searchQuery} />
           )}
-          {activeTab === "production" && <ProductionReportView currentUser={currentUser} />}
+          {activeTab === "production" && <ProductionReportView />}
           {activeTab === "cmms" && (
             <CmmsView currentUser={currentUser} machines={machines} searchQuery={searchQuery} />
           )}
@@ -712,6 +714,7 @@ export default function WoodTekERP() {
           demoMode={demoMode}
         />
       )}
-    </div>
+      </div>
+    </LangProvider>
   );
 }

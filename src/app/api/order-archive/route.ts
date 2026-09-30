@@ -10,15 +10,11 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { getSessionUser } from "@/lib/auth";
 import { can } from "@/lib/permissions";
 import { logAudit } from "@/lib/audit.server";
 import { sanitizeArchivedIds, withArchived } from "@/lib/orderArchive";
-
-interface ArchiveFile {
-  version: 1;
-  archived: number[];
-}
 
 function fileLocation(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
@@ -35,9 +31,7 @@ function readArchive(): number[] {
 }
 
 function writeArchive(ids: number[]): void {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, archived: ids }, null, 2), "utf8");
+  writeJsonAtomic(fileLocation(), { version: 1, archived: ids });
 }
 
 export async function GET() {
