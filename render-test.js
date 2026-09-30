@@ -34,6 +34,7 @@ compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
+compile("src/lib/atomicFile.server.ts", "lib/atomicFile.server.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
 compile("src/lib/idle.ts", "lib/idle.js");
@@ -615,6 +616,45 @@ const one = audit.readAudit()[0];
 check(one.actorName.length === 400 && one.detail.length === 300, "audit: detail clamped to 300 (actor name preserved)");
 delete process.env.WOODTEK_DATA_DIR;
 fs.rmSync(auditTmp, { recursive: true, force: true });
+
+// ---- atomic JSON writes (2026-09-30: crash-safe data files) ----
+const atomicTmp = fs.mkdtempSync(path.join(os.tmpdir(), "woodtek-atomic-"));
+const atomic = require("./compiled/lib/atomicFile.server.js");
+const atomicFile = path.join(atomicTmp, "nested", "store.json");
+atomic.writeJsonAtomic(atomicFile, { version: 1, hello: "world" });
+check(
+  JSON.parse(fs.readFileSync(atomicFile, "utf8")).hello === "world",
+  "atomic: write creates the nested data dir and valid JSON",
+);
+check(
+  fs.readdirSync(path.join(atomicTmp, "nested")).every((f) => !f.endsWith(".tmp")),
+  "atomic: no temp files left behind after the rename",
+);
+atomic.writeJsonAtomic(atomicFile, { version: 2, replaced: true });
+check(
+  JSON.parse(fs.readFileSync(atomicFile, "utf8")).replaced === true,
+  "atomic: rewriting replaces the previous content",
+);
+let atomicThrew = false;
+try {
+  atomic.writeJsonAtomic(path.join(atomicFile, "deeper", "x.json"), {});
+} catch {
+  atomicThrew = true;
+}
+check(atomicThrew, "atomic: write failures surface the error (target stays untouched)");
+for (const lib of [
+  "src/lib/audit.server.ts",
+  "src/lib/materialProgress.server.ts",
+  "src/lib/materialRoutes.server.ts",
+  "src/lib/rolesConfig.server.ts",
+]) {
+  const libSource = fs.readFileSync(lib, "utf8");
+  check(
+    libSource.includes("writeJsonAtomic(") && !libSource.includes("fs.writeFileSync("),
+    "atomic: " + lib + " writes via writeJsonAtomic (no direct fs.writeFileSync)",
+  );
+}
+fs.rmSync(atomicTmp, { recursive: true, force: true });
 
 // ---- i18n dictionary sanity ----
 const i18n = require("./compiled/lib/i18n.js");

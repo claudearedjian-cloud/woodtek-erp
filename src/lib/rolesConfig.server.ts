@@ -5,6 +5,7 @@
 // ============================================================================
 
 import fs from "node:fs";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import path from "node:path";
 import { getCustomRoles, getModuleOverrides, registerCustomRoles, registerModuleOverrides, type CustomRole } from "@/lib/permissions";
 
@@ -56,8 +57,6 @@ export function sanitizeOverrides(input: unknown): Record<string, string[]> {
 }
 
 export function writeRolesConfig(roles: CustomRole[], overrides: Record<string, string[]> = {}): void {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, roles, overrides }, null, 2), "utf8");
+  writeJsonAtomic(fileLocation(), { version: 1, roles, overrides });
   cache = null; // force re-read on next access
 }

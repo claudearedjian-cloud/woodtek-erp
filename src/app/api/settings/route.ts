@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     }
 
     if (entityType === "clients") {
-      let allClients = await db.select().from(customers).orderBy(asc(customers.company));
+      const allClients = await db.select().from(customers).orderBy(asc(customers.company));
       if (entityId) {
         const client = allClients.find(c => String(c.id) === entityId);
         if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });

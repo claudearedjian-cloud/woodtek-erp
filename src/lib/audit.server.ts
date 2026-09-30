@@ -6,6 +6,7 @@
 // ============================================================================
 
 import fs from "node:fs";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import path from "node:path";
 
 export const AUDIT_MAX = 2000;
@@ -37,9 +38,7 @@ function readAll(): AuditEntry[] {
 }
 
 function writeAll(entries: AuditEntry[]): void {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, entries: entries.slice(-AUDIT_MAX) }, null, 2), "utf8");
+  writeJsonAtomic(fileLocation(), { version: 1, entries: entries.slice(-AUDIT_MAX) });
 }
 
 export interface AuditActor {

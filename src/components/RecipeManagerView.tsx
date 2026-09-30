@@ -187,7 +187,7 @@ export default function RecipeManagerView({ onRefresh }: RecipeManagerViewProps)
         <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-14 text-center">
           <Workflow className="mx-auto mb-4 h-12 w-12 stroke-[1.5] text-slate-600" />
           <h3 className="text-base font-bold text-white">No recipes yet</h3>
-          <p className="mt-1 text-xs text-slate-400">Create your first routing recipe — e.g. "Cutting + Edging + 36mm Pressing".</p>
+          <p className="mt-1 text-xs text-slate-400">Create your first routing recipe — e.g. &quot;Cutting + Edging + 36mm Pressing&quot;.</p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

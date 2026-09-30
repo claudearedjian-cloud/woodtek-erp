@@ -574,7 +574,7 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
           {/* Today's attendance */}
           <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5">
             <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2 mb-4">
-              <Clock className="w-4 h-4 text-amber-400" /> Today's Attendance
+              <Clock className="w-4 h-4 text-amber-400" /> Today&apos;s Attendance
             </h3>
             {todayRows.length === 0 ? (
               <div className="text-xs text-slate-500 font-semibold py-6 text-center">No clock records for today yet.</div>

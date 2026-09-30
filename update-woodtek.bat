@@ -18,6 +18,16 @@ if %errorlevel% neq 0 (
 echo [update] Pulling latest code from GitHub...
 rem Repo files that builds/edits may dirty locally — repo version always wins:
 git checkout -- tsconfig.json next.config.ts next-env.d.ts 2>nul
+
+rem 2026-09-30: DB dumps are no longer tracked in git (they contain customer +
+rem account data). Git would DELETE the old tracked dumps from this folder on
+rem pull — copy them to the ignored backups\ folder first so nothing is lost.
+if exist "backup\*.dump" (
+  if not exist "backups" mkdir "backups"
+  copy /y "backup\*.dump" "backups\" >nul
+  echo [update] Kept the local DB dumps safe in backups\
+)
+
 git pull
 if errorlevel 1 (
   echo [update] git pull failed — check the message above.
