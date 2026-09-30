@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orders, customers, orderOperations, machines, operationTemplates, users, downtimeEvents, orderMaterials, inventoryItems } from "@/db/schema";
-import { and, eq, desc, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { orders, customers, orderOperations, machines, operationTemplates, downtimeEvents, orderMaterials, inventoryItems } from "@/db/schema";
+import { and, eq, asc, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { chooseFreestMachine } from "@/lib/machineCategories";
 import { setBomStatus } from "@/lib/bomStatus.server";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { nextOrderNumber } from "@/lib/orderNumbers.server";
-import { getSessionUser } from "@/lib/auth";
 import {
   productionStageKey,
   sanitizeProductionItems,

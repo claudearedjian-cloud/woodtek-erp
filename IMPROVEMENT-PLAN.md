@@ -3,7 +3,8 @@
 _Audit date: 2026-09-30. Branch: `arena/01a0ed73-woodtek-erp`, commit `ec526a6` (includes PR #5).
 Everything below was verified hands-on: install, typecheck, 555 render-test checks, ESLint attempt, `npm audit`, and a full standalone production build (52 pages)._
 
-> **Status 2026-09-30:** Fix bundles 1+2+3 below are **implemented** in PR #6 (security updates, ESLint + CI, atomic writes, .env.example, repo hygiene). Remaining: #4 database indexes, then the Phase B–D ERP modules.
+> **Status 2026-09-30 (after PR #8):** fix bundles 1+2+3 are **implemented** (security updates, ESLint + CI, atomic writes, .env.example, repo hygiene), #4 database indexes is **merged**, and the owner-chosen **hardening + Arabic/French bundle** closed the remaining crash-safety gaps, cut lint warnings 792 → 710 (unused-vars bucket now 0) and extended AR/FR from 48 to 107 labels per language across the shop-floor, warehouse, orders and dispatch screens. **Remaining: the Phase B–D ERP modules below** — starting with Purchasing & Suppliers, then Invoicing + VAT + A/R.
+
 
 
 ---
@@ -48,8 +49,8 @@ This is a LAN app behind a trusted network, which lowers real-world risk — but
 ### 4. MEDIUM — Live database dumps are committed inside the git repo
 `backup/woodtek_factory_*.dump` (3 files, latest Sept 7) are tracked in git. They contain **everything**: user accounts with PIN hashes, customers, financials. The repo is private, but a leaked token or added collaborator = full factory data, and files live in git history forever. Recommendation: stop tracking them (`git rm --cached`), keep them in the ignored `backups/` folder — the nightly backup task already protects them. Owner's call — README documents this as deliberate.
 
-### 5. MEDIUM — Four data files are not written crash-safely
-Most JSON stores use temp-file + atomic rename. But `audit.server.ts`, `materialProgress.server.ts`, `materialRoutes.server.ts`, `rolesConfig.server.ts` write directly — a crash/power-cut mid-write can leave a truncated file (the audit file rewrites constantly, so it's the most exposed). Fix: switch them to the same temp+rename helper (one small shared function, ~30 lines).
+### 5. ✅ CLOSED — JSON stores are now all written crash-safely
+Originally four files (`audit.server.ts`, `materialProgress.server.ts`, `materialRoutes.server.ts`, `rolesConfig.server.ts`) wrote JSON in place. PR #6 converted those four; **PR #8 finished the job** — every remaining store (10 libs + 8 route-local files, incl. `menu-config.json`, whose truncation used to break navigation for every role) now goes through `src/lib/atomicFile.server.ts` (temp file + rename). render-test guards it globally: any new raw `writeFileSync(<file>, JSON.stringify(…))` outside the helper fails the suite.
 
 ### 6. MEDIUM — No `.env.example`
 18 environment variables (`DATABASE_URL`, `AUTH_SECRET`, `AUTH_COOKIE_SECURE`, `WOODTEK_DATA_DIR`, backup dirs, build vars…) exist only in someone's memory and the handoff chat. A fresh clone dies with "DATABASE_URL is required" and no hint. Fix: add `.env.example` with commented defaults + link from README.
@@ -102,3 +103,20 @@ What exists today is a strong **production/operations ERP**: orders, routing, sc
 | 7 | **Job costing / profitability** | 1–2 days | The insight bundle |
 
 Each item ships as its own PR — built, verified (typecheck + render-test + build), then **held for your approval before merging**, per your standing rule.
+
+## Part 4 — Where the next improvements are (state after PR #8)
+
+Everything in the fix list is closed. What is left is the **business** side; these are ordered by how much the factory feels them:
+
+| Priority | Improvement | What it unlocks | Effort |
+|---|---|---|---|
+| 1 | **Purchasing & Suppliers** | The only completely missing ERP area: supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO creation from the reorder alerts that already exist. Today material only enters the system through the Excel import, so there is no record of what was ordered, from whom, at what price, or what is still outstanding. | 2–3 days |
+| 2 | **Invoicing + VAT + A/R aging** | Turns a finished order into a legal invoice (11% VAT, sequential numbering), records payments, ages the receivables 0-30/31-60/61-90/90+, prints the invoice PDF and exports for the accountant. The client ledger exists but stores bare amounts — this completes the loop the quotations started. | 2–3 days |
+| 3 | **HR: leave/absence + payroll** | Attendance and shifts are already recorded; this adds leave tracking, a payroll calculator and printable payslips. | 2 days |
+| 4 | **Quality depth: NCR + supplier score** | Non-conformance reports (internal + supplier defects) feeding a supplier-quality score; reuses the existing scrap/rework data. | 1–2 days |
+| 5 | **CRM pipeline for Sales** | Multiple contacts per client, a communication log and follow-up reminders on top of the existing stale-quotation alerts. | 1–2 days |
+| 6 | **Monthly management pack** | One PDF/email per month: sales, margins, on-time %, scrap %, downtime Pareto — the email engine and PDF builders already exist. | 1 day |
+| 7 | **Warehouse depth** | Bin/locations, stock transfers and stocktake sessions with a variance report. | 2 days |
+| 8 | **Full AR/FR UI + RTL** | The chrome and the main shop screens are translated (PR #8); the long tail (forms, reports, settings) and a mirrored RTL layout remain. | 2–3 days |
+
+Also worth doing small and cheap, any time: **per-role printable one-pagers** (protects against staff turnover) and an **accountant Excel/CSV export** alongside the invoice module.

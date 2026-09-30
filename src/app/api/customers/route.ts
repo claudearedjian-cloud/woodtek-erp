@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { customers, orders } from "@/db/schema";
-import { asc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { listCustomersForUser, isManager as userIsManager, isFloorRole } from "@/lib/dataAccess";
 

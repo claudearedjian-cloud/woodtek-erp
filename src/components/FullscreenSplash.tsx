@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * FullscreenSplash
@@ -51,7 +51,6 @@ export default function FullscreenSplash({
 
   if (!user) return null;
 
-  const firstName = user.name.split(" ")[0];
   const initials = user.name
     .split(" ")
     .map((n) => n.charAt(0).toUpperCase())

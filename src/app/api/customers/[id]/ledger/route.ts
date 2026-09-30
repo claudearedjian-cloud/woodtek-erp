@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -43,9 +44,7 @@ function readFile(): LedgerFile {
 }
 
 function writeFile(data: LedgerFile) {
-  const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+  writeJsonAtomic(fileLocation(), data);
 }
 
 function summarize(entries: LedgerEntry[]) {

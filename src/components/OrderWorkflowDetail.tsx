@@ -19,7 +19,6 @@ import {
   RefreshCw,
   Check,
   RotateCcw,
-  ChevronRight,
   Boxes,
   DollarSign,
   FileText,

@@ -6,6 +6,7 @@ import { allowedStages } from "@/lib/materialProgress";
 import { jobLockedByOther } from "@/lib/jobLock";
 import { reconcileStationSelection } from "@/lib/stationAssignment";
 import { newStationJobRows, stationAlertBody, stationAlertTitle } from "@/lib/stationAlerts";
+import { useT } from "@/lib/langContext";
 import {
   Tablet,
   Play,
@@ -86,6 +87,8 @@ export default function OperatorStationView({
   onRefresh,
   onSelectOrder,
 }: OperatorStationViewProps) {
+  // Label language (top-bar EN / AR / FR) — English by default.
+  const t = useT();
   // Machine crews can be changed remotely from the Machines workspace. Keep a
   // live station roster here instead of waiting for a full-page hard refresh.
   const [machines, setMachines] = useState<any[]>(shellMachines);
@@ -822,7 +825,7 @@ export default function OperatorStationView({
           {machines.length === 0 && (
             <div className="col-span-full rounded-2xl border border-dashed border-sky-500/40 bg-sky-500/5 p-6 text-center">
               <RefreshCw className="mx-auto h-6 w-6 animate-spin text-sky-400" />
-              <div className="mt-2 text-sm font-black text-white">Waiting for a workstation assignment</div>
+              <div className="mt-2 text-sm font-black text-white">{t("Waiting for a workstation assignment")}</div>
               <div className="mt-1 text-[11px] text-slate-400">Stay signed in—new assignments appear here automatically within about 3 seconds.</div>
             </div>
           )}
@@ -906,10 +909,10 @@ export default function OperatorStationView({
         <div className="flex items-center justify-between px-2">
           <h3 className="text-lg font-black text-white flex items-center gap-2.5">
             <Activity className="w-5 h-5 text-amber-500 animate-pulse" />
-            <span>Active Queue for {currentMachine?.name || "Selected Machine"}</span>
+            <span>{t("Active Queue for")} {currentMachine?.name || "Selected Machine"}</span>
             {selectedIsMine && (
               <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
-                Your station
+                {t("Your station")}
               </span>
             )}
           </h3>
@@ -1230,7 +1233,7 @@ export default function OperatorStationView({
                             className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
                           >
                             <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
-                            <span>{op.productionItem ? "START MATERIAL JOB" : "START MACHINING"}</span>
+                            <span>{t(op.productionItem ? "START MATERIAL JOB" : "START MACHINING")}</span>
                           </button>
                         ) : (
                           <button
@@ -1243,12 +1246,12 @@ export default function OperatorStationView({
                             }`}
                           >
                             <CheckCircle2 className="w-6 h-6 stroke-[3]" />
-                            <span>{isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : op.productionItem ? "FINISH MATERIAL PASS" : "FINISH & PASS NEXT"}</span>
+                            <span>{t(isConfirmingFinish ? "TAP AGAIN TO CONFIRM" : op.productionItem ? "FINISH MATERIAL PASS" : "FINISH & PASS NEXT")}</span>
                           </button>
                         )
                       ) : (
                         <div className="flex max-w-sm items-center rounded-2xl border border-amber-500/30 bg-amber-500/5 px-5 py-5 text-center text-sm font-black uppercase leading-relaxed tracking-wide text-amber-300">
-                          Start / finish each material below — the machine job opens and closes by itself
+                          {t("Start / finish each material below — the machine job opens and closes by itself")}
                         </div>
                       )}
 
@@ -1265,7 +1268,7 @@ export default function OperatorStationView({
                           title="Flag defect or tool wear"
                         >
                           <AlertTriangle className="w-6 h-6 stroke-[2.5]" />
-                          <span className="hidden md:inline">REJECT / REWORK</span>
+                          <span className="hidden md:inline">{t("REJECT / REWORK")}</span>
                         </button>
                       )}
                     </div>
@@ -1355,7 +1358,7 @@ export default function OperatorStationView({
                                         className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-6 py-4 rounded-xl text-base shadow-lg shadow-amber-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
                                         title="Start THIS material on this machine — opens the machine job if it is not running yet"
                                       >
-                                        <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" /> START
+                                        <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" /> {t("START")}
                                       </button>
                                     )}
                                     {atThisStep && isRunning && !lockedByMate && (
@@ -1365,7 +1368,7 @@ export default function OperatorStationView({
                                         className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700 active:scale-95 text-slate-950 font-black px-6 py-4 rounded-xl text-base shadow-lg shadow-emerald-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
                                         title="Finished THIS material here — it moves to its next stage; the machine job closes when the last one leaves"
                                       >
-                                        <CheckCircle2 className="w-5 h-5 stroke-[3]" /> FINISH
+                                        <CheckCircle2 className="w-5 h-5 stroke-[3]" /> {t("FINISH")}
                                       </button>
                                     )}
                                     {lockedByMate && (

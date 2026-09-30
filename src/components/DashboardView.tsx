@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   Layers, 
   Cpu, 
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import { digestToLines, digestTotalIssues, EMPTY_DIGEST, type DigestData } from "@/lib/digest";
+import { useT } from "@/lib/langContext";
 
 interface DashboardViewProps {
   data: any;
@@ -37,6 +38,8 @@ const STATUS_BUTTONS = [
 ] as const;
 
 export default function DashboardView({ data, loading, onNavigate, currentUser }: DashboardViewProps) {
+  // Label language (top-bar EN / AR / FR) — resolves to English by default.
+  const t = useT();
   // Attention center: polls /api/alerts (overdue orders, missing materials, CMMS service, low stock).
   const [alerts, setAlerts] = useState<any[]>([]);
   const [showAlerts, setShowAlerts] = useState(false);
@@ -135,10 +138,10 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
         <div className="rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-300">
-              <Sunrise className="h-4 w-4 text-amber-400" /> Morning digest
+              <Sunrise className="h-4 w-4 text-amber-400" /> {t("Morning digest")}
               {digestTotalIssues(digest) > 0 && (
                 <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-black text-rose-300">
-                  {digestTotalIssues(digest)} need attention
+                  {digestTotalIssues(digest)} {t("need attention")}
                 </span>
               )}
             </h3>
@@ -200,7 +203,7 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
       {/* Order status quick bar */}
       <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Orders by status — click to open</h3>
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">{t("Orders by status — click to open")}</h3>
           <div className="flex items-center gap-2">
             <div className="relative">
               <button
@@ -218,10 +221,10 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
               {showAlerts && (
                 <div className="absolute right-0 top-11 z-40 max-h-96 w-80 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
                   <div className="px-2 pb-1.5 pt-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                    Needs attention ({alerts.length})
+                    {t("Needs attention")} ({alerts.length})
                   </div>
                   {alerts.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-slate-500">All clear — nothing needs attention.</div>
+                    <div className="p-4 text-center text-xs text-slate-500">{t("All clear — nothing needs attention.")}</div>
                   ) : (
                     alerts.map((a: any, i: number) => (
                       <button
@@ -259,7 +262,7 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
               className={`rounded-xl border p-3 text-left transition ${b.cls}`}
             >
               <div className="text-2xl font-black text-white tracking-tight">{orderStatusDistribution[b.key] ?? 0}</div>
-              <div className="text-[11px] font-extrabold uppercase tracking-wider mt-0.5">{b.label}</div>
+              <div className="text-[11px] font-extrabold uppercase tracking-wider mt-0.5">{t(b.label)}</div>
             </button>
           ))}
         </div>

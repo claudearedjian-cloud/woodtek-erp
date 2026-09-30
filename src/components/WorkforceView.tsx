@@ -9,7 +9,6 @@ import {
   Plus,
   Trash2,
   X,
-  User,
   RefreshCw,
   ChevronLeft,
   ChevronRight,

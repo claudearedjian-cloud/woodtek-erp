@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { shiftAssignments, shifts, users, machines } from "@/db/schema";
-import { eq, and, gte, lte, asc, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 
 /**

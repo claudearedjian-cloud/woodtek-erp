@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { orders, machines, orderOperations, inventoryItems, customers, users } from "@/db/schema";
-import { eq, desc, asc } from "drizzle-orm";
+import { inventoryItems } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { findProductionStepByOperation } from "@/lib/productionPlan";
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";

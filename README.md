@@ -23,6 +23,16 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 - `.env.example` documents every environment variable — copy to `.env` on a fresh install (the factory PC already has one).
 - CI (`.github/workflows/ci.yml`) runs lint → typecheck → render-test → build on every PR; a PR that fails any of these must not be merged.
 
+## Language (since 2026-09-30)
+- Top-bar EN / العربية / Français, remembered per device (`localStorage`).
+- Covers the sidebar and top bar, the sign-in screen, the dashboard quick bar +
+  morning digest, the Orders list chips/kanban columns, the Operator Station
+  actions, the Warehouse board and the Dispatch queue.
+- Labels are keyed by the exact English default (`src/lib/i18n.ts`); unknown
+  strings pass through, so Menu Designer names and client/machine names are
+  never overwritten. No RTL layout flip yet — Arabic renders inside the normal
+  layout.
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.

@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orderMaterials } from "@/db/schema";
@@ -70,9 +71,7 @@ function writeMeta(meta: PhotoStore): void {
     orders: sanitizeMap(meta.orders),
     batches: sanitizeMap(meta.batches),
   };
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, clean);
 }
 
 function canWrite(role: string): boolean {

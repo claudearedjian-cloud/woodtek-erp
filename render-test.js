@@ -38,6 +38,7 @@ compile("src/lib/atomicFile.server.ts", "lib/atomicFile.server.js");
 compile("src/lib/dbIndexes.ts", "lib/dbIndexes.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
+compile("src/lib/langContext.tsx", "lib/langContext.js");
 compile("src/lib/idle.ts", "lib/idle.js");
 compile("src/lib/bomKits.ts", "lib/bomKits.js");
 compile("src/lib/packingQc.ts", "lib/packingQc.js");
@@ -211,7 +212,7 @@ check(
   machinesSource.includes("assignedOperatorId: crewIds[0] ?? null")
     && machinesSource.includes("assignedOperatorIds: crewIds")
     && machineActionSource.includes("assignedOperatorIds: effectiveCrew")
-    && machineCrewStoreSource.includes("fs.renameSync(temporary, file)"),
+    && machineCrewStoreSource.includes("writeJsonAtomic(file, map)"),
   "station crew persistence: create/update responses mirror primary and full crew through an atomic overlay write",
 );
 
@@ -643,18 +644,57 @@ try {
   atomicThrew = true;
 }
 check(atomicThrew, "atomic: write failures surface the error (target stays untouched)");
-for (const lib of [
+// Every JSON store — library or route-local — must write through the shared
+// helper. A raw writeFileSync(<file>, JSON.stringify(…)) truncates the target
+// before writing, so a power cut mid-save could empty that store.
+const RAW_JSON_WRITE = /writeFileSync\(\s*[A-Za-z_$][\w$]*\s*,\s*JSON\.stringify/;
+const ATOMIC_STORES = [
   "src/lib/audit.server.ts",
+  "src/lib/bomStatus.server.ts",
+  "src/lib/dispatch.server.ts",
+  "src/lib/emailConfig.server.ts",
+  "src/lib/inventoryCategories.server.ts",
+  "src/lib/inventoryDimensions.server.ts",
+  "src/lib/machineOperators.server.ts",
   "src/lib/materialProgress.server.ts",
   "src/lib/materialRoutes.server.ts",
+  "src/lib/operationMachineCandidates.server.ts",
+  "src/lib/orderCleanup.server.ts",
+  "src/lib/packingQc.server.ts",
+  "src/lib/productionPlan.server.ts",
   "src/lib/rolesConfig.server.ts",
-]) {
-  const libSource = fs.readFileSync(lib, "utf8");
+  "src/app/api/bom-kits/route.ts",
+  "src/app/api/customers/[id]/ledger/route.ts",
+  "src/app/api/delivery-photos/route.ts",
+  "src/app/api/machine-categories/route.ts",
+  "src/app/api/menu-config/route.ts",
+  "src/app/api/order-archive/route.ts",
+  "src/app/api/packing-qc/route.ts",
+  "src/app/api/project-types/route.ts",
+];
+for (const store of ATOMIC_STORES) {
+  const storeSource = fs.readFileSync(store, "utf8");
   check(
-    libSource.includes("writeJsonAtomic(") && !libSource.includes("fs.writeFileSync("),
-    "atomic: " + lib + " writes via writeJsonAtomic (no direct fs.writeFileSync)",
+    storeSource.includes("writeJsonAtomic(") && !RAW_JSON_WRITE.test(storeSource),
+    "atomic: " + store + " writes via writeJsonAtomic (no in-place JSON write)",
   );
 }
+// Global guard: the only remaining raw JSON write in the whole source tree is
+// the helper itself, so a new store cannot quietly reintroduce the bug.
+const walkSources = (dir, out = []) => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (["node_modules", ".git", ".next", "compiled"].includes(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkSources(full, out);
+    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full.replace(/\\/g, "/"));
+  }
+  return out;
+};
+const rawJsonWriters = walkSources("src").filter((file) => RAW_JSON_WRITE.test(fs.readFileSync(file, "utf8")));
+check(
+  rawJsonWriters.length === 1 && rawJsonWriters[0].endsWith("src/lib/atomicFile.server.ts"),
+  "atomic: every JSON store writes through the shared helper (remaining raw writers: " + rawJsonWriters.join(", ") + ")",
+);
 fs.rmSync(atomicTmp, { recursive: true, force: true });
 
 // ---- database index plan (2026-09-30 speed bundle) ----
@@ -724,14 +764,51 @@ check(
 const i18n = require("./compiled/lib/i18n.js");
 const arKeys = i18n.translatedKeys("ar");
 const frKeys = i18n.translatedKeys("fr");
-check(arKeys.length > 40 && frKeys.length === arKeys.length, "i18n: AR and FR cover the same key set (>40 labels)");
-check(arKeys.every((k) => i18n.tt("ar", k) && i18n.tt("ar", k) !== k || k === "PIN"), "i18n: every AR translation differs from English (or is PIN)");
-check(frKeys.every((k) => i18n.tt("fr", k) && i18n.tt("fr", k) !== k || k === "PIN"), "i18n: every FR translation differs from English (or is PIN)");
+check(arKeys.length >= 100 && frKeys.length === arKeys.length, "i18n: AR and FR cover the same key set (>=100 labels)");
+// A few words are genuinely spelled the same in English and another language
+// (PIN, and the French "Urgent" / "Normal"); everything else must differ.
+const IDENTICAL_BY_LANGUAGE = { ar: ["PIN"], fr: ["PIN", "Urgent", "Normal"] };
+check(arKeys.every((k) => (i18n.tt("ar", k) && i18n.tt("ar", k) !== k) || IDENTICAL_BY_LANGUAGE.ar.includes(k)), "i18n: every AR translation differs from English (PIN excepted)");
+check(frKeys.every((k) => (i18n.tt("fr", k) && i18n.tt("fr", k) !== k) || IDENTICAL_BY_LANGUAGE.fr.includes(k)), "i18n: every FR translation differs from English (PIN / Urgent / Normal excepted)");
 check(i18n.tt("en", "Executive Dashboard") === "Executive Dashboard", "i18n: EN passthrough");
 check(i18n.tt("ar", "Executive Dashboard") === "\u0644\u0648\u062d\u0629 \u0627\u0644\u0642\u064a\u0627\u062f\u0629", "i18n: AR menu label");
 check(i18n.tt("fr", "Orders & Routing") === "Commandes & routage", "i18n: FR menu label");
 check(i18n.tt("ar", "My Custom Menu Name") === "My Custom Menu Name", "i18n: custom Menu Designer names are untouched");
 check(i18n.tt("ar", "Some random UI string") === "Some random UI string", "i18n: unknown strings fall through to English");
+
+// Domain vocabulary + wiring (2026-09-30 coverage bundle): the shop-floor and
+// dispatch screens carry the labels people read all day in AR/FR.
+check(i18n.tt("ar", "In Production") === "\u0642\u064a\u062f \u0627\u0644\u0625\u0646\u062a\u0627\u062c" && i18n.tt("fr", "In Production") === "En production", "i18n: order status vocabulary");
+check(i18n.tt("ar", "Requested") === "\u0645\u0637\u0644\u0648\u0628" && i18n.tt("fr", "Prepared") === "Pr\u00e9par\u00e9", "i18n: warehouse vocabulary");
+check(i18n.tt("ar", "Awaiting delivery") === "\u0628\u0627\u0646\u062a\u0638\u0627\u0631 \u0627\u0644\u062a\u0633\u0644\u064a\u0645" && i18n.tt("fr", "QC") === "CQ", "i18n: dispatch stage vocabulary");
+check(i18n.tt("ar", "START MATERIAL JOB") === "\u0627\u0628\u062f\u0623 \u062a\u0634\u063a\u064a\u0644 \u0627\u0644\u0645\u0627\u062f\u0629" && i18n.tt("fr", "REJECT / REWORK") === "REJET / REPRISE", "i18n: shop-floor action vocabulary");
+check(i18n.tt("ar", "Morning digest") === "\u0645\u0644\u062e\u0651\u0635 \u0627\u0644\u0635\u0628\u0627\u062d" && i18n.tt("fr", "Print manifest") === "Imprimer le manifeste", "i18n: dashboard / dispatch labels");
+
+// Every label wired through t()/tt() must exist in the dictionary — a typo in
+// a key would silently render English on an Arabic screen.
+const wiredLabels = new Set();
+for (const file of walkSources("src")) {
+  const source = fs.readFileSync(file, "utf8");
+  for (const m of source.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"\s*\)/g)) wiredLabels.add(m[1]);
+  for (const m of source.matchAll(/\btt\(\s*[A-Za-z_$.]+\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)/g)) wiredLabels.add(m[1]);
+}
+const missingLabels = [...wiredLabels].filter((label) => !arKeys.includes(label));
+check(wiredLabels.size >= 50 && missingLabels.length === 0, "i18n: every wired label has an AR/FR entry (" + wiredLabels.size + " wired, missing: " + missingLabels.join(" | ") + ")");
+
+// Language context: deep screens read the top-bar language without prop drilling.
+const langCtx = require("./compiled/lib/langContext.js");
+check(typeof langCtx.LangProvider === "function" && typeof langCtx.useLang === "function" && typeof langCtx.useT === "function", "i18n: langContext module compiles and exposes LangProvider/useLang/useT");
+const langCtxSource = fs.readFileSync("src/lib/langContext.tsx", "utf8");
+check(langCtxSource.includes("createContext<Lang>(\"en\")") && langCtxSource.includes("export function useT") && langCtxSource.includes("export function useLang"), "i18n: langContext exposes useT/useLang with an English SSR default");
+check(pageSource.includes("import { LangProvider }") && pageSource.includes("<LangProvider lang={lang}>"), "i18n: page.tsx wraps the workspace in LangProvider");
+for (const view of ["DashboardView", "OrdersView", "OperatorStationView", "WarehouseView", "ScheduleView"]) {
+  const viewSource = fs.readFileSync("src/components/" + view + ".tsx", "utf8");
+  check(viewSource.includes("useT") && viewSource.includes("const t = useT();") && viewSource.includes("t(\""), "i18n: " + view + " translates its labels through useT");
+}
+
+// Polish: a branded 404 instead of the framework default.
+const notFoundSource = fs.readFileSync("src/app/not-found.tsx", "utf8");
+check(notFoundSource.includes("Page not found") && notFoundSource.includes("WoodTek ERP") && notFoundSource.includes("href=\"/\""), "polish: branded 404 page explains the dead link and links home");
 
 // SSR: sidebar renders Arabic labels when lang=ar
 const ssrAr = renderToString(React.createElement(Sidebar, props("Manager", null, "ar")));
@@ -1986,7 +2063,7 @@ check(edisp.buildEmailTextBody({ title: "T & P", message: "hello\nworld", orderN
 check(edisp.describeSendError(new Error("Invalid login: bad password=SEKRIT")).includes("password=***") && !edisp.describeSendError(new Error("x password=SEKRIT")).includes("SEKRIT"), "email: send error messages redact password tokens");
 
 check(emailConfigServerSource.includes("WOODTEK_DATA_DIR") && emailConfigServerSource.includes("email-config.json"), "email: server store reads/writes data/email-config.json via WOODTEK_DATA_DIR");
-check(emailConfigServerSource.includes("renameSync") && emailConfigServerSource.includes(".tmp"), "email: server store writes atomically (temp file + rename)");
+check(emailConfigServerSource.includes("writeJsonAtomic") && emailConfigServerSource.includes("atomicFile.server"), "email: server store writes atomically through the shared helper");
 
 check(emailConfigApiSource.includes("authorize()") && emailConfigApiSource.includes("users:manage"), "email: config API gates GET to sign-in and PUT/POST to Manager (users:manage)");
 check(emailConfigApiSource.includes("nodemailer") && emailConfigApiSource.includes("maskEmailConfig"), "email: config API uses nodemailer and answers with maskEmailConfig");

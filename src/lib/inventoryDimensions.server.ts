@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 
 interface DimensionEntry {
   dimensions: string;
@@ -56,10 +57,7 @@ function readRaw(): RawFile {
 
 function writeRaw(data: RawFile): void {
   const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, data);
   cacheData(file, data);
 }
 

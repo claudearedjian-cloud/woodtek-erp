@@ -71,7 +71,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
 
   const [logAsset, setLogAsset] = useState<any>(null);
   const [logForm, setLogForm] = useState<any>({});
-  const [assetHistory, setAssetHistory] = useState<any[]>([]);
+  const [assetHistory] = useState<any[]>([]);
   const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
 
   const canManage = ["Manager", "Technician", "QA & Dispatch"].includes(currentUser?.role);
@@ -203,29 +203,6 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
       await fetchAll(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete asset");
-    }
-  };
-
-  const openLog = async (a: any) => {
-    setLogAsset(a);
-    setLogForm({
-      eventType: eventTypes[0] ?? "Inspection",
-      description: "",
-      runtimeAtEvent: String(a.runtimeHours),
-      downtimeMinutes: "0",
-      partsCost: "0.00",
-      laborCost: "0.00",
-      resetService: false,
-    });
-    setError("");
-    try {
-      const res = await fetch(`/api/cmms?assetId=${a.id}`, { cache: "no-store" });
-      if (res.ok) {
-        const detail = await res.json();
-        setAssetHistory(detail.logs || []);
-      }
-    } catch {
-      setAssetHistory([]);
     }
   };
 

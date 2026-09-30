@@ -157,7 +157,6 @@ export function computeTimelineWindow(orders: GanttOrder[], now: number): Timeli
   };
   for (const order of orders) {
     if (order.status === "Cancelled") continue;
-    const created = startOfDayMs(order.createdAt);
     const span = orderSpan(order);
     consider(span.startMs);
     consider(span.endMs);

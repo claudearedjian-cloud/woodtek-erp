@@ -9,6 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { ALL_STAGES, defaultStage, type DispatchStage } from "@/lib/dispatch";
 
 export interface DispatchProof {
@@ -105,9 +106,7 @@ function writeDispatchStore(store: DispatchStore): void {
     stages: sanitizeEntries(store.stages, false),
     batches: sanitizeEntries(store.batches, true),
   };
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(clean, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  writeJsonAtomic(file, clean);
 }
 
 function delay(ms: number): Promise<void> {

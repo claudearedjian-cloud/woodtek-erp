@@ -16,7 +16,6 @@ import {
   qualityEvents,
   downtimeEvents
 } from "@/db/schema";
-import { sql } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
 import { clearAllOrderRuntimeState } from "@/lib/orderCleanup.server";
 
@@ -74,7 +73,7 @@ export async function POST(request: Request) {
     }
 
     // 1. Insert Users / Operators
-    const [marcus, elena, diego, chloe, stefan, alexei] = await db.insert(users).values([
+    const [, elena, diego, , stefan, alexei] = await db.insert(users).values([
       { name: "Marcus Vance", email: "m.vance@woodtek.com", role: "Manager", avatarColor: "bg-blue-600", pin: await hashPin("1001"), active: true },
       { name: "Elena Rostova", email: "e.rostova@woodtek.com", role: "Machine Operator", avatarColor: "bg-amber-600", pin: await hashPin("2002"), active: true },
       { name: "Diego Morales", email: "d.morales@woodtek.com", role: "Machine Operator", avatarColor: "bg-emerald-600", pin: await hashPin("3003"), active: true },
@@ -133,7 +132,7 @@ export async function POST(request: Request) {
     const nextWeek = new Date();
     nextWeek.setDate(nextWeek.getDate() + 7);
 
-    const [cnc1, cnc2, edge1, edge2, saw1, drill1, finish1, asm1, baz1, orma1] = await db.insert(machines).values([
+    const [cnc1, cnc2, edge1, edge2, saw1, drill1, finish1, asm1] = await db.insert(machines).values([
       { name: "Rover A CNC", code: "ROVER-A", category: "CNC Router", status: "In-Use", hourlyCost: "85.00", location: "Bay A - Milling Cell", assignedOperatorId: diego.id, maintenanceDue: nextWeek, notes: "Spindle 1 RPM calibration confirmed. High precision vacuum table." },
       { name: "Rover G CNC", code: "ROVER-G", category: "CNC Router", status: "Active", hourlyCost: "95.00", location: "Bay A - Milling Cell", assignedOperatorId: elena.id, maintenanceDue: nextWeek, notes: "Automated offload push table operational." },
       { name: "Brandt Ambition 1600 Edge Bander", code: "EDGE-01", category: "Edge Bander", status: "In-Use", hourlyCost: "65.00", location: "Bay B - Edge Processing", assignedOperatorId: elena.id, maintenanceDue: nextWeek, notes: "PUR glue cartridge inserted. Set for 1mm to 2mm tapes." },
@@ -205,7 +204,7 @@ export async function POST(request: Request) {
     ]);
 
     // 5. Inventory Items
-    const [oakMdf, melBoard, edgeTrim, hinge, varnish, dowels] = await db.insert(inventoryItems).values([
+    const [oakMdf, melBoard, edgeTrim, hinge, varnish] = await db.insert(inventoryItems).values([
       { sku: "BRD-OAK-18", name: "White Oak Crown Cut Veneer MDF 18mm", category: "Wood & MDF Panels", stockQuantity: 142, unit: "sheets", unitCost: "115.00", reorderLevel: 25, location: "Aisle 1 - Rack A" },
       { sku: "BRD-MEL-BLK", name: "Charcoal Matte Supermatt Melamine 18mm", category: "Wood & MDF Panels", stockQuantity: 88, unit: "sheets", unitCost: "68.50", reorderLevel: 30, location: "Aisle 1 - Rack B" },
       { sku: "EDG-OAK-22", name: "ABS Oak Textured Edge Band 22x1.2mm (Roll)", category: "Edge Banding", stockQuantity: 2450, unit: "meters", unitCost: "0.85", reorderLevel: 500, location: "Spool Shelf 4" },

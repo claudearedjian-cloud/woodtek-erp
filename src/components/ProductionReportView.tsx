@@ -63,7 +63,7 @@ interface ReportData {
 const hours = (minutes: number) => `${Math.round((minutes / 60) * 10) / 10}h`;
 const pct = (value: number | null) => (value == null ? "—" : `${Math.round(value * 100)}%`);
 
-export default function ProductionReportView({ currentUser }: { currentUser: any }) {
+export default function ProductionReportView() {
   const [range, setRange] = useState<RangeId>("today");
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState("");

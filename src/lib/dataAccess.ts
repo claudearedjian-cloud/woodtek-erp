@@ -24,11 +24,10 @@ import {
   users,
   inventoryItems,
   assets,
-  maintenanceLogs,
   qualityEvents,
   downtimeEvents,
 } from "@/db/schema";
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { readMachineOperators } from "@/lib/machineOperators.server";
 import {
   candidateOperationIdsForMachine,

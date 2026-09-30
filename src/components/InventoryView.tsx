@@ -277,7 +277,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   // native confirm) and reports server failures instead of swallowing them.
   const deleteItem = async () => {
     if (!confirmDelete) return;
-    const { id, name } = confirmDelete;
+    const { id } = confirmDelete;
     setDeleteBusy(true);
     setDeleteError("");
     try {

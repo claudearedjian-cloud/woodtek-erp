@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { operationTemplates } from "@/db/schema";
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 
 export async function GET() {

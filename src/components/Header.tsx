@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Search, Plus, ShieldAlert, Menu, LockKeyhole, UserRoundCog, Power, DatabaseBackup, ArchiveRestore, Languages, HardDriveDownload } from "lucide-react";
 import { LANG_LABELS, tt, type Lang } from "@/lib/i18n";
 

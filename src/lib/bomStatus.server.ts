@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 
 export type BomStatus = "Requested" | "Prepared" | "Delivered";
 
@@ -85,10 +86,9 @@ function readRaw(): RawFile {
 
 function writeRaw(data: RawFile): void {
   const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(temp, file);
+  // Crash-safe: the shared helper writes a temp file and renames it over the
+  // target, so a power cut can never truncate the warehouse/BOM status file.
+  writeJsonAtomic(file, data);
   cacheData(file, data);
 }
 

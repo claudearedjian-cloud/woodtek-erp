@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders } from "@/db/schema";
@@ -72,9 +73,7 @@ export async function PUT(request: Request) {
       }
     }
 
-    const file = fileLocation();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ version: 1, types: next }, null, 2), "utf8");
+    writeJsonAtomic(fileLocation(), { version: 1, types: next });
     return NextResponse.json({ types: next });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to save project categories";

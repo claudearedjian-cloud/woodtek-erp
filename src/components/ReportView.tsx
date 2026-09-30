@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { 
@@ -8,7 +8,6 @@ import {
   Download, 
   Printer, 
   Save, 
-  Calendar, 
   BarChart3, 
   Users, 
   Package, 
@@ -16,7 +15,6 @@ import {
   ClipboardList,
   Trash2,
   Eye,
-  RefreshCw,
   AlertTriangle,
   CheckCircle2,
   X,
@@ -46,7 +44,7 @@ const reportTypes = [
   { id: "Order Profitability", label: "Order Profitability", icon: DollarSign },
 ];
 
-export default function ReportView({ currentUser, searchQuery = "" }: ReportViewProps) {
+export default function ReportView({ currentUser }: ReportViewProps) {
   const [selectedType, setSelectedType] = useState("Production Summary");
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
@@ -130,7 +128,7 @@ export default function ReportView({ currentUser, searchQuery = "" }: ReportView
       fetchSavedReports();
       setNotice("Report deleted");
       setTimeout(() => setNotice(""), 3000);
-    } catch (err) {
+    } catch {
       setError("Failed to delete report");
     }
   };

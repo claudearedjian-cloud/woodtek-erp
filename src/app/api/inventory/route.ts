@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { inventoryItems } from "@/db/schema";
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { computeAvailability } from "@/lib/materials";
-import { getSessionUser } from "@/lib/auth";
 import { isManager } from "@/lib/dataAccess";
 import { readInventoryDimensions, setInventoryDimension } from "@/lib/inventoryDimensions.server";
 import { normalizeDimensions, validateDimensions } from "@/lib/inventoryDimensions";

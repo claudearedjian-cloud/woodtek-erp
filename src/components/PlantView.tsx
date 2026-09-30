@@ -7,7 +7,7 @@
 // dashboard; only the oee block is used here).
 // ============================================================================
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   DollarSign,
   TrendingUp,

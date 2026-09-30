@@ -31,6 +31,7 @@ import {
 } from "@/lib/dispatch";
 import { evaluateDueDateFit, formatOverrun, type DueDateFitResult } from "@/lib/dueDateFit";
 import { checklistComplete, checklistProgress, templateGates } from "@/lib/packingQc";
+import { useT } from "@/lib/langContext";
 
 interface ScheduleViewProps {
   machines: any[];
@@ -61,6 +62,8 @@ function dispatchRowKey(row: any): string {
 }
 
 export default function ScheduleView({ machines = [], currentUser, onRefresh, searchQuery = "" }: ScheduleViewProps) {
+  // Label language (top-bar EN / AR / FR) — English by default.
+  const t = useT();
   const [operations, setOperations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -594,15 +597,14 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         try {
           const payload = await response.json();
           errorMsg = payload.error || errorMsg;
-        } catch (e) {
+        } catch {
           errorMsg = `Server error (Status ${response.status}).`;
         }
         throw new Error(errorMsg);
       }
       const contentType = response.headers.get("content-type") || "";
-      let payload;
       if (contentType.includes("application/json")) {
-        payload = await response.json();
+        await response.json();
       }
       setPlannerOp(null);
       setNotice(`${plannerOp.operationName} scheduled on ${machines.find(machine => String(machine.id) === plannerMachineId)?.code || "machine"}.`);
@@ -630,7 +632,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         try {
           const payload = await response.json();
           errorMsg = payload.error || errorMsg;
-        } catch (e) {
+        } catch {
           errorMsg = `Server error (Status ${response.status}).`;
         }
         throw new Error(errorMsg);
@@ -703,7 +705,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       <section className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-black text-white">
-            <Truck className="h-4 w-4 text-emerald-400" /> Delivery Dispatch queue — material batches
+            <Truck className="h-4 w-4 text-emerald-400" /> {t("Delivery Dispatch queue — material batches")}
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -712,7 +714,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
               title="Print the driver's manifest for the batches shown — the order filter applies"
               className="flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-black text-amber-300 hover:bg-amber-500/20"
             >
-              <Truck className="h-3.5 w-3.5" /> Print manifest
+              <Truck className="h-3.5 w-3.5" /> {t("Print manifest")}
             </button>
             <span className="text-[11px] font-bold text-slate-500">
               Every issued material batch has its own row, QC, photos and proof. Production must finish before it can advance.
@@ -825,7 +827,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                                 : "border-slate-800 bg-slate-900 text-slate-600"
                           }`}
                         >
-                          {STAGE_LABELS[stage]}
+                          {t(STAGE_LABELS[stage])}
                         </span>
                       ))}
                     </div>
@@ -844,12 +846,12 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                         className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-black text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {productionBlocked
-                          ? "Production pending"
+                          ? t("Production pending")
                           : qcBlocked
-                            ? "QC checklist first"
+                            ? t("QC checklist first")
                             : nxt === "delivered"
-                              ? "Mark batch delivered"
-                              : `Next: ${STAGE_LABELS[nxt]}`}
+                              ? t("Mark batch delivered")
+                              : `${t("Next")}: ${t(STAGE_LABELS[nxt])}`}
                       </button>
                     )}
                     {showQc && qcTemplate.length > 0 && (

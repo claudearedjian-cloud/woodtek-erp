@@ -112,11 +112,6 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
     }
   };
 
-  const DEMO_PINS: Record<string, string> = {
-    Manager: "1001",
-    "Machine Operator": "2002",
-  };
-
   const createOwner = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
