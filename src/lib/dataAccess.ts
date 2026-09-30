@@ -37,6 +37,8 @@ import {
 import { CANDIDATE_CLAIMABLE_STATUSES, isWithinClaimedElsewhereGrace } from "@/lib/operationMachineCandidates";
 import type { SessionUser } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 
 // -------------------------------------------------------------------- types
 
@@ -299,7 +301,10 @@ export async function listOrdersForUser(
   // Field-level redaction: hide financial fields (order quote value) from
   // floor roles only (Machine Operator, QA & Dispatch, Technician).
   // Managers and Sales Coordinators see order values (Sales quotes them).
-  if (isFloorRole(user)) {
+  // Money visibility is decided by the optional-module grant (Manager always
+  // keeps it), NOT by a hard-coded floor-role list: that list used to let a
+  // Warehouse Supervisor - or any custom role - read money nobody granted.
+  if (!canSeeMoney(user, readOptionalModules())) {
     scoped = scoped.map(o => ({ ...o, totalValue: null as unknown as string }));
   }
 
@@ -346,7 +351,7 @@ export async function listCustomersForUser(user: SessionUser): Promise<ScopedCus
     ? baseQuery.where(and(...whereClauses))
     : baseQuery);
 
-  if (isManager(user)) return rows as ScopedCustomer[];
+  if (canSeeMoney(user, readOptionalModules())) return rows as ScopedCustomer[];
 
   // Field-level redaction: hide credit limits and balances from non-Managers
   return rows.map(c => ({

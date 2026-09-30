@@ -3,9 +3,11 @@ import { db } from "@/db";
 import { customers, orders } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("customers:read");
+  const { user, error: authError } = await authorize("customers:read");
   if (authError) return authError;
 
   try {
@@ -14,7 +16,19 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
 
     const customerOrders = await db.select().from(orders).where(eq(orders.customerId, customer.id)).orderBy(desc(orders.createdAt));
-    return NextResponse.json({ ...customer, orders: customerOrders });
+
+    // Money is hidden in the API, not just on screen: without the Invoicing &
+    // Money grant the credit limit, the balance and every order value are
+    // blanked before the response leaves the server.
+    const money = canSeeMoney(user, readOptionalModules());
+    const safeOrders = money
+      ? customerOrders
+      : customerOrders.map((o) => ({ ...o, totalValue: null as unknown as string }));
+    const safeCustomer = money
+      ? customer
+      : { ...customer, creditLimit: null as unknown as string, currentBalance: null as unknown as string };
+
+    return NextResponse.json({ ...safeCustomer, orders: safeOrders });
   } catch (error: any) {
     console.error("GET customer details error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch customer" }, { status: 500 });
@@ -22,12 +36,22 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("customers:write");
+  const { user, error: authError } = await authorize("customers:write");
   if (authError) return authError;
 
   try {
     const { id } = await context.params;
     const body = await request.json();
+
+    // Writing money is a grant, not a role: without Invoicing & Money a user can
+    // edit a client's contact details but never its limit or balance.
+    if ((body.creditLimit !== undefined || body.currentBalance !== undefined)
+      && !canSeeMoney(user, readOptionalModules())) {
+      return NextResponse.json(
+        { error: "Credit limit and balance belong to Invoicing & Money. Ask a Manager to grant it in Settings > Optional modules." },
+        { status: 403 },
+      );
+    }
 
     const updateFields: any = {};
     if (body.name !== undefined) updateFields.name = body.name;

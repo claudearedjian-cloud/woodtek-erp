@@ -12,8 +12,9 @@ import {
   listDowntimeEventsForUser,
   listQualityEventsForUser,
   isManager as userIsManager,
-  isFloorRole,
 } from "@/lib/dataAccess";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 
 export async function GET(request: Request) {
   const { user, error: authError } = await authorize();
@@ -98,6 +99,10 @@ export async function GET(request: Request) {
       ? Math.round(availabilityFrac * performanceFrac * qualityFrac * 100)
       : null;
 
+    // Money on the dashboard (pipeline value, scrap cost) follows the
+    // Invoicing & Money grant: hiding a tile on screen is not hiding data.
+    const money = canSeeMoney(user, readOptionalModules());
+
     const oee = {
       window: windowParam,
       windowLabel,
@@ -108,7 +113,7 @@ export async function GET(request: Request) {
       totalDowntimeMinutes,
       totalDowntimeHours: Math.round((totalDowntimeMinutes / 60) * 10) / 10,
       scrapQty,
-      scrapCost,
+      scrapCost: money ? scrapCost : null,
       openRework,
       completedOps: completedInWindow.length,
       rejectedOps: rejectedOps.length,
@@ -181,7 +186,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       kpis: {
         activeOrdersCount: activeOrders.length,
-        totalPipelineValue: isFloorRole(user) ? null : totalPipelineValue.toFixed(2),
+        totalPipelineValue: money ? totalPipelineValue.toFixed(2) : null,
         urgentOrdersCount,
         completedOrdersCount: completedThisMonth,
         utilizationRate,

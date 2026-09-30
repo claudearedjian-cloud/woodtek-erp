@@ -4,7 +4,9 @@ import { orders, customers, orderOperations, orderMaterials, machines, users, in
 import { and, eq, asc, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
-import { isFloorRole } from "@/lib/dataAccess";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 import { readDispatchStore } from "@/lib/dispatch.server";
@@ -98,9 +100,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       .filter((m) => !m.released)
       .reduce((s, m) => s + Number(m.costPerUnit || 0) * m.quantityUsed, 0);
 
-    // Field-level redaction for floor roles (Machine Operator, QA & Dispatch,
-    // Technician): hide order quote value + material costs.
-    const isFloor = isFloorRole(user);
+    // Money visibility follows the optional-module grant (Manager always keeps
+    // it), not a hard-coded floor-role list: hide the order quote value and the
+    // material costs from everyone without the Invoicing & Money grant.
+    const noMoney = !canSeeMoney(user, readOptionalModules());
 
     // V2 plans make the formerly flat operation list understandable: every
     // operation and BOM line carries its named material job and private route.
@@ -146,10 +149,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     return NextResponse.json({
       ...order,
-      totalValue: isFloor ? null : order.totalValue,
+      totalValue: noMoney ? null : order.totalValue,
       operations: enrichedOps,
-      materials: isFloor ? enrichedMats.map(m => ({ ...m, costPerUnit: null })) : enrichedMats,
-      materialsTotalCost: isFloor ? null : materialsTotalCost.toFixed(2),
+      materials: noMoney ? enrichedMats.map(m => ({ ...m, costPerUnit: null })) : enrichedMats,
+      materialsTotalCost: noMoney ? null : materialsTotalCost.toFixed(2),
       productionPlan,
     });
   } catch (error: any) {

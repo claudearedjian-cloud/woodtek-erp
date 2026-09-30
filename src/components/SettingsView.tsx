@@ -27,6 +27,13 @@ import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAcces
 import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
 import { Timer } from "lucide-react";
 import { ListChecks } from "lucide-react";
+import { Blocks } from "lucide-react";
+import {
+  OPTIONAL_MODULES,
+  MANAGER_ROLE,
+  type OptionalModuleId,
+  type OptionalModulesConfig,
+} from "@/lib/optionalModules";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -300,6 +307,217 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       setRoleMsg("Network error — role screens not saved.");
     }
   };
+
+  // ---- optional modules (money today, HR later) ---------------------------
+  // A module is OFF for everybody until a Manager switches it on and grants it
+  // to a role and/or to one person. Manager always keeps access, so a Manager
+  // can never lock themselves out of the factory's own books.
+  const [moduleCfg, setModuleCfg] = useState<OptionalModulesConfig>({
+    version: 1,
+    enabled: ["invoicing"],
+    roles: { "Sales Coordinator": ["invoicing"] },
+    users: {},
+  });
+  const [showModuleMgr, setShowModuleMgr] = useState(false);
+  const [moduleMsg, setModuleMsg] = useState("");
+
+  const shapeModules = (d: any): OptionalModulesConfig => ({
+    version: 1,
+    enabled: Array.isArray(d?.enabled) ? d.enabled : [],
+    roles: d?.roles && typeof d.roles === "object" ? d.roles : {},
+    users: d?.users && typeof d.users === "object" ? d.users : {},
+  });
+
+  useEffect(() => {
+    if (!isManager) return;
+    fetch("/api/optional-modules", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d === "object") setModuleCfg(shapeModules(d));
+      })
+      .catch(() => {});
+  }, [isManager]);
+
+  // Every click saves immediately: a half-applied grant is worse than none.
+  const saveModules = async (next: OptionalModulesConfig) => {
+    setModuleMsg("");
+    try {
+      const res = await fetch("/api/optional-modules", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setModuleMsg(data.error || "Failed to save optional modules.");
+        return;
+      }
+      setModuleCfg(shapeModules(data));
+      setModuleMsg("Saved.");
+    } catch {
+      setModuleMsg("Network error \u2014 optional modules not saved.");
+    }
+  };
+
+  const toggleModuleEnabled = (id: OptionalModuleId) => {
+    const on = moduleCfg.enabled.includes(id);
+    saveModules({
+      ...moduleCfg,
+      enabled: on ? moduleCfg.enabled.filter((m) => m !== id) : [...moduleCfg.enabled, id],
+    });
+  };
+
+  const toggleRoleModule = (role: string, id: OptionalModuleId) => {
+    const current = moduleCfg.roles[role] ?? [];
+    const roles = { ...moduleCfg.roles };
+    if (current.includes(id)) {
+      const left = current.filter((m) => m !== id);
+      if (left.length > 0) roles[role] = left;
+      else delete roles[role];
+    } else {
+      roles[role] = [...current, id];
+    }
+    saveModules({ ...moduleCfg, roles });
+  };
+
+  const toggleUserModule = (userId: number, id: OptionalModuleId) => {
+    const key = String(userId);
+    const current = moduleCfg.users[key] ?? [];
+    const users = { ...moduleCfg.users };
+    if (current.includes(id)) {
+      const left = current.filter((m) => m !== id);
+      if (left.length > 0) users[key] = left;
+      else delete users[key];
+    } else {
+      users[key] = [...current, id];
+    }
+    saveModules({ ...moduleCfg, users });
+  };
+
+  const optionalModulesPanel = (
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-black text-white flex items-center gap-2">
+          <Blocks className="w-4 h-4 text-amber-400" /> Optional modules
+        </h3>
+        <p className="text-[11px] text-slate-400 mt-1">
+          Switched off for everybody, then handed to a role and/or to one person. Saving happens on
+          every click. Manager always keeps access, so you cannot lock yourself out.
+        </p>
+      </div>
+
+      {OPTIONAL_MODULES.map((mod) => {
+        const on = moduleCfg.enabled.includes(mod.id);
+        const roleNames = [...ROLES, ...customRoles.map((c: any) => c.name)];
+        return (
+          <div key={mod.id} className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white">
+                  {mod.label}
+                  {!mod.ready && (
+                    <span className="ml-2 text-[10px] font-bold text-slate-500">
+                      arrives in the next bundle
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500">{mod.description}</div>
+              </div>
+              <button
+                type="button"
+                disabled={!mod.ready}
+                onClick={() => toggleModuleEnabled(mod.id)}
+                className={`shrink-0 text-[10px] font-black px-3 py-1.5 rounded-lg border transition ${
+                  !mod.ready
+                    ? "border-slate-800 text-slate-600 cursor-not-allowed"
+                    : on
+                    ? "border-emerald-600 bg-emerald-500/15 text-emerald-300"
+                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-white"
+                }`}
+              >
+                {on ? "ON" : "OFF"}
+              </button>
+            </div>
+
+            {mod.ready && on && (
+              <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">Roles</div>
+                  <div className="space-y-1">
+                    {roleNames.map((r) => {
+                      const granted = (moduleCfg.roles[r] ?? []).includes(mod.id);
+                      const isMgr = r === MANAGER_ROLE;
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          disabled={isMgr}
+                          onClick={() => toggleRoleModule(r, mod.id)}
+                          className={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${
+                            isMgr
+                              ? "bg-slate-900/40 text-slate-500 cursor-default"
+                              : "bg-slate-900/60 text-slate-300 hover:text-white"
+                          }`}
+                        >
+                          <span className="truncate">{r}</span>
+                          <span className={isMgr || granted ? "text-emerald-400" : "text-slate-600"}>
+                            {isMgr ? "always allowed" : granted ? "granted" : "not granted"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">
+                    People (exceptions)
+                  </div>
+                  <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                    {entities.map((person: any) => {
+                      const personal = (moduleCfg.users[String(person.id)] ?? []).includes(mod.id);
+                      const inherited = (moduleCfg.roles[person.role] ?? []).includes(mod.id);
+                      const isMgr = person.role === MANAGER_ROLE;
+                      return (
+                        <button
+                          key={person.id}
+                          type="button"
+                          disabled={isMgr}
+                          onClick={() => toggleUserModule(Number(person.id), mod.id)}
+                          className={`w-full flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition ${
+                            isMgr
+                              ? "bg-slate-900/40 text-slate-500 cursor-default"
+                              : "bg-slate-900/60 text-slate-300 hover:text-white"
+                          }`}
+                        >
+                          <span className="truncate">{person.name || person.email}</span>
+                          <span
+                            className={
+                              isMgr
+                                ? "text-emerald-400"
+                                : personal
+                                ? "text-amber-300"
+                                : inherited
+                                ? "text-emerald-400"
+                                : "text-slate-600"
+                            }
+                          >
+                            {isMgr ? "always allowed" : personal ? "\u2605 personal" : inherited ? "(role)" : "\u2014"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {moduleMsg && <div className="text-[11px] font-bold text-amber-300">{moduleMsg}</div>}
+    </div>
+  );
 
   const roleManagerPanel = (
     <>
@@ -690,6 +908,15 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
+        {activeTab === "users" && isManager && (
+          <button
+            type="button"
+            onClick={() => setShowModuleMgr((v) => !v)}
+            className="flex items-center gap-2 border border-amber-700 bg-amber-500/10 text-amber-300 font-black px-4 py-2.5 rounded-xl text-xs transition hover:bg-amber-500/20"
+          >
+            <Blocks className="w-4 h-4" /> Optional modules
+          </button>
+        )}
         {activeTab === "users" && (
           <button
             type="button"
@@ -707,6 +934,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           <span>Add {activeTab === "clients" ? "Client" : activeTab === "technicians" ? "Technician" : activeTab === "operators" ? "Operator" : "User"}</span>
         </button>
       </div>
+
+      {activeTab === "users" && isManager && showModuleMgr && !showModal && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{optionalModulesPanel}</div>
+      )}
 
       {activeTab === "users" && showRoleMgr && !showModal && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{roleManagerPanel}</div>
