@@ -35,6 +35,7 @@ compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
 compile("src/lib/atomicFile.server.ts", "lib/atomicFile.server.js");
+compile("src/lib/dbIndexes.ts", "lib/dbIndexes.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
 compile("src/lib/i18n.ts", "lib/i18n.js");
 compile("src/lib/idle.ts", "lib/idle.js");
@@ -655,6 +656,69 @@ for (const lib of [
   );
 }
 fs.rmSync(atomicTmp, { recursive: true, force: true });
+
+// ---- database index plan (2026-09-30 speed bundle) ----
+const dbx = require("./compiled/lib/dbIndexes.js");
+check(Array.isArray(dbx.DB_INDEX_PLAN) && dbx.DB_INDEX_PLAN.length >= 25, "dbx: plan has >= 25 index definitions");
+const planNames = dbx.DB_INDEX_PLAN.map((d) => d.name);
+check(new Set(planNames).size === planNames.length, "dbx: index names are unique");
+check(
+  dbx.DB_INDEX_PLAN.every((d) => d.name && d.table && Array.isArray(d.columns) && d.columns.length > 0 && d.why),
+  "dbx: every definition has name, table, columns and a reason",
+);
+check(
+  dbx.DB_INDEX_PLAN.every((d) => d.name.startsWith(d.table + "_") && d.name.endsWith("_idx")),
+  "dbx: names follow the <table>_<columns>_idx convention",
+);
+check(
+  dbx.DB_INDEX_PLAN.every((d) => d.columns.every((c) => /^[a-z_]+$/.test(c))),
+  "dbx: columns are snake_case database columns (no drizzle camelCase leaked)",
+);
+check(
+  dbx.createIndexSql(dbx.DB_INDEX_PLAN.find((d) => d.name === "orders_customer_id_idx")) ===
+    'CREATE INDEX IF NOT EXISTS "orders_customer_id_idx" ON "orders" ("customer_id")',
+  "dbx: createIndexSql single column is quoted and idempotent",
+);
+check(
+  dbx.createIndexSql(dbx.DB_INDEX_PLAN.find((d) => d.name === "shift_assignments_work_date_user_id_idx")) ===
+    'CREATE INDEX IF NOT EXISTS "shift_assignments_work_date_user_id_idx" ON "shift_assignments" ("work_date", "user_id")',
+  "dbx: createIndexSql composite keeps the column order",
+);
+check(dbx.missingDbIndexes(planNames).length === 0, "dbx: nothing missing when every plan name is live");
+const partialLive = planNames.slice(3); // first 3 count as missing
+check(
+  dbx.missingDbIndexes(partialLive).length === 3 && dbx.missingDbIndexes(partialLive)[0].name === planNames[0],
+  "dbx: missing computation returns exactly the absent ones",
+);
+check(
+  dbx.missingDbIndexes(planNames.map((n) => n.toUpperCase())).length === 0,
+  "dbx: live index names are compared case-insensitively",
+);
+for (const mustHave of ["order_operations_order_id_idx", "order_operations_machine_id_idx", "attendance_user_id_idx", "downtime_events_machine_id_idx", "order_materials_item_id_idx"]) {
+  check(planNames.includes(mustHave), "dbx: hot path covered — " + mustHave);
+}
+// Source-level guarantees: Manager-gated route, additive-only SQL, schema parity
+const dbIndexesRouteSource = fs.readFileSync("src/app/api/db-indexes/route.ts", "utf8");
+check(
+  (dbIndexesRouteSource.match(/authorize\("users:manage"\)/g) || []).length === 2,
+  "dbx: GET and POST /api/db-indexes both require users:manage",
+);
+const dbIndexesServerSource = fs.readFileSync("src/lib/dbIndexes.server.ts", "utf8");
+check(
+  !/DROP\s+(INDEX|TABLE|COLUMN)|ALTER\s+(TABLE|INDEX)|TRUNCATE/i.test(dbIndexesServerSource),
+  "dbx: server lib never drops or alters anything",
+);
+const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
+const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
+check(
+  schemaIndexCount === dbx.DB_INDEX_PLAN.length && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
+  "dbx: schema.ts declares exactly the same " + dbx.DB_INDEX_PLAN.length + " indexes as the plan",
+);
+const dbxViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
+check(
+  dbxViewSource.includes("/api/db-indexes") && dbxViewSource.includes("Create "),
+  "dbx: Schema Check dialog exposes the index check + create button",
+);
 
 // ---- i18n dictionary sanity ----
 const i18n = require("./compiled/lib/i18n.js");

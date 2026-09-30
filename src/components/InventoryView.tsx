@@ -7,6 +7,7 @@ import { can } from "@/lib/permissions";
 import type { InventoryImportValidation } from "@/lib/inventoryImport";
 import { isPanelCategory, validateDimensions } from "@/lib/inventoryDimensions";
 import { DEFAULT_INVENTORY_CATEGORIES } from "@/lib/inventoryCategories";
+import type { DbIndexDef } from "@/lib/dbIndexes";
 
 interface InventoryViewProps {
   items: any[];
@@ -55,6 +56,9 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   }>>([]);
   const [schemaBusy, setSchemaBusy] = useState(false);
   const [schemaMessage, setSchemaMessage] = useState("");
+  const [idxInfo, setIdxInfo] = useState<{ missing: DbIndexDef[]; presentCount: number; planCount: number } | null>(null);
+  const [idxBusy, setIdxBusy] = useState(false);
+  const [idxMessage, setIdxMessage] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<InventoryImportValidation | null>(null);
@@ -188,13 +192,47 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const openSchemaCheck = async () => {
     setSchemaOpen(true);
     setSchemaTables([]);
+    setIdxInfo(null);
+    setIdxMessage("");
     setSchemaMessage("Checking live database…");
     setSchemaBusy(true);
     try {
-      await runSchemaCheck();
+      await Promise.all([runSchemaCheck(), runIndexCheck()]);
     } finally {
       setSchemaBusy(false);
       setSchemaMessage("");
+    }
+  };
+
+  // ---- database index check & create (Manager) — same dialog, 2026-09-30 ----
+  const runIndexCheck = async () => {
+    try {
+      const res = await fetch("/api/db-indexes", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Index check failed");
+      setIdxInfo({ missing: data.missing ?? [], presentCount: data.presentCount ?? 0, planCount: data.planCount ?? 0 });
+    } catch (err) {
+      setIdxMessage(err instanceof Error ? err.message : "Index check failed");
+    }
+  };
+
+  const runIndexCreate = async () => {
+    setIdxBusy(true);
+    setIdxMessage("Creating indexes…");
+    try {
+      const res = await fetch("/api/db-indexes", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Index creation failed");
+      setIdxInfo({ missing: data.missing ?? [], presentCount: data.presentCount ?? 0, planCount: data.planCount ?? 0 });
+      setIdxMessage(
+        data.created?.length
+          ? `Created ${data.created.length} index(es): ${(data.created as DbIndexDef[]).map((d) => d.name).join(", ")}`
+          : "Nothing to do — all indexes already exist.",
+      );
+    } catch (err) {
+      setIdxMessage(err instanceof Error ? err.message : "Index creation failed");
+    } finally {
+      setIdxBusy(false);
     }
   };
 
@@ -1093,7 +1131,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               <span className="font-bold text-slate-200"> adds missing columns</span> and
               <span className="font-bold text-slate-200"> relaxes NOT NULL</span> on legacy extra
               columns — nothing is dropped or renamed. Use it when stock operations fail with
-              database schema errors.
+              database schema errors. The index section below creates missing database indexes
+              (speed only — data is never touched).
             </p>
             {schemaBusy && (
               <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] font-bold text-slate-400">
@@ -1133,6 +1172,53 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 )}
               </div>
             ))}
+            {/* Database indexes (2026-09-30 speed bundle) — check + one-click create */}
+            <div className={`rounded-xl border p-3 ${idxInfo && idxInfo.missing.length ? "border-amber-500/40 bg-amber-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-bold text-white">Database indexes (speed)</span>
+                {!idxInfo ? (
+                  <span className="text-[10px] font-black uppercase text-slate-400">checking…</span>
+                ) : idxInfo.missing.length > 0 ? (
+                  <span className="text-[10px] font-black uppercase text-amber-300">
+                    {idxInfo.missing.length} of {idxInfo.planCount} missing
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-[10px] font-black uppercase text-emerald-300">
+                    <CheckCircle2 className="h-3 w-3" /> {idxInfo.presentCount}/{idxInfo.planCount} OK
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[10px] leading-relaxed text-slate-400">
+                Indexes keep every list screen fast as orders, attendance and downtime rows pile
+                up over the years. Creating them never changes or locks your data for more than a
+                blink.
+              </p>
+              {idxInfo && idxInfo.missing.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {idxInfo.missing.slice(0, 6).map((d) => (
+                    <p key={d.name} className="font-mono text-[10px] leading-relaxed text-amber-200/90">
+                      {d.table} ({d.columns.join(", ")}) — {d.why}
+                    </p>
+                  ))}
+                  {idxInfo.missing.length > 6 && (
+                    <p className="font-mono text-[10px] text-slate-500">
+                      …and {idxInfo.missing.length - 6} more
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void runIndexCreate()}
+                    disabled={idxBusy}
+                    className="mt-1 w-full rounded-xl bg-amber-500 px-4 py-2 text-xs font-black text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                  >
+                    {idxBusy ? "Creating…" : `Create ${idxInfo.missing.length} Missing Index${idxInfo.missing.length === 1 ? "" : "es"}`}
+                  </button>
+                </div>
+              )}
+              {idxMessage && (
+                <p className="mt-2 whitespace-pre-wrap font-mono text-[10px] leading-relaxed text-sky-300">{idxMessage}</p>
+              )}
+            </div>
             {schemaMessage && (
               <p className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-sky-300">{schemaMessage}</p>
             )}

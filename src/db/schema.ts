@@ -1,5 +1,6 @@
 import { 
   pgTable, 
+  index,
   serial, 
   text, 
   integer, 
@@ -54,7 +55,12 @@ export const customers = pgTable("customers", {
   // When null, only Manager can see it (legacy / unassigned).
   assignedSalesId: integer("assigned_sales_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("customers_assigned_sales_id_idx").on(t.assignedSalesId),
+  ],
+);
 
 // Machines (Shop floor equipment)
 export const machines = pgTable("machines", {
@@ -69,7 +75,12 @@ export const machines = pgTable("machines", {
   assignedOperatorId: integer("assigned_operator_id").references(() => users.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("machines_category_idx").on(t.category),
+  ],
+);
 
 // CMMS: Plant Asset Registry — machines, generators, compressors, HVAC, etc.
 export const assets = pgTable("assets", {
@@ -125,7 +136,13 @@ export const maintenanceLogs = pgTable("maintenance_logs", {
   resetService: boolean("reset_service").notNull().default(false), // Did this event reset the service meter?
   checklistJson: json("checklist_json"), // Technician pre-service inspection results
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("maintenance_logs_asset_id_idx").on(t.assetId),
+    index("maintenance_logs_created_at_idx").on(t.createdAt),
+  ],
+);
 
 // Pre-defined operational routing workflows (e.g. Panel Cutting -> Edge Band -> Drilling -> QA)
 export const operationTemplates = pgTable("operation_templates", {
@@ -162,7 +179,17 @@ export const orders = pgTable("orders", {
   // Values: 'unknown' | 'in_stock' | 'partial' | 'out_of_stock' | 'consumed'
   materialsStatus: text("materials_status").notNull().default("unknown"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("orders_customer_id_idx").on(t.customerId),
+    index("orders_status_idx").on(t.status),
+    index("orders_assigned_sales_id_idx").on(t.assignedSalesId),
+    index("orders_created_by_id_idx").on(t.createdById),
+    index("orders_due_date_idx").on(t.dueDate),
+    index("orders_created_at_idx").on(t.createdAt),
+  ],
+);
 
 // Order Operations: Individual routed steps assigned to specific machines & operators
 export const orderOperations = pgTable("order_operations", {
@@ -182,7 +209,16 @@ export const orderOperations = pgTable("order_operations", {
   qualityNotes: text("quality_notes"),
   rejectReason: text("reject_reason"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("order_operations_order_id_idx").on(t.orderId),
+    index("order_operations_machine_id_idx").on(t.machineId),
+    index("order_operations_operator_id_idx").on(t.operatorId),
+    index("order_operations_status_idx").on(t.status),
+    index("order_operations_scheduled_start_idx").on(t.scheduledStart),
+  ],
+);
 
 // Inventory: Raw Materials, Wood Boards, Edge Banding rolls, Hardware & Coatings
 export const inventoryItems = pgTable("inventory_items", {
@@ -210,7 +246,13 @@ export const orderMaterials = pgTable("order_materials", {
   consumedAt: timestamp("consumed_at"),
   released: boolean("released").notNull().default(false),
   releasedAt: timestamp("released_at"),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("order_materials_order_id_idx").on(t.orderId),
+    index("order_materials_item_id_idx").on(t.itemId),
+  ],
+);
 
 // Audit trail: every consumption event
 export const materialConsumptions = pgTable("material_consumptions", {
@@ -222,7 +264,13 @@ export const materialConsumptions = pgTable("material_consumptions", {
   operationId: integer("operation_id").references(() => orderOperations.id),
   notes: text("notes"),
   consumedAt: timestamp("consumed_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("material_consumptions_order_id_idx").on(t.orderId),
+    index("material_consumptions_item_id_idx").on(t.itemId),
+  ],
+);
 
 // Relations
 export const ordersRelations = relations(orders, ({ one, many }) => ({
@@ -351,7 +399,12 @@ export const shiftAssignments = pgTable("shift_assignments", {
   machineId: integer("machine_id").references(() => machines.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("shift_assignments_work_date_user_id_idx").on(t.workDate, t.userId),
+  ],
+);
 
 // Time & attendance: one row per clock-in; clock_out NULL while on shift
 export const attendance = pgTable("attendance", {
@@ -363,7 +416,13 @@ export const attendance = pgTable("attendance", {
   status: text("status").notNull().default("Present"), // Present, Late, Absent (manager-set)
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("attendance_user_id_idx").on(t.userId),
+    index("attendance_clock_in_idx").on(t.clockIn),
+  ],
+);
 
 export const shiftsRelations = relations(shifts, ({ many }) => ({
   assignments: many(shiftAssignments),
@@ -403,7 +462,13 @@ export const qualityEvents = pgTable("quality_events", {
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   resolvedAt: timestamp("resolved_at"),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("quality_events_order_id_idx").on(t.orderId),
+    index("quality_events_machine_id_idx").on(t.machineId),
+  ],
+);
 
 // ----------------------------------------------------------------------------
 // Downtime logging: one row per stoppage. ended_at is NULL while the stoppage
@@ -421,7 +486,13 @@ export const downtimeEvents = pgTable("downtime_events", {
   operatorId: integer("operator_id").references(() => users.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("downtime_events_machine_id_idx").on(t.machineId),
+    index("downtime_events_started_at_idx").on(t.startedAt),
+  ],
+);
 
 export const qualityEventsRelations = relations(qualityEvents, ({ one }) => ({
   order: one(orders, {
@@ -484,7 +555,12 @@ export const pimsImports = pgTable("pims_imports", {
   message: text("message"),
   rawXml: text("raw_xml"),
   importedAt: timestamp("imported_at").defaultNow().notNull(),
-});
+},
+// Indexes (2026-09-30 speed bundle — same names the Schema Check repair creates):
+(t) => [
+    index("pims_imports_imported_at_idx").on(t.importedAt),
+  ],
+);
 
 export const pimsImportsRelations = relations(pimsImports, ({ one }) => ({
   order: one(orders, {
