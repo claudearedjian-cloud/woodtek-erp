@@ -1,25 +1,39 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { inventoryItems, materialConsumptions, orderMaterials } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 import { logAudit } from "@/lib/audit.server";
 import { setInventoryDimension, deleteInventoryDimension, readInventoryDimensions } from "@/lib/inventoryDimensions.server";
 import { normalizeDimensions, validateDimensions } from "@/lib/inventoryDimensions";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("inventory:write");
-  if (authError) return authError;
+  const { error: authError, user } = await authorize("inventory:write");
+  if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const { id } = await context.params;
     const body = await request.json();
+    const money = canSeeMoney(user, readOptionalModules());
+    if (body.unitCost !== undefined && !money) return NextResponse.json({ error: "Invoicing & Money access is required to change a material cost." }, { status: 403 });
+    const itemId = Number(id);
+    if (!Number.isSafeInteger(itemId) || itemId <= 0) return NextResponse.json({ error: "Invalid stock item id." }, { status: 400 });
+    if (body.adjustQuantity !== undefined && body.stockQuantity !== undefined) return NextResponse.json({ error: "Use either an adjustment or an absolute quantity, not both." }, { status: 400 });
+    const delta = body.adjustQuantity === undefined ? null : Number(body.adjustQuantity);
+    if (delta !== null && (!Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > 1_000_000)) return NextResponse.json({ error: "Stock adjustment must be a nonzero whole number up to 1,000,000." }, { status: 400 });
 
     const updateFields: any = {};
     if (body.name !== undefined) updateFields.name = body.name;
     if (body.sku !== undefined) updateFields.sku = body.sku.toUpperCase();
     if (body.category !== undefined) updateFields.category = body.category;
-    if (body.stockQuantity !== undefined) updateFields.stockQuantity = Number(body.stockQuantity);
+    if (body.stockQuantity !== undefined) {
+      const quantity = Number(body.stockQuantity);
+      if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > 2_147_483_647) return NextResponse.json({ error: "Stock quantity must be a non-negative whole number." }, { status: 400 });
+      updateFields.stockQuantity = quantity;
+    }
+    if (delta !== null) updateFields.stockQuantity = sql`${inventoryItems.stockQuantity} + ${delta}`;
     if (body.unit !== undefined) updateFields.unit = body.unit;
     if (body.unitCost !== undefined) updateFields.unitCost = String(body.unitCost);
     if (body.reorderLevel !== undefined) updateFields.reorderLevel = Number(body.reorderLevel);
@@ -33,14 +47,21 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (dimensionsError) {
         return NextResponse.json({ error: dimensionsError }, { status: 400 });
       }
-      setInventoryDimension(Number(id), dims);
       nextDimensions = dims || null;
     } else {
       nextDimensions = readInventoryDimensions()[String(id)] ?? null;
     }
 
-    const [updated] = await db.update(inventoryItems).set(updateFields).where(eq(inventoryItems.id, Number(id))).returning();
-    return NextResponse.json({ ...updated, dimensions: nextDimensions });
+    const condition = delta === null
+      ? eq(inventoryItems.id, itemId)
+      : and(eq(inventoryItems.id, itemId), sql`${inventoryItems.stockQuantity} >= ${-delta} and ${inventoryItems.stockQuantity} <= ${2_147_483_647 - delta}`);
+    if (Object.keys(updateFields).length === 0 && body.dimensions === undefined) return NextResponse.json({ error: "No changes were provided." }, { status: 400 });
+    const [updated] = Object.keys(updateFields).length === 0
+      ? await db.select().from(inventoryItems).where(eq(inventoryItems.id, itemId))
+      : await db.update(inventoryItems).set(updateFields).where(condition).returning();
+    if (!updated) return NextResponse.json({ error: "Stock item not found or adjustment exceeds allowed quantity. Refresh and try again." }, { status: 409 });
+    if (body.dimensions !== undefined) setInventoryDimension(itemId, nextDimensions ?? "");
+    return NextResponse.json({ ...updated, unitCost: money ? updated.unitCost : null, dimensions: nextDimensions });
   } catch (error: any) {
     console.error("PATCH inventory error:", error);
     return NextResponse.json({ error: error?.message || "Failed to update item" }, { status: 500 });

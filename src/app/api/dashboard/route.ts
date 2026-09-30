@@ -11,7 +11,6 @@ import {
   listCustomersForUser,
   listDowntimeEventsForUser,
   listQualityEventsForUser,
-  isManager as userIsManager,
 } from "@/lib/dataAccess";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
@@ -152,7 +151,7 @@ export async function GET(request: Request) {
         status: m.status,
         queueLength: queue.length,
         estimatedHours: Math.round((totalMinutes / 60) * 10) / 10,
-        hourlyCost: userIsManager(user) ? m.hourlyCost : null,
+        hourlyCost: money ? m.hourlyCost : null,
       };
     }).sort((a, b) => b.queueLength - a.queueLength);
 
@@ -198,7 +197,7 @@ export async function GET(request: Request) {
       },
       machineWorkloads,
       primaryBottleneck,
-      lowStockItems: lowStockItems.slice(0, 5),
+      lowStockItems: lowStockItems.slice(0, 5).map(i => ({ ...i, unitCost: money ? i.unitCost : null })),
       activeShopJobs,
       orderStatusDistribution: {
         Pending: orderRows.filter(o => o.status === "Pending").length,

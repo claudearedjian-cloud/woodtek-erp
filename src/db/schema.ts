@@ -1,6 +1,7 @@
 import { 
   pgTable, 
   index,
+  uniqueIndex,
   serial, 
   text, 
   integer, 
@@ -10,7 +11,7 @@ import {
   json,
   date
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 // Users / Employees for role-based Authentication & Operator tracking
 export const users = pgTable("users", {
@@ -271,6 +272,69 @@ export const materialConsumptions = pgTable("material_consumptions", {
     index("material_consumptions_item_id_idx").on(t.itemId),
   ],
 );
+
+// Purchasing: suppliers -> immutable purchase order lines -> GRN lines.
+// The GRN and the inventory increment commit in ONE PostgreSQL transaction.
+// A deleted inventory item only nulls the line's itemId; its SKU/name/unit
+// snapshot and historic receipts remain in the procurement ledger.
+export const suppliers = pgTable("suppliers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  contactName: text("contact_name").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  email: text("email").notNull().default(""),
+  address: text("address").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("suppliers_name_ci_idx").on(sql`lower(${t.name})`)]);
+
+export const purchaseOrders = pgTable("purchase_orders", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  expectedAt: date("expected_at", { mode: "string" }),
+  notes: text("notes").notNull().default(""),
+  status: text("status").notNull().default("Open"), // Open | Closed | Cancelled
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("purchase_orders_supplier_status_idx").on(t.supplierId, t.status),
+  index("purchase_orders_created_at_idx").on(t.createdAt),
+]);
+
+export const purchaseOrderLines = pgTable("purchase_order_lines", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => purchaseOrders.id),
+  itemId: integer("item_id").references(() => inventoryItems.id, { onDelete: "set null" }),
+  itemSku: text("item_sku").notNull(),
+  itemName: text("item_name").notNull(),
+  itemUnit: text("item_unit").notNull(),
+  quantity: integer("quantity").notNull(),
+  unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull().default("0.00"),
+}, (t) => [
+  index("purchase_order_lines_order_idx").on(t.orderId),
+  index("purchase_order_lines_item_idx").on(t.itemId),
+]);
+
+export const goodsReceipts = pgTable("goods_receipts", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => purchaseOrders.id),
+  requestKey: text("request_key").notNull().unique(), // a retry cannot increment stock twice
+  receivedById: integer("received_by_id").references(() => users.id, { onDelete: "set null" }),
+  deliveryRef: text("delivery_ref").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  receivedAt: timestamp("received_at").defaultNow().notNull(),
+}, (t) => [index("goods_receipts_order_idx").on(t.orderId)]);
+
+export const goodsReceiptLines = pgTable("goods_receipt_lines", {
+  id: serial("id").primaryKey(),
+  receiptId: integer("receipt_id").notNull().references(() => goodsReceipts.id),
+  poLineId: integer("po_line_id").notNull().references(() => purchaseOrderLines.id),
+  quantity: integer("quantity").notNull(),
+}, (t) => [
+  uniqueIndex("goods_receipt_lines_unique_idx").on(t.receiptId, t.poLineId),
+  index("goods_receipt_lines_po_line_idx").on(t.poLineId),
+]);
 
 // Relations
 export const ordersRelations = relations(orders, ({ one, many }) => ({

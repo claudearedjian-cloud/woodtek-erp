@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { machines } from "@/db/schema";
 import { authorize } from "@/lib/auth";
-import { listMachinesForUser, listOperationsForUser, isManager as userIsManager } from "@/lib/dataAccess";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+import { listMachinesForUser, listOperationsForUser } from "@/lib/dataAccess";
 import { readMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
 import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 
@@ -43,8 +45,8 @@ export async function GET(request: Request) {
         displayStatus = "In-Use";
       }
 
-      // Strip hourly cost from non-Managers
-      const hourlyCost = userIsManager(user) ? m.hourlyCost : null;
+      // Rates are decided by the Invoicing & Money grant.
+      const hourlyCost = canSeeMoney(user, readOptionalModules()) ? m.hourlyCost : null;
 
       return {
         ...m,
@@ -71,12 +73,17 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { error: authError } = await authorize("machines:write");
-  if (authError) return authError;
+  const { error: authError, user } = await authorize("machines:write");
+  if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const body = await request.json();
-    const { name, code, category, status = "Active", hourlyCost = "65.00", location = "Shop Floor", assignedOperatorId, notes, maintenanceDue } = body;
+    const money = canSeeMoney(user, readOptionalModules());
+    if (body.hourlyCost !== undefined && !money) return NextResponse.json({ error: "Invoicing & Money access is required to set a machine rate." }, { status: 403 });
+    const { name, code, category, status = "Active", location = "Shop Floor", assignedOperatorId, notes, maintenanceDue } = body;
+    // A machine created without a money grant must not silently receive a
+    // billable rate. A Manager can fill it in later.
+    const hourlyCost = money ? String(body.hourlyCost ?? "65.00") : "0.00";
     const legacyOperatorId = Number(assignedOperatorId);
     const crewIds = Array.isArray(body.assignedOperatorIds)
       ? (Array.from(new Set(body.assignedOperatorIds
@@ -103,7 +110,7 @@ export async function POST(request: Request) {
     // Multi-operator crew (Manager UI) — sync overlay + keep primary column.
     if (crewIds.length > 0) setMachineOperators(newMachine.id, crewIds);
 
-    return NextResponse.json({ ...newMachine, assignedOperatorIds: crewIds }, { status: 201 });
+    return NextResponse.json({ ...newMachine, hourlyCost: money ? newMachine.hourlyCost : null, assignedOperatorIds: crewIds }, { status: 201 });
   } catch (error: any) {
     console.error("POST machine error:", error);
     return NextResponse.json({ error: error?.message || "Failed to create machine" }, { status: 500 });

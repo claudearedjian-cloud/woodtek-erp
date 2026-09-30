@@ -4,6 +4,7 @@ import { assets, inventoryItems } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { readReceived } from "@/lib/bomStatus.server";
+import { suggestedReorderQty } from "@/lib/purchasing";
 
 // ============================================================================
 // GET /api/alerts — everything that needs a human's attention right now:
@@ -28,7 +29,7 @@ export async function GET() {
       db.select().from(inventoryItems),
     ]);
 
-    const alerts: Array<{ kind: string; severity: string; title: string; detail: string; tab: string }> = [];
+    const alerts: Array<{ kind: string; severity: string; title: string; detail: string; tab: string; itemId?: number; suggestedQty?: number }> = [];
 
     for (const o of orderRows as any[]) {
       if (OPEN_STATUSES.has(o.status) && o.dueDate && new Date(o.dueDate).getTime() < now) {
@@ -97,6 +98,8 @@ export async function GET() {
           title: `Low stock: ${i.name}`,
           detail: `${i.stockQuantity} ${i.unit} left · reorder level ${i.reorderLevel}`,
           tab: "inventory",
+          itemId: i.id,
+          suggestedQty: suggestedReorderQty(i.stockQuantity, i.reorderLevel),
         });
       }
     }

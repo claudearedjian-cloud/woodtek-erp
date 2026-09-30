@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { inventoryItems } from "@/db/schema";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 import {
   INVENTORY_IMPORT_MAX_FILE_BYTES,
   type InventoryImportValidation,
@@ -29,8 +31,9 @@ class ImportChangedError extends Error {
 }
 
 export async function GET() {
-  const { error } = await authorize("inventory:write");
+  const { user, error } = await authorize("inventory:write");
   if (error) return error;
+  if (!canSeeMoney(user, readOptionalModules())) return NextResponse.json({ error: "Invoicing & Money access is required for costed Excel stock imports." }, { status: 403, headers: NO_STORE_HEADERS });
 
   try {
     const bytes = await buildInventoryImportTemplate();
@@ -52,6 +55,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const { user, error } = await authorize("inventory:write");
   if (error) return error;
+  if (!canSeeMoney(user, readOptionalModules())) return NextResponse.json({ error: "Invoicing & Money access is required for costed Excel stock imports." }, { status: 403, headers: NO_STORE_HEADERS });
 
   let form: FormData;
   try {

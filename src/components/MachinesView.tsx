@@ -289,7 +289,7 @@ export default function MachinesView({
                 
                 <div className="flex items-center justify-between text-xs text-slate-400 pb-3 border-b border-slate-800">
                   <span className="text-slate-300 font-semibold">{m.location}</span>
-                  <span className="font-mono font-bold text-white">${m.hourlyCost}/hr</span>
+                  <span className="font-mono font-bold text-white">{m.hourlyCost == null ? "Rate restricted" : `$${m.hourlyCost}/hr`}</span>
                 </div>
 
                 {/* Active Job or Queue */}

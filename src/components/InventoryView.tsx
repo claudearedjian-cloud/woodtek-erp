@@ -14,11 +14,13 @@ interface InventoryViewProps {
   loading: boolean;
   onRefresh: () => void | Promise<void>;
   currentUser?: { role?: string | null } | null;
+  canSeeMoney?: boolean;
+  onCreatePurchaseOrder?: (itemId: number) => void;
 }
 
 type ImportResult = { total: number; created: number; updated: number };
 
-export default function InventoryView({ items = [], loading, onRefresh, currentUser }: InventoryViewProps) {
+export default function InventoryView({ items = [], loading, onRefresh, currentUser, canSeeMoney = false, onCreatePurchaseOrder }: InventoryViewProps) {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [showModal, setShowModal] = useState(false);
   const [showOrdersModal, setShowOrdersModal] = useState<any | null>(null); // item being inspected
@@ -67,7 +69,8 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [lastImportResult, setLastImportResult] = useState<ImportResult | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const canImportStock = can(currentUser?.role, "inventory:write");
+  const canEditStock = can(currentUser?.role, "inventory:write");
+  const canImportStock = canEditStock && canSeeMoney;
 
   // Manager-editable category list (defaults until the first fetch).
   useEffect(() => {
@@ -93,18 +96,18 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
   const reservedUnits = items.reduce((s, i) => s + (Number(i.reservedQuantity) || 0), 0);
   const totalUnits = items.reduce((s, i) => s + (Number(i.stockQuantity) || 0), 0);
 
-  const handleAdjustStock = async (id: number, currentQty: number, delta: number) => {
-    const newQty = Math.max(0, currentQty + delta);
+  const handleAdjustStock = async (id: number, delta: number) => {
     try {
-      await fetch(`/api/inventory/${id}`, {
+      const res = await fetch(`/api/inventory/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockQuantity: newQty }),
+        body: JSON.stringify({ adjustQuantity: delta }),
       });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Stock adjustment failed.");
       onRefresh();
     } catch (err) {
       console.error("Adjust error", err);
-      alert("Stock adjustment failed. Try again.");
+      alert(err instanceof Error ? err.message : "Stock adjustment failed. Try again.");
     }
   };
 
@@ -149,7 +152,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       category,
       stockQuantity: Number(stockQuantity),
       unit,
-      unitCost,
+      ...(canSeeMoney ? { unitCost } : {}),
       reorderLevel: Number(reorderLevel),
       location,
       dimensions,
@@ -608,9 +611,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                       <div className="inline-flex flex-col items-center gap-1 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800">
                         <div className="flex items-center gap-2 px-1.5">
                           <button
-                            onClick={() => handleAdjustStock(item.id, stock, -5)}
-                            className="w-5 h-5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px]"
-                            title="Reduce stock (-5)"
+                            onClick={() => handleAdjustStock(item.id, -Math.min(5, stock))}
+                            disabled={stock <= 0}
+                            className="w-5 h-5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px] disabled:opacity-40"
+                            title="Reduce stock by up to 5"
                           >
                             -
                           </button>
@@ -618,9 +622,9 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                             {stock} <span className="text-[10px] text-slate-500 font-normal">{item.unit}</span>
                           </span>
                           <button
-                            onClick={() => handleAdjustStock(item.id, stock, 10)}
+                            onClick={() => handleAdjustStock(item.id, 10)}
                             className="w-5 h-5 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px]"
-                            title="Add received stock (+10)"
+                            title="Manual stock adjustment (+10). Use Purchasing GRN for supplier deliveries."
                           >
                             +
                           </button>
@@ -636,9 +640,12 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                     </td>
                     <td className="py-4 px-4 text-center">
                       {isLow ? (
-                        <span className="inline-flex items-center gap-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase">
-                          <AlertTriangle className="w-3 h-3 text-rose-400" /> Reorder Needed
-                        </span>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="inline-flex items-center gap-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase">
+                            <AlertTriangle className="w-3 h-3 text-rose-400" /> Reorder Needed
+                          </span>
+                          {onCreatePurchaseOrder && <button onClick={() => onCreatePurchaseOrder(item.id)} className="text-[10px] font-black text-amber-400 underline underline-offset-2 hover:text-amber-300">+ Create PO</button>}
+                        </div>
                       ) : (
                         <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase">
                           <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Optimal Stock
@@ -655,7 +662,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                           Orders
                           <ChevronRight className="w-3 h-3" />
                         </button>
-                        {canImportStock && (
+                        {canEditStock && (
                           <button
                             onClick={() => openEditItem(item)}
                             className="p-1.5 hover:bg-sky-500/20 text-slate-600 hover:text-sky-300 rounded-lg transition"
@@ -939,10 +946,10 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                   <label className="block text-xs font-bold text-slate-300 mb-1">Unit</label>
                   <input type="text" value={unit} onChange={(e) => setUnit(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
                 </div>
-                <div>
+                {canSeeMoney ? <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">Unit Cost ($)</label>
                   <input type="number" step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
-                </div>
+                </div> : <div className="self-end pb-2 text-xs text-slate-500">Cost restricted</div>}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

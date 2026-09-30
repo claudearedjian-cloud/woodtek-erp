@@ -3,12 +3,14 @@ import { db } from "@/db";
 import { machines, orderOperations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 import { readMachineOperators, removeMachineOperators, setMachineOperators } from "@/lib/machineOperators.server";
 import { removeMachineFromOperationCandidates } from "@/lib/operationMachineCandidates.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("machines:read");
-  if (authError) return authError;
+  const { error: authError, user } = await authorize("machines:read");
+  if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const { id } = await context.params;
@@ -19,7 +21,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       return NextResponse.json({ error: "Machine not found" }, { status: 404 });
     }
 
-    return NextResponse.json(machine);
+    return NextResponse.json({ ...machine, hourlyCost: canSeeMoney(user, readOptionalModules()) ? machine.hourlyCost : null });
   } catch (error: any) {
     console.error("GET machine error:", error);
     return NextResponse.json({ error: error?.message || "Failed to fetch machine details" }, { status: 500 });
@@ -27,13 +29,15 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("machines:write");
-  if (authError) return authError;
+  const { error: authError, user } = await authorize("machines:write");
+  if (authError || !user) return authError ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const { id } = await context.params;
     const machineId = Number(id);
     const body = await request.json();
+    const money = canSeeMoney(user, readOptionalModules());
+    if (body.hourlyCost !== undefined && !money) return NextResponse.json({ error: "Invoicing & Money access is required to change a machine rate." }, { status: 403 });
 
     const updateFields: any = {};
     let pendingCrew: number[] | null = null;
@@ -75,7 +79,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       ?? (updatedMachine.assignedOperatorId != null ? [updatedMachine.assignedOperatorId] : []);
 
     return NextResponse.json(
-      { ...updatedMachine, assignedOperatorIds: effectiveCrew },
+      { ...updatedMachine, hourlyCost: money ? updatedMachine.hourlyCost : null, assignedOperatorIds: effectiveCrew },
       { headers: { "Cache-Control": "private, no-store, max-age=0" } },
     );
   } catch (error: any) {

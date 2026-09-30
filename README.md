@@ -33,6 +33,22 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
+## Purchasing & Suppliers (pending owner approval)
+- Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
+  Settings → Users → Optional modules and grant the role or person. **Invoicing &
+  Money** is a separate grant for PO prices, material unit costs and machine
+  hourly rates; without it, staff can still create quantity-only POs and GRNs.
+- Add a supplier → create a PO (or use **+ Create PO** on a low-stock alert to
+  prefill the material, suggested quantity and recent supplier) → record a goods
+  receipt for the quantity actually delivered. The GRN increments stock in the
+  same database transaction and keeps a history; partial deliveries remain
+  awaiting per supplier. Closing a short PO preserves its GRNs. Supplier
+  bills/payments are not part of this bundle.
+- The first visit to the granted screen creates five purchasing tables and their
+  indexes additively; the database role needs permission to create tables. No
+  separate migration command is needed for existing factory installations.
+  Do not deploy until the owner approves and merges the PR.
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.

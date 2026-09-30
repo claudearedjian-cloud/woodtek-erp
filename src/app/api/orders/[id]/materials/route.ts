@@ -3,6 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orderMaterials, inventoryItems, orders } from "@/db/schema";
 import { authorize } from "@/lib/auth";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 import { applyMaterialsStatus, computeAvailability } from "@/lib/materials";
 import { readOrderProductionPlan } from "@/lib/productionPlan.server";
 import { ensureDispatchBatches, removeDispatchBatch } from "@/lib/dispatch.server";
@@ -15,8 +17,8 @@ import { ensureDispatchBatches, removeDispatchBatch } from "@/lib/dispatch.serve
  * operators can never oversell the same sheet of MDF.
  */
 
-async function loadOrderMaterials(orderId: number) {
-  return db
+async function loadOrderMaterials(orderId: number, maySeeMoney: boolean) {
+  const rows = await db
     .select({
       id: orderMaterials.id,
       itemId: orderMaterials.itemId,
@@ -36,14 +38,15 @@ async function loadOrderMaterials(orderId: number) {
     .from(orderMaterials)
     .leftJoin(inventoryItems, eq(orderMaterials.itemId, inventoryItems.id))
     .where(eq(orderMaterials.orderId, orderId));
+  return maySeeMoney ? rows : rows.map((row) => ({ ...row, costPerUnit: null }));
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error } = await authorize("orders:read");
+  const { user, error } = await authorize("orders:read");
   if (error) return error;
   try {
     const { id } = await context.params;
-    return NextResponse.json(await loadOrderMaterials(Number(id)));
+    return NextResponse.json(await loadOrderMaterials(Number(id), canSeeMoney(user, readOptionalModules())));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch BOM";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -52,7 +55,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   // Allocating stock to an order is a planning/management task - Manager or Sales only.
-  const { error } = await authorize("materials:write");
+  const { user, error } = await authorize("materials:write");
   if (error) return error;
 
   try {
@@ -178,7 +181,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({
       success: true,
-      materials: await loadOrderMaterials(orderId),
+      materials: await loadOrderMaterials(orderId, canSeeMoney(user, readOptionalModules())),
       materialsStatus: newStatus,
     });
   } catch (err: unknown) {
@@ -190,7 +193,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error } = await authorize("materials:write");
+  const { user, error } = await authorize("materials:write");
   if (error) return error;
 
   try {
@@ -252,7 +255,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
     return NextResponse.json({
       success: true,
-      materials: await loadOrderMaterials(orderId),
+      materials: await loadOrderMaterials(orderId, canSeeMoney(user, readOptionalModules())),
       materialsStatus: newStatus,
     });
   } catch (err: unknown) {

@@ -110,7 +110,7 @@ Everything in the fix list is closed. What is left is the **business** side; the
 
 | Priority | Improvement | What it unlocks | Effort |
 |---|---|---|---|
-| 1 | **Purchasing & Suppliers** | The only completely missing ERP area: supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO creation from the reorder alerts that already exist. Today material only enters the system through the Excel import, so there is no record of what was ordered, from whom, at what price, or what is still outstanding. | 2–3 days |
+| 1 | **Purchasing & Suppliers** — implemented in PR #10, **awaiting owner approval** | Supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO drafting from the reorder alerts. A supplier must be selected and the PO confirmed; no order is sent automatically. Supplier bills/payments (from Phase B) are separate follow-up work. | 2–3 days |
 | 2 | **Invoicing + VAT + A/R aging** | Turns a finished order into a legal invoice (11% VAT, sequential numbering), records payments, ages the receivables 0-30/31-60/61-90/90+, prints the invoice PDF and exports for the accountant. The client ledger exists but stores bare amounts — this completes the loop the quotations started. | 2–3 days |
 | 3 | **HR: leave/absence + payroll** | Attendance and shifts are already recorded; this adds leave tracking, a payroll calculator and printable payslips. | 2 days |
 | 4 | **Quality depth: NCR + supplier score** | Non-conformance reports (internal + supplier defects) feeding a supplier-quality score; reuses the existing scrap/rework data. | 1–2 days |

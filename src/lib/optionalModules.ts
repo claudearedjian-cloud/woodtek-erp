@@ -43,8 +43,8 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
     id: "purchasing",
     label: "Purchasing & Suppliers",
     description:
-      "Arrives in the next bundle — supplier records, purchase orders and goods receipt.",
-    ready: false,
+      "Suppliers, purchase orders, awaiting deliveries and goods receipts that add stock.",
+    ready: true,
   },
   {
     id: "payroll",
@@ -56,13 +56,12 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
 ] as const;
 
 /**
- * Sidebar screens owned by an optional module. Empty while a module has not
- * shipped: `screenAllowedForSubject()` then has nothing to hide, and the
- * follow-up bundles fill these in (see IMPROVEMENT-PLAN.md Part 4).
+ * Sidebar screens owned by an optional module. Other modules stay empty until
+ * their own screens ship. A grant is enforced on server routes separately.
  */
 export const OPTIONAL_MODULE_SCREENS: Record<OptionalModuleId, readonly string[]> = {
   invoicing: [],
-  purchasing: [],
+  purchasing: ["purchasing"],
   payroll: [],
 };
 
