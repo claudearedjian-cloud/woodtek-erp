@@ -176,7 +176,7 @@ export function computeTimelineWindow(orders: GanttOrder[], now: number): Timeli
     lo = nowDay - 3 * DAY_MS;
     hi = nowDay + 4 * DAY_MS;
   }
-  let startMs = (lo as number) - DAY_MS;
+  const startMs = (lo as number) - DAY_MS;
   let endMs = (hi as number) + DAY_MS;
   if (endMs - startMs > 366 * DAY_MS) endMs = startMs + 366 * DAY_MS - 1;
   return { startMs, endMs };

@@ -1,0 +1,49 @@
+name: CI
+
+# WoodTek ERP — verification gate. Runs on every PR (and on pushes to main):
+# lint → typecheck → render-test → standalone production build.
+# A PR that fails ANY of these must not be merged (owner rule: nothing is
+# merged without the owner's OK anyway — this makes a broken PR unmergeable
+# mechanically).
+#
+# The production build needs a DATABASE_URL to exist at import time
+# (src/db/index.ts throws without one) but never actually connects while
+# building pages — a dummy value is enough and keeps CI database-free.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (0 errors required; legacy warnings tracked)
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Render tests
+        run: node render-test.js
+
+      - name: Production build (standalone)
+        run: npx next build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci

@@ -275,7 +275,7 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
             <h2 className="text-lg font-extrabold text-white tracking-tight">Menu Designer</h2>
             <p className="text-xs text-slate-400">
               Rename, reorder, regroup, pick icons and control per-role visibility of every sidebar item —
-              plus each role's landing screen. Create your own sections and menu entries; names up to {LABEL_MAX} characters.
+              plus each role&apos;s landing screen. Create your own sections and menu entries; names up to {LABEL_MAX} characters.
               Changes apply to all devices on the network after Save.
             </p>
           </div>

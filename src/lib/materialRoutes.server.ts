@@ -6,6 +6,7 @@
 // ============================================================================
 
 import fs from "node:fs";
+import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import path from "node:path";
 import { sanitizeRouteSteps } from "@/lib/materialRoutes";
 
@@ -63,8 +64,7 @@ export function readAllRoutes(): RouteMap {
 
 export function writeAllRoutes(routes: RouteMap): void {
   const file = fileLocation();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, routes }, null, 2), "utf8");
+  writeJsonAtomic(file, { version: 1, routes });
   cacheRoutes(file, { ...routes });
 }
 

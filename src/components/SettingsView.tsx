@@ -719,7 +719,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-16 text-center">
           <TabIcon className="w-16 h-16 text-slate-600 mx-auto mb-4 stroke-[1.5]" />
           <h3 className="text-lg font-bold text-white mb-1">No {getTabLabel().toLowerCase()}</h3>
-          <p className="text-sm text-slate-400">Click "Add" to create a new record.</p>
+          <p className="text-sm text-slate-400">Click &quot;Add&quot; to create a new record.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -871,7 +871,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           </h3>
           <p className="mt-1 text-xs text-slate-400">
             The account WoodTek uses to email delivery notes, dispatch packs and job tickets
-            from the order screen (Email Docs). Any signed-in role can read this panel's status,
+            from the order screen (Email Docs). Any signed-in role can read this panel&apos;s status,
             only a Manager can change it.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">

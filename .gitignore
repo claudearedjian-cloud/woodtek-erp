@@ -13,3 +13,6 @@ woodtek-source.txt
 start-prod.v1.cjs
 next-env.d.ts
 compiled/
+# --- hygiene (2026-09-30): build artifacts & live DB dumps stay out of git ---
+*.tsbuildinfo
+*.dump

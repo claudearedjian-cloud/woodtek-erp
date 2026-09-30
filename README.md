@@ -19,6 +19,10 @@ node scripts\build-prod.cjs
 start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 ```
 
+## Configuration & checks
+- `.env.example` documents every environment variable — copy to `.env` on a fresh install (the factory PC already has one).
+- CI (`.github/workflows/ci.yml`) runs lint → typecheck → render-test → build on every PR; a PR that fails any of these must not be merged.
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.
