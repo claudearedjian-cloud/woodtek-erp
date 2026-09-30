@@ -44,6 +44,37 @@ const reportTypes = [
   { id: "Order Profitability", label: "Order Profitability", icon: DollarSign },
 ];
 
+// ---------------------------------------------------------------------------
+// Money rendering. A figure the user is not granted is stored as `null` — show
+// an em dash on screen and "restricted" in the PDF, never a fake $0 (which
+// reads like a real number to anyone who later sees the printout).
+// ---------------------------------------------------------------------------
+const REDACTED_SCREEN = "\u2014";
+const REDACTED_PDF = "restricted";
+
+function formatMoney(value: unknown, format: (n: number) => string, redacted: string): string {
+  if (value === null || value === undefined || value === "") return redacted;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return redacted;
+  return `$${format(n)}`;
+}
+
+/** Screen, whole units: "$1,234" or an em dash. */
+const moneyText = (value: unknown) =>
+  formatMoney(value, (n) => n.toLocaleString(), REDACTED_SCREEN);
+/** Screen, two decimals: "$12.50" or an em dash. */
+const moneyFixed = (value: unknown) =>
+  formatMoney(value, (n) => n.toFixed(2), REDACTED_SCREEN);
+/** PDF, whole units: "$1,234" or "restricted". */
+const pdfMoneyText = (value: unknown) =>
+  formatMoney(value, (n) => n.toLocaleString(), REDACTED_PDF);
+/** PDF, two decimals: "$12.50" or "restricted". */
+const pdfMoneyFixed = (value: unknown) =>
+  formatMoney(value, (n) => n.toFixed(2), REDACTED_PDF);
+/** CSV export: the raw figure, or a clear marker instead of a blank cell. */
+const csvMoney = (value: unknown) =>
+  value === null || value === undefined ? "restricted" : value;
+
 export default function ReportView({ currentUser }: ReportViewProps) {
   const [selectedType, setSelectedType] = useState("Production Summary");
   const [dateFrom, setDateFrom] = useState(() => {
@@ -179,7 +210,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
           ["Completed", String(data.completedOrders)],
           ["In Production", String(data.inProductionOrders)],
           ["Pending", String(data.pendingOrders)],
-          ["Total Value", `$${Number(data.totalValue).toLocaleString()}`],
+          ["Total Value", `${pdfMoneyText(data.totalValue)}`],
         ],
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
@@ -215,7 +246,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
           o.title.substring(0, 30),
           o.status,
           `${o.progressPercent}%`,
-          `$${Number(o.totalValue).toLocaleString()}`,
+          `${pdfMoneyText(o.totalValue)}`,
         ]),
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
@@ -227,7 +258,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       const pt = data.totals ?? {};
       doc.setFontSize(10);
       doc.text(
-        `Quoted $${Number(pt.quoted ?? 0).toLocaleString()}    Cost $${Number(pt.totalCost ?? 0).toLocaleString()}    Profit $${Number(pt.profit ?? 0).toLocaleString()}`,
+        `Quoted ${pdfMoneyText(pt.quoted)}    Cost ${pdfMoneyText(pt.totalCost)}    Profit ${pdfMoneyText(pt.profit)}`,
         14,
         startY,
       );
@@ -260,7 +291,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
           i.name.substring(0, 25),
           String(i.stockQuantity),
           i.unit,
-          `$${Number(i.totalValue).toLocaleString()}`,
+          `${pdfMoneyText(i.totalValue)}`,
           i.isLowStock ? "LOW" : "OK",
         ]),
         theme: "grid",
@@ -284,7 +315,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
           c.contactName,
           String(c.totalOrders),
           String(c.activeOrders),
-          `$${Number(c.totalSpend).toLocaleString()}`,
+          `${pdfMoneyText(c.totalSpend)}`,
         ]),
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
@@ -379,9 +410,9 @@ export default function ReportView({ currentUser }: ReportViewProps) {
         head: [["Metric", "Value"]],
         body: [
           ["Scrap Quantity", String(data.kpis.scrapQty)],
-          ["Scrap Cost ($)", `$${Number(data.kpis.scrapCost).toLocaleString()}`],
+          ["Scrap Cost ($)", `${pdfMoneyText(data.kpis.scrapCost)}`],
           ["Rework Quantity", String(data.kpis.reworkQty)],
-          ["Rework Cost ($)", `$${Number(data.kpis.reworkCost).toLocaleString()}`],
+          ["Rework Cost ($)", `${pdfMoneyText(data.kpis.reworkCost)}`],
           ["Open Rework", String(data.kpis.openRework)],
           ["Rework Passed", String(data.kpis.reworkPassed)],
         ],
@@ -395,7 +426,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       autoTable(doc, {
         startY: after + 18,
         head: [["Reason", "Qty", "Est. Cost"]],
-        body: data.scrapByReason.map((r: any) => [r.reason, String(r.qty), `$${Number(r.cost).toLocaleString()}`]),
+        body: data.scrapByReason.map((r: any) => [r.reason, String(r.qty), `${pdfMoneyText(r.cost)}`]),
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
       });
@@ -406,7 +437,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       autoTable(doc, {
         startY: after2 + 18,
         head: [["Reason", "Qty", "Est. Cost"]],
-        body: data.reworkByReason.map((r: any) => [r.reason, String(r.qty), `$${Number(r.cost).toLocaleString()}`]),
+        body: data.reworkByReason.map((r: any) => [r.reason, String(r.qty), `${pdfMoneyText(r.cost)}`]),
         theme: "grid",
         headStyles: { fillColor: [245, 158, 11] },
       });
@@ -442,22 +473,22 @@ export default function ReportView({ currentUser }: ReportViewProps) {
     } else if (reportType === "Order Status") {
       csv = toCSV(
         ["Order #", "Title", "Status", "Progress", "Value"],
-        data.orders.map((o: any) => [o.orderNumber, o.title, o.status, `${o.progressPercent}%`, o.totalValue]),
+        data.orders.map((o: any) => [o.orderNumber, o.title, o.status, `${o.progressPercent}%`, csvMoney(o.totalValue)]),
       );
     } else if (reportType === "Order Profitability") {
       csv = toCSV(
         ["Order #", "Client", "Status", "Quoted", "Materials", "Labor", "Labor Hours", "Total Cost", "Profit", "Margin %"],
-        (data.orders ?? []).map((o: any) => [o.orderNumber, o.customer, o.status, o.quoted, o.materialCost, o.laborCost, o.laborHours, o.totalCost, o.profit, o.marginPercent]),
+        (data.orders ?? []).map((o: any) => [o.orderNumber, o.customer, o.status, csvMoney(o.quoted), csvMoney(o.materialCost), csvMoney(o.laborCost), o.laborHours, csvMoney(o.totalCost), csvMoney(o.profit), o.marginPercent]),
       );
     } else if (reportType === "Inventory Status") {
       csv = toCSV(
         ["SKU", "Item", "Stock", "Unit", "Value", "Status"],
-        data.items.map((i: any) => [i.sku, i.name, i.stockQuantity, i.unit, i.totalValue, i.isLowStock ? "LOW" : "OK"]),
+        data.items.map((i: any) => [i.sku, i.name, i.stockQuantity, i.unit, csvMoney(i.totalValue), i.isLowStock ? "LOW" : "OK"]),
       );
     } else if (reportType === "Client Activity") {
       csv = toCSV(
         ["Client", "Contact", "Orders", "Active", "Total Spend"],
-        data.clients.map((c: any) => [c.company, c.contactName, c.totalOrders, c.activeOrders, c.totalSpend]),
+        data.clients.map((c: any) => [c.company, c.contactName, c.totalOrders, c.activeOrders, csvMoney(c.totalSpend)]),
       );
     } else if (reportType === "Operator Performance") {
       const opRows = data.operators.map((o: any) => [
@@ -707,7 +738,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
           <StatCard label="Completed" value={String(data.completedOrders)} color="text-emerald-600" icon={CheckCircle2} />
           <StatCard label="In Production" value={String(data.inProductionOrders)} color="text-amber-600" icon={Cpu} />
           <StatCard label="Pending" value={String(data.pendingOrders)} color="text-slate-600" icon={AlertTriangle} />
-          <StatCard label="Total Value" value={`$${Number(data.totalValue).toLocaleString()}`} color="text-blue-600" icon={DollarSign} />
+          <StatCard label="Total Value" value={`${moneyText(data.totalValue)}`} color="text-blue-600" icon={DollarSign} />
         </div>
 
         <div>
@@ -727,7 +758,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                   <td className="py-2 px-3 font-mono text-xs font-bold">{order.orderNumber}</td>
                   <td className="py-2 px-3">{order.title}</td>
                   <td className="py-2 px-3"><span className="text-xs font-bold px-2 py-1 rounded bg-slate-100">{order.status}</span></td>
-                  <td className="py-2 px-3 text-right font-mono font-bold">${Number(order.totalValue).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold">{moneyText(order.totalValue)}</td>
                 </tr>
               ))}
             </tbody>
@@ -773,7 +804,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
         <div className="grid grid-cols-3 gap-4 mb-6">
           <StatCard label="Total Items" value={String(data.totalItems)} icon={Package} />
           <StatCard label="Low Stock Alerts" value={String(data.lowStockItems)} color="text-rose-600" icon={AlertTriangle} />
-          <StatCard label="Total Inventory Value" value={`$${Number(data.totalValue).toLocaleString()}`} color="text-blue-600" icon={DollarSign} />
+          <StatCard label="Total Inventory Value" value={`${moneyText(data.totalValue)}`} color="text-blue-600" icon={DollarSign} />
         </div>
         <table className="w-full text-left border-collapse">
           <thead>
@@ -792,8 +823,8 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                 <td className="py-2 px-3 font-mono text-xs font-bold">{item.sku}</td>
                 <td className="py-2 px-3">{item.name}</td>
                 <td className="py-2 px-3 text-center font-mono">{item.stockQuantity} {item.unit}</td>
-                <td className="py-2 px-3 text-right font-mono">${Number(item.unitCost).toFixed(2)}</td>
-                <td className="py-2 px-3 text-right font-mono font-bold">${Number(item.totalValue).toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono">{moneyFixed(item.unitCost)}</td>
+                <td className="py-2 px-3 text-right font-mono font-bold">{moneyText(item.totalValue)}</td>
                 <td className="py-2 px-3"><span className={`text-xs font-bold px-2 py-1 rounded ${item.isLowStock ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>{item.isLowStock ? "LOW STOCK" : "OK"}</span></td>
               </tr>
             ))}
@@ -823,7 +854,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                 <td className="py-2 px-3 text-slate-600">{c.contactName}</td>
                 <td className="py-2 px-3 text-center font-mono">{c.totalOrders}</td>
                 <td className="py-2 px-3 text-center font-mono">{c.activeOrders}</td>
-                <td className="py-2 px-3 text-right font-mono font-bold">${Number(c.totalSpend).toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono font-bold">{moneyText(c.totalSpend)}</td>
               </tr>
             ))}
           </tbody>
@@ -997,7 +1028,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
       <div className="space-y-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Scrap Qty" value={`${data.kpis.scrapQty} pcs`} color="text-rose-600" icon={Trash2} />
-          <StatCard label="Scrap Cost" value={`$${Number(data.kpis.scrapCost).toLocaleString()}`} color="text-rose-600" icon={DollarSign} />
+          <StatCard label="Scrap Cost" value={`${moneyText(data.kpis.scrapCost)}`} color="text-rose-600" icon={DollarSign} />
           <StatCard label="Rework Qty" value={`${data.kpis.reworkQty} pcs`} color="text-amber-600" icon={RefreshCcw} />
           <StatCard label="Open Rework" value={String(data.kpis.openRework)} color={data.kpis.openRework > 0 ? "text-amber-600" : "text-emerald-600"} icon={AlertTriangle} />
         </div>
@@ -1013,7 +1044,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                   <div key={i}>
                     <div className="flex items-center justify-between text-sm mb-1">
                       <span className="font-semibold text-slate-700">{r.reason}</span>
-                      <span className="font-mono text-xs font-bold text-slate-600">{r.qty} pcs · ${Number(r.cost).toLocaleString()}</span>
+                      <span className="font-mono text-xs font-bold text-slate-600">{r.qty} pcs · {moneyText(r.cost)}</span>
                     </div>
                     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                       <div className="h-full bg-rose-500 rounded-full" style={{ width: `${(r.qty / maxScrap) * 100}%` }} />
@@ -1034,7 +1065,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                   <div key={i}>
                     <div className="flex items-center justify-between text-sm mb-1">
                       <span className="font-semibold text-slate-700">{r.reason}</span>
-                      <span className="font-mono text-xs font-bold text-slate-600">{r.qty} pcs · ${Number(r.cost).toLocaleString()}</span>
+                      <span className="font-mono text-xs font-bold text-slate-600">{r.qty} pcs · {moneyText(r.cost)}</span>
                     </div>
                     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                       <div className="h-full bg-amber-500 rounded-full" style={{ width: `${(r.qty / maxRework) * 100}%` }} />
@@ -1066,7 +1097,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                     <td className="py-2 px-3 text-center font-mono text-rose-600 font-bold">{m.scrapQty}</td>
                     <td className="py-2 px-3 text-center font-mono text-amber-600 font-bold">{m.reworkQty}</td>
                     <td className="py-2 px-3 text-center font-mono">{m.events}</td>
-                    <td className="py-2 px-3 text-right font-mono font-bold">${Number(m.cost).toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-mono font-bold">{moneyText(m.cost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1085,9 +1116,9 @@ function ReportContent({ data, type }: { data: any; type: string }) {
       <div className="space-y-6">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <StatCard label="Quoted" value={`$${quotedTotal.toLocaleString()}`} icon={DollarSign} />
-          <StatCard label="Materials Cost" value={`$${Number(t.materialCost ?? 0).toLocaleString()}`} color="text-rose-600" icon={Package} />
-          <StatCard label="Labor Cost" value={`$${Number(t.laborCost ?? 0).toLocaleString()}`} color="text-amber-600" icon={Cpu} />
-          <StatCard label="Gross Profit" value={`$${Number(t.profit ?? 0).toLocaleString()}`} color="text-emerald-600" icon={TrendingUp} />
+          <StatCard label="Materials Cost" value={`${moneyText(t.materialCost)}`} color="text-rose-600" icon={Package} />
+          <StatCard label="Labor Cost" value={`${moneyText(t.laborCost)}`} color="text-amber-600" icon={Cpu} />
+          <StatCard label="Gross Profit" value={`${moneyText(t.profit)}`} color="text-emerald-600" icon={TrendingUp} />
           <StatCard label="Avg Margin" value={`${avgMargin}%`} color={avgMargin >= 20 ? "text-emerald-600" : "text-rose-600"} icon={TrendingUp} />
         </div>
 
@@ -1114,11 +1145,11 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                     <td className="py-2 px-3 font-mono text-xs font-bold">{o.orderNumber}</td>
                     <td className="py-2 px-3">{o.customer}</td>
                     <td className="py-2 px-3"><span className="text-xs font-bold px-2 py-1 rounded bg-slate-100">{o.status}</span></td>
-                    <td className="py-2 px-3 text-right font-mono">${Number(o.quoted).toLocaleString()}</td>
-                    <td className="py-2 px-3 text-right font-mono text-rose-600">${Number(o.materialCost).toLocaleString()}</td>
-                    <td className="py-2 px-3 text-right font-mono text-amber-600">${Number(o.laborCost).toLocaleString()}</td>
-                    <td className="py-2 px-3 text-right font-mono">${Number(o.totalCost).toLocaleString()}</td>
-                    <td className={`py-2 px-3 text-right font-mono font-bold ${o.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${Number(o.profit).toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-mono">{moneyText(o.quoted)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-rose-600">{moneyText(o.materialCost)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-amber-600">{moneyText(o.laborCost)}</td>
+                    <td className="py-2 px-3 text-right font-mono">{moneyText(o.totalCost)}</td>
+                    <td className={`py-2 px-3 text-right font-mono font-bold ${o.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{moneyText(o.profit)}</td>
                     <td className={`py-2 px-3 text-right font-mono font-bold ${o.marginPercent >= 20 ? "text-emerald-600" : o.marginPercent >= 0 ? "text-amber-600" : "text-rose-600"}`}>{o.marginPercent}%</td>
                   </tr>
                 ))}
@@ -1145,9 +1176,9 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                 <tr key={idx} className="border-b border-slate-100">
                   <td className="py-2 px-3 font-bold">{c.customer}</td>
                   <td className="py-2 px-3 text-center">{c.orders}</td>
-                  <td className="py-2 px-3 text-right font-mono">${Number(c.quoted).toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">${Number(c.cost).toLocaleString()}</td>
-                  <td className={`py-2 px-3 text-right font-mono font-bold ${c.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>${Number(c.profit).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">{moneyText(c.quoted)}</td>
+                  <td className="py-2 px-3 text-right font-mono">{moneyText(c.cost)}</td>
+                  <td className={`py-2 px-3 text-right font-mono font-bold ${c.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{moneyText(c.profit)}</td>
                   <td className={`py-2 px-3 text-right font-mono font-bold ${c.marginPercent >= 20 ? "text-emerald-600" : c.marginPercent >= 0 ? "text-amber-600" : "text-rose-600"}`}>{c.marginPercent}%</td>
                 </tr>
               ))}
@@ -1191,7 +1222,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                   <td className="py-2 px-3"><span className="text-xs font-bold px-2 py-1 rounded bg-slate-100">{o.status}</span></td>
                   <td className="py-2 px-3 text-center font-mono">{o.progressPercent}%</td>
                   <td className="py-2 px-3 text-xs text-slate-500">{o.dueDate ? new Date(o.dueDate).toLocaleDateString() : "—"}</td>
-                  <td className="py-2 px-3 text-right font-mono font-bold">${Number(o.totalValue || 0).toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold">{moneyText(o.totalValue)}</td>
                 </tr>
               ))}
             </tbody>

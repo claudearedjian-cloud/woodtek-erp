@@ -15,9 +15,13 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+import { isMoneyOnlyReport, redactReportMoney } from "@/lib/reportMoney";
+
 
 export async function GET(request: Request) {
-  const { error: authError } = await authorize("reports:read");
+  const { user, error: authError } = await authorize("reports:read");
   if (authError) return authError;
 
   try {
@@ -28,6 +32,16 @@ export async function GET(request: Request) {
     if (reportId) {
       const [report] = await db.select().from(reports).where(eq(reports.id, Number(reportId)));
       if (!report) return NextResponse.json({ error: "Report not found" }, { status: 404 });
+
+      // A saved money report carries the figures inside dataJson, so opening
+      // it is itself a money read: refuse instead of returning the numbers.
+      if (isMoneyOnlyReport(report.type) && !canSeeMoney(user, readOptionalModules())) {
+        return NextResponse.json(
+          { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > Optional modules." },
+          { status: 403 },
+        );
+      }
+
       return NextResponse.json(report);
     }
 
@@ -36,6 +50,13 @@ export async function GET(request: Request) {
     if (type) {
       savedReports = savedReports.filter(r => r.type === type);
     }
+
+    // The list rows carry the stored figures too, so a money-only report is
+    // invisible without the grant rather than shown with blanked numbers.
+    if (!canSeeMoney(user, readOptionalModules())) {
+      savedReports = savedReports.filter(r => !isMoneyOnlyReport(r.type));
+    }
+
     return NextResponse.json(savedReports);
   } catch (error: any) {
     console.error("GET reports error:", error);
@@ -44,7 +65,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { error: authError } = await authorize("reports:write");
+  const { user, error: authError } = await authorize("reports:write");
   if (authError) return authError;
 
   try {
@@ -53,6 +74,16 @@ export async function POST(request: Request) {
 
     if (!name || !type || !dateFrom || !dateTo) {
       return NextResponse.json({ error: "Name, type, date range are required." }, { status: 400 });
+    }
+
+    // Generating a money-only report IS a money read: refuse up front
+    // instead of computing the figures and then throwing them away.
+    const money = canSeeMoney(user, readOptionalModules());
+    if (isMoneyOnlyReport(type) && !money) {
+      return NextResponse.json(
+        { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > Optional modules." },
+        { status: 403 },
+      );
     }
 
     // Generate report data based on type
@@ -404,6 +435,10 @@ export async function POST(request: Request) {
       };
     }
 
+    // Money is blanked BEFORE the insert: a redacted report is saved
+    // redacted, so a later read - or a database dump - cannot leak it.
+    const storedData = money ? reportData : redactReportMoney(type, reportData);
+
     // Save report to database
     const [newReport] = await db.insert(reports).values({
       name,
@@ -411,11 +446,11 @@ export async function POST(request: Request) {
       dateFrom: new Date(dateFrom),
       dateTo: new Date(dateTo),
       filtersJson: filters,
-      dataJson: reportData,
+      dataJson: storedData,
       generatedBy: generatedBy ? Number(generatedBy) : null,
     }).returning();
 
-    return NextResponse.json({ ...newReport, data: reportData }, { status: 201 });
+    return NextResponse.json({ ...newReport, data: storedData }, { status: 201 });
   } catch (error: any) {
     console.error("POST report error:", error);
     return NextResponse.json({ error: error?.message || "Failed to generate report" }, { status: 500 });

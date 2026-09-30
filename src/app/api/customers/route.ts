@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { customers, orders } from "@/db/schema";
 import { authorize } from "@/lib/auth";
-import { listCustomersForUser, isManager as userIsManager, isFloorRole } from "@/lib/dataAccess";
+import { listCustomersForUser, isManager as userIsManager } from "@/lib/dataAccess";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+
 
 export async function GET() {
   const { user, error: authError } = await authorize("customers:read");
@@ -29,7 +32,7 @@ export async function GET() {
         ...c,
         orderCount: custOrders.length,
         activeOrdersCount,
-        totalSpend: isFloorRole(user) ? null : totalSpend.toFixed(2),
+        totalSpend: canSeeMoney(user, readOptionalModules()) ? totalSpend.toFixed(2) : null,
       };
     });
 
@@ -46,11 +49,18 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, company, email, phone, address = "", creditLimit = "15000.00", notes = "" } = body;
+    const DEFAULT_CREDIT_LIMIT = "15000.00";
+    const { name, company, email, phone, address = "", creditLimit = DEFAULT_CREDIT_LIMIT, notes = "" } = body;
 
     if (!name || !company || !email || !phone) {
       return NextResponse.json({ error: "Name, Company, Email and Phone are required." }, { status: 400 });
     }
+
+    // Money fields belong to the Invoicing & Money module: a client created by
+    // someone without the grant keeps the system default limit.
+    const finalCreditLimit = canSeeMoney(user, readOptionalModules())
+      ? creditLimit
+      : DEFAULT_CREDIT_LIMIT;
 
     // Sales users creating a customer: auto-assign to themselves.
     // Managers can optionally pass assignedSalesId in the body.
@@ -64,7 +74,7 @@ export async function POST(request: Request) {
       email,
       phone,
       address,
-      creditLimit: String(creditLimit),
+      creditLimit: String(finalCreditLimit),
       currentBalance: "0.00",
       notes,
       assignedSalesId,

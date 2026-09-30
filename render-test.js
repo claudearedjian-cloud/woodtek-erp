@@ -61,6 +61,9 @@ compile("src/lib/dispatchPack.ts", "lib/dispatchPack.js");
 compile("src/lib/emailConfig.ts", "lib/emailConfig.js");
 compile("src/lib/emailDispatch.ts", "lib/emailDispatch.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
+compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
+compile("src/lib/optionalModules.server.ts", "lib/optionalModules.server.js");
+compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
@@ -659,6 +662,7 @@ const ATOMIC_STORES = [
   "src/lib/materialProgress.server.ts",
   "src/lib/materialRoutes.server.ts",
   "src/lib/operationMachineCandidates.server.ts",
+  "src/lib/optionalModules.server.ts",
   "src/lib/orderCleanup.server.ts",
   "src/lib/packingQc.server.ts",
   "src/lib/productionPlan.server.ts",
@@ -2085,6 +2089,120 @@ check(settingsViewSource.includes("saveEmailConfig") && settingsViewSource.inclu
 check(orderWorkflowSource.includes("openEmailModal") && orderWorkflowSource.includes("Email Docs") && orderWorkflowSource.includes("bg-sky-500"), "email: order workflow exposes the Email Docs button (Mail icon, sky-500)");
 check(orderWorkflowSource.includes("sendEmailDispatch") && orderWorkflowSource.includes("/api/email-dispatch") && orderWorkflowSource.includes("includeDispatchPack"), "email: order workflow posts the dispatch with the document checkboxes");
 check(orderWorkflowSource.includes("emailResult") && orderWorkflowSource.includes("setEmailOpen(false)"), "email: order workflow shows a result banner and auto-closes the modal");
+
+// ---- optional modules switch layer (44 checks) ----
+const optMod = require("./compiled/lib/optionalModules.js");
+const optModServer = require("./compiled/lib/optionalModules.server.js");
+const repMoney = require("./compiled/lib/reportMoney.js");
+check(optMod.OPTIONAL_MODULE_IDS.includes("invoicing") && optMod.OPTIONAL_MODULE_IDS.includes("purchasing") && optMod.OPTIONAL_MODULE_IDS.includes("payroll"), "optional modules: registry has invoicing, purchasing, payroll");
+check(optMod.OPTIONAL_MODULES.length === 3 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true, "optional modules: invoicing is ready, others not yet");
+check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === false && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === false, "optional modules: purchasing and payroll ready: false");
+check(optMod.MONEY_MODULE === "invoicing", "optional modules: MONEY_MODULE is invoicing");
+check(optMod.MANAGER_ROLE === "Manager", "optional modules: MANAGER_ROLE is Manager");
+check(optMod.isOptionalModuleId("invoicing") && !optMod.isOptionalModuleId("unknown"), "optional modules: isOptionalModuleId validates IDs");
+check(optMod.moduleDef("invoicing")?.label === "Invoicing & Money", "optional modules: moduleDef returns definition");
+check(optMod.moduleLabel("invoicing") === "Invoicing & Money" && optMod.moduleLabel("xyz") === "xyz", "optional modules: moduleLabel returns label or id fallback");
+const defCfg = optMod.defaultOptionalModulesConfig();
+check(defCfg.version === 1 && defCfg.enabled.includes("invoicing") && defCfg.roles["Sales Coordinator"]?.includes("invoicing"), "optional modules: default config enables invoicing for Sales Coordinator");
+const cleanEmpty = optMod.sanitizeOptionalModules(null);
+check(cleanEmpty.version === 1 && cleanEmpty.enabled.length === 0, "optional modules: sanitizer handles null/garbage");
+const cleanBad = optMod.sanitizeOptionalModules({ enabled: ["bad", "invoicing"], roles: { Manager: ["invoicing"], Sales: ["bad", "invoicing"] }, users: { "abc": ["invoicing"], "05": ["invoicing"], "-3": ["invoicing"] } });
+check(cleanBad.enabled.length === 1 && !cleanBad.roles.Manager && cleanBad.roles.Sales?.length === 1 && cleanBad.users["5"]?.length === 1 && !cleanBad.users["abc"], "optional modules: sanitizer drops unknown ids, Manager role and non-numeric user keys");
+check(optMod.subjectHasModule("invoicing", { role: "Manager" }, { enabled: [], roles: {}, users: {} }) === true, "optional modules: Manager always has access even if disabled");
+check(optMod.subjectHasModule("invoicing", { displayRole: "Manager" }, { enabled: [], roles: {}, users: {} }) === true, "optional modules: Manager via displayRole always has access");
+check(optMod.subjectHasModule("invoicing", { role: "Machine Operator" }, { enabled: [], roles: { "Machine Operator": ["invoicing"] }, users: {} }) === false, "optional modules: switched off module is off for non-Manager even if role granted");
+check(optMod.subjectHasModule("invoicing", { id: 42, role: "Machine Operator" }, { enabled: ["invoicing"], roles: {}, users: { "42": ["invoicing"] } }) === true, "optional modules: personal grant wins on its own");
+check(optMod.subjectHasModule("invoicing", { id: 99, role: "Machine Operator" }, { enabled: ["invoicing"], roles: {}, users: { "42": ["invoicing"] } }) === false, "optional modules: user without personal grant denied when role not granted");
+check(optMod.subjectHasModule("invoicing", { role: "Sales Coordinator" }, { enabled: ["invoicing"], roles: { "Sales Coordinator": ["invoicing"] }, users: {} }) === true, "optional modules: role grant on built-in role resolves true");
+check(optMod.subjectHasModule("invoicing", { role: "Machine Operator", displayRole: "Custom Role" }, { enabled: ["invoicing"], roles: { "Custom Role": ["invoicing"] }, users: {} }) === true, "optional modules: role grant on custom role name resolves true");
+check(optMod.subjectHasModule("invoicing", { role: "Machine Operator", displayRole: "Custom Role" }, { enabled: ["invoicing"], roles: { "Machine Operator": ["invoicing"] }, users: {} }) === true, "optional modules: role grant on inherited base role resolves true");
+check(optMod.subjectHasModule("invoicing", null) === false && optMod.subjectHasModule("invoicing", undefined) === false, "optional modules: signed out subject resolves false");
+check(optMod.canSeeMoney({ role: "Manager" }) === true && optMod.canSeeMoney({ role: "Machine Operator" }) === false, "optional modules: canSeeMoney follows subjectHasModule(MONEY_MODULE)");
+check(optMod.screenOwnerModule("unknown-screen") === null, "optional modules: screenOwnerModule returns null for unowned screen");
+check(optMod.screenAllowedForSubject("unknown-screen", { role: "Machine Operator" }) === true, "optional modules: screenAllowedForSubject allows unowned screens");
+const diffNone = optMod.summarizeOptionalModuleChange(defCfg, defCfg);
+check(diffNone.includes("no change"), "optional modules: audit summary reports no change when identical");
+const diffOn = optMod.summarizeOptionalModuleChange({ version: 1, enabled: [], roles: {}, users: {} }, { version: 1, enabled: ["invoicing"], roles: {}, users: {} });
+check(diffOn.includes("switched on Invoicing & Money"), "optional modules: audit summary reports switched on module");
+const diffOff = optMod.summarizeOptionalModuleChange({ version: 1, enabled: ["invoicing"], roles: {}, users: {} }, { version: 1, enabled: [], roles: {}, users: {} });
+check(diffOff.includes("switched off Invoicing & Money"), "optional modules: audit summary reports switched off module");
+const diffRole = optMod.summarizeOptionalModuleChange({ version: 1, enabled: ["invoicing"], roles: {}, users: {} }, { version: 1, enabled: ["invoicing"], roles: { "Technician": ["invoicing"] }, users: {} });
+check(diffRole.includes("granted Invoicing & Money to role Technician"), "optional modules: audit summary reports role grant");
+const diffUser = optMod.summarizeOptionalModuleChange({ version: 1, enabled: ["invoicing"], roles: {}, users: {} }, { version: 1, enabled: ["invoicing"], roles: {}, users: { "7": ["invoicing"] } });
+check(diffUser.includes("granted Invoicing & Money to user #7"), "optional modules: audit summary reports personal user grant");
+
+const optTmp = fs.mkdtempSync(path.join(os.tmpdir(), "opt-mod-test-"));
+process.env.WOODTEK_DATA_DIR = optTmp;
+const initialRead = optModServer.readOptionalModules();
+check(initialRead.enabled.includes("invoicing") && initialRead.roles["Sales Coordinator"]?.includes("invoicing"), "optional modules server: reads default config when file does not exist");
+check(!fs.existsSync(path.join(optTmp, optModServer.OPTIONAL_MODULES_FILE)), "optional modules server: reading default does not create file on disk");
+optModServer.writeOptionalModules({ version: 1, enabled: ["invoicing"], roles: { "Technician": ["invoicing"] }, users: { "12": ["invoicing"] } });
+check(fs.existsSync(path.join(optTmp, optModServer.OPTIONAL_MODULES_FILE)), "optional modules server: writeOptionalModules persists file");
+const reRead = optModServer.readOptionalModules();
+check(reRead.roles["Technician"]?.includes("invoicing") && reRead.users["12"]?.includes("invoicing"), "optional modules server: readOptionalModules re-reads saved config");
+check(fs.readdirSync(optTmp).filter(f => f.endsWith(".tmp")).length === 0, "optional modules server: write cleans up temp files (no .tmp left)");
+fs.rmSync(optTmp, { recursive: true, force: true });
+delete process.env.WOODTEK_DATA_DIR;
+
+const optApiSrc = fs.readFileSync("src/app/api/optional-modules/route.ts", "utf8");
+check(optApiSrc.includes("export async function GET") && optApiSrc.includes("authorize()"), "optional modules API: GET is gated on signed-in user");
+check(optApiSrc.includes("export async function PUT") && optApiSrc.includes('authorize("users:manage")'), "optional modules API: PUT is gated on Manager (users:manage)");
+check(optApiSrc.includes("logAudit(") && optApiSrc.includes('"optional-modules.save"'), "optional modules API: PUT logs audit trail");
+check(optApiSrc.includes("readOptionalModules") && optApiSrc.includes("writeOptionalModules"), "optional modules API: uses server store read/write");
+
+const authSrc = fs.readFileSync("src/lib/auth.ts", "utf8");
+check(authSrc.includes("export async function authorizeModule"), "auth: exports authorizeModule helper");
+check(authSrc.includes("subjectHasModule(") && authSrc.includes("readOptionalModules()"), "auth: authorizeModule checks subjectHasModule with readOptionalModules");
+check(authSrc.includes("status: 403") && authSrc.includes("Settings > Optional modules"), "auth: authorizeModule returns 403 with guidance on failure");
+
+check(settingsViewSource.includes("optionalModulesPanel") && settingsViewSource.includes("/api/optional-modules"), "settings: SettingsView includes optionalModulesPanel wired to /api/optional-modules");
+check(settingsViewSource.includes("toggleModuleEnabled") && settingsViewSource.includes("toggleRoleModule") && settingsViewSource.includes("toggleUserModule"), "settings: SettingsView provides toggle handlers for master/role/user");
+check(settingsViewSource.includes("Blocks") && settingsViewSource.includes("Optional modules"), "settings: SettingsView renders Optional modules button and icon");
+
+// ---- money redaction wave (24 checks) ----
+check(repMoney.isMoneyOnlyReport("Order Profitability") === true && repMoney.isMoneyOnlyReport("Production Summary") === false, "report money: isMoneyOnlyReport identifies Order Profitability");
+check(repMoney.isMixedMoneyReport("Production Summary") === true && repMoney.isMixedMoneyReport("Order Profitability") === false, "report money: isMixedMoneyReport identifies mixed reports");
+check(repMoney.reportCarriesMoney("Order Profitability") && repMoney.reportCarriesMoney("Inventory Status") && !repMoney.reportCarriesMoney("Machine Utilization"), "report money: reportCarriesMoney true only for money reports");
+
+const redProd = repMoney.redactReportMoney("Production Summary", { totalValue: 500, orders: [{ orderNumber: "PO-1", totalValue: 500 }] });
+check(redProd.totalValue === null && redProd.orders[0].totalValue === null, "report money: redactReportMoney blanks totalValue in Production Summary");
+const redInv = repMoney.redactReportMoney("Inventory Status", { totalValue: 1000, items: [{ sku: "A", unitCost: "10.00", totalValue: "50.00" }] });
+check(redInv.totalValue === null && redInv.items[0].unitCost === null && redInv.items[0].totalValue === null, "report money: redactReportMoney blanks unitCost and totalValue in Inventory Status");
+const redCust = repMoney.redactReportMoney("Client Activity", { clients: [{ company: "Acme", totalSpend: 500, creditLimit: "1000", currentBalance: "200" }] });
+check(redCust.clients[0].totalSpend === null && redCust.clients[0].creditLimit === null && redCust.clients[0].currentBalance === null, "report money: redactReportMoney blanks totalSpend/creditLimit/balance in Client Activity");
+const redScrap = repMoney.redactReportMoney("Scrap & Rework Analysis", { kpis: { scrapCost: 100, reworkCost: 50 }, scrapByReason: [{ reason: "cut", cost: 100 }], reworkByReason: [{ reason: "dent", cost: 50 }], byMachine: [{ cost: 150 }] });
+check(redScrap.kpis.scrapCost === null && redScrap.scrapByReason[0].cost === null && redScrap.reworkByReason[0].cost === null && redScrap.byMachine[0].cost === null, "report money: redactReportMoney blanks costs in Scrap & Rework");
+const redOther = repMoney.redactReportMoney("Machine Utilization", { machines: [{ code: "M1" }] });
+check(redOther.machines[0].code === "M1", "report money: redactReportMoney leaves other report types untouched");
+
+check(dataAccessSource.includes("canSeeMoney") && dataAccessSource.includes("readOptionalModules"), "dataAccess: imports canSeeMoney and readOptionalModules");
+check(dataAccessSource.includes("!canSeeMoney(user, readOptionalModules())"), "dataAccess: listOrdersForUser hides totalValue when !canSeeMoney");
+check(dataAccessSource.includes("if (canSeeMoney(user, readOptionalModules())) return rows as ScopedCustomer[];"), "dataAccess: listCustomersForUser hides creditLimit and balance when !canSeeMoney");
+
+check(orderDetailApiSource.includes("canSeeMoney") && orderDetailApiSource.includes("readOptionalModules"), "orders/[id] API: imports canSeeMoney and readOptionalModules");
+check(orderDetailApiSource.includes("noMoney ? null : order.totalValue") && orderDetailApiSource.includes("costPerUnit: null"), "orders/[id] API: redacts order totalValue and material costPerUnit when no money grant");
+
+const custRouteSrc = fs.readFileSync("src/app/api/customers/route.ts", "utf8");
+check(custRouteSrc.includes("canSeeMoney") && custRouteSrc.includes("totalSpend: canSeeMoney"), "customers API: GET redacts totalSpend when !canSeeMoney");
+check(custRouteSrc.includes("finalCreditLimit") && custRouteSrc.includes("DEFAULT_CREDIT_LIMIT"), "customers API: POST ignores custom creditLimit when !canSeeMoney");
+
+const custIdRouteSrc = fs.readFileSync("src/app/api/customers/[id]/route.ts", "utf8");
+check(custIdRouteSrc.includes("canSeeMoney") && custIdRouteSrc.includes("safeOrders") && custIdRouteSrc.includes("safeCustomer"), "customers/[id] API: GET redacts order values, credit limit and balance when !canSeeMoney");
+check(custIdRouteSrc.includes("body.creditLimit !== undefined") && custIdRouteSrc.includes("status: 403"), "customers/[id] API: PATCH returns 403 on creditLimit/balance edit without grant");
+
+const ledgerRouteSrc = fs.readFileSync("src/app/api/customers/[id]/ledger/route.ts", "utf8");
+check(ledgerRouteSrc.includes("authorizeModule(MONEY_MODULE)") && ledgerRouteSrc.includes("MONEY_MODULE"), "customers/[id]/ledger API: enforces authorizeModule(MONEY_MODULE)");
+
+check(dashboardApiSource.includes("canSeeMoney") && dashboardApiSource.includes("totalPipelineValue: money ?") && dashboardApiSource.includes("scrapCost: money ?"), "dashboard API: redacts totalPipelineValue and scrapCost when !money");
+
+const reportsRouteSrc = fs.readFileSync("src/app/api/reports/route.ts", "utf8");
+check(reportsRouteSrc.includes("isMoneyOnlyReport") && reportsRouteSrc.includes("canSeeMoney"), "reports API: imports isMoneyOnlyReport and canSeeMoney");
+check(reportsRouteSrc.includes("isMoneyOnlyReport(report.type) && !canSeeMoney") && reportsRouteSrc.includes("status: 403"), "reports API: GET returns 403 when opening saved money-only report without grant");
+check(reportsRouteSrc.includes("savedReports.filter(r => !isMoneyOnlyReport(r.type))"), "reports API: GET filters money-only reports from saved list when !canSeeMoney");
+check(reportsRouteSrc.includes("isMoneyOnlyReport(type) && !money") && reportsRouteSrc.includes("redactReportMoney(type, reportData)"), "reports API: POST 403 on generating money report without grant and redacts before insert");
+
+const reportViewSrc = fs.readFileSync("src/components/ReportView.tsx", "utf8");
+check(reportViewSrc.includes("moneyText") && reportViewSrc.includes("pdfMoneyText") && reportViewSrc.includes("csvMoney"), "report view: formats redacted money figures with em dash, restricted and csv marker");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

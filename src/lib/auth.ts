@@ -8,6 +8,8 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+import { moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
 
 export const SESSION_COOKIE = "woodtek_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // one working shift + margin
@@ -202,6 +204,39 @@ export async function authorize(
   }
   if (action && !can(user.role, action)) {
     return { user: null, error: NextResponse.json({ error: deniedMessage(user.role, action) }, { status: 403 }) };
+  }
+  return { user, error: null };
+}
+
+/**
+ * Gate an API route on an OPTIONAL MODULE grant.
+ *   const { user, error } = await authorizeModule("invoicing");
+ *   if (error) return error;
+ *
+ * This is the enforcement point for the switch in Settings -> Optional
+ * modules. The sidebar, the page guard and the menu only HIDE things; a 403
+ * here is what actually keeps the data out of the response.
+ */
+export async function authorizeModule(
+  id: OptionalModuleId,
+): Promise<{ user: SessionUser; error: null } | { user: null; error: NextResponse }> {
+  const user = await getSessionUser();
+  if (!user) {
+    return {
+      user: null,
+      error: NextResponse.json({ error: "You are signed out. Please sign in again." }, { status: 401 }),
+    };
+  }
+  if (!subjectHasModule(id, user, readOptionalModules())) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        {
+          error: `${moduleLabel(id)} is not switched on for your account. Ask a Manager to grant it in Settings > Optional modules.`,
+        },
+        { status: 403 },
+      ),
+    };
   }
   return { user, error: null };
 }

@@ -5,7 +5,9 @@ import { writeJsonAtomic } from "@/lib/atomicFile.server";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { authorize } from "@/lib/auth";
+import { authorize, authorizeModule } from "@/lib/auth";
+import { MONEY_MODULE } from "@/lib/optionalModules";
+
 
 // ============================================================================
 // Client ledger: invoices vs payments per client. Stored in a JSON overlay
@@ -61,6 +63,10 @@ async function syncBalance(customerId: number, balance: number) {
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("customers:read");
   if (authError) return authError;
+  // The ledger is money: it belongs to the Invoicing & Money module, so the
+  // grant - not the role - decides whether it can be read at all.
+  const { error: moneyError } = await authorizeModule(MONEY_MODULE);
+  if (moneyError) return moneyError;
   try {
     const { id } = await context.params;
     const entries = readFile().entries[String(Number(id))] ?? [];
@@ -73,6 +79,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("customers:write");
   if (authError) return authError;
+  // The ledger is money: adding or removing an entry needs the Invoicing &
+  // Money grant, not just customers:write.
+  const { error: moneyError } = await authorizeModule(MONEY_MODULE);
+  if (moneyError) return moneyError;
   try {
     const { id } = await context.params;
     const customerId = Number(id);
@@ -108,6 +118,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("customers:write");
   if (authError) return authError;
+  // The ledger is money: adding or removing an entry needs the Invoicing &
+  // Money grant, not just customers:write.
+  const { error: moneyError } = await authorizeModule(MONEY_MODULE);
+  if (moneyError) return moneyError;
   try {
     const { id } = await context.params;
     const customerId = Number(id);
