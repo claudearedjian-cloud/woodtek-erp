@@ -77,7 +77,7 @@ What exists today is a strong **production/operations ERP**: orders, routing, sc
 ### Phase B — Close the money loop (highest business value)
 1. **Purchasing & Suppliers** — supplier records, purchase orders, goods-receipt (GRN) that increments stock, supplier bills & payments, "awaiting delivery" list per supplier. Today stock arrives via Excel import with no procurement trail. Hooks directly into the reorder-point alerts that already exist (`stockCheck.ts`).
 2. **Invoicing & Accounts Receivable** ✅ *(merged in PR #10, 2026-10-01)* — proper **VAT invoices** (11% Lebanon) with legal numbering, quotation → invoice conversion, payment recording, A/R aging per client, and printable/PDF invoices (the PDF engine and client ledger already exist — this completes the loop they started).
-3. **Job costing & profitability** ✅ *(built 2026-10-01, awaiting owner approval)* — per-order and per-client margin: quoted value − materials consumed (already costed) − labor hours × rate (hours already tracked) − machine time × hourly rate. This is usually the #1 missing insight for a furniture maker: *which jobs and clients actually make money?*
+3. **Job costing & profitability** ✅ *(merged in PR #12, 2026-10-01)* — per-order and per-client margin: quoted value − materials consumed (already costed) − labor hours × rate (hours already tracked) − machine time × hourly rate. This is usually the #1 missing insight for a furniture maker: *which jobs and clients actually make money?*
 
 ### Phase C — Operations depth
 4. **HR & payroll** — attendance and shifts already exist; add leave/absence tracking and a payroll calculator (salary, additions/deductions, printable payslips).
@@ -100,7 +100,7 @@ What exists today is a strong **production/operations ERP**: orders, routing, sc
 | 4 | Database indexes (via one-click repair or drizzle push) | ~half day | Future-proofs speed before data grows |
 | 5 | **Purchasing & Suppliers** | 2–3 days | First real ERP gap |
 | 6 | **Invoicing + VAT + A/R** | 2–3 days | Completes the money loop |
-| 7 | **Job costing / profitability** ✅ *(built 2026-10-01, awaiting owner approval)* | 1–2 days | The insight bundle |
+| 7 | **Job costing / profitability** ✅ *(merged in PR #12, 2026-10-01)* | 1–2 days | The insight bundle |
 
 Each item ships as its own PR — built, verified (typecheck + render-test + build), then **held for your approval before merging**, per your standing rule.
 
@@ -112,7 +112,7 @@ Everything in the fix list is closed. What is left is the **business** side; the
 |---|---|---|---|
 | 1 | **Purchasing & Suppliers** — ✅ merged in PR #10 (2026-10-01) | Supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO drafting from the reorder alerts. A supplier must be selected and the PO confirmed; no order is sent automatically. Supplier bills/payments (from Phase B) are separate follow-up work. | 2–3 days |
 | 2 | **Invoicing + VAT + A/R aging** — ✅ merged in PR #10 (2026-10-01) | Quotations and legal VAT invoices (11% Lebanon, gapless per-year numbering QUO-/INV-), quotation → invoice conversion, payment recording with derived paid/partial state, A/R aging 0/1–30/31–60/61–90/90+ per client, printable invoice PDFs, and automatic merge into the existing client ledger + statement + cached balance. An accountant Excel/CSV export and billing a finished order in one click are listed as cheap follow-ups below. | 2–3 days |
-| 2b | **Job costing & profitability** — ✅ built 2026-10-01, awaiting owner approval | Per-order and per-client/project-type margin: order value − materials − machine time − operator labor − overhead; final margin on finished orders, projected margin on open ones; loss/thin-margin flags; CSV export; the Order Profitability report now shares the same engine. Behind the Invoicing & Money grant; no new tables. Cheap follow-ups: crew-size labor multiplier, link invoices to orders (margin on billed value), per-order PDF cost sheet. | 1–2 days |
+| 2b | **Job costing & profitability** — ✅ merged in PR #12 (2026-10-01) | Per-order and per-client/project-type margin: order value − materials − machine time − operator labor − overhead; final margin on finished orders, projected margin on open ones; loss/thin-margin flags; CSV export; the Order Profitability report now shares the same engine. Behind the Invoicing & Money grant; no new tables. Cheap follow-ups: crew-size labor multiplier, link invoices to orders (margin on billed value), per-order PDF cost sheet. | 1–2 days |
 | 3 | **HR: leave/absence + payroll** | Attendance and shifts are already recorded; this adds leave tracking, a payroll calculator and printable payslips. | 2 days |
 | 4 | **Quality depth: NCR + supplier score** | Non-conformance reports (internal + supplier defects) feeding a supplier-quality score; reuses the existing scrap/rework data. | 1–2 days |
 | 5 | **CRM pipeline for Sales** | Multiple contacts per client, a communication log and follow-up reminders on top of the existing stale-quotation alerts. | 1–2 days |
