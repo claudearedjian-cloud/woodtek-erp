@@ -74,7 +74,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   indexes additively, alongside the purchasing tables' ritual. PR #10 merged
   2026-10-01 — run the usual factory PC update ritual to deploy.
 
-## Job Costing & Profit (Phase B item 3 — awaiting owner approval)
+## Job Costing & Profit (Phase B item 3, PR #12 — awaiting owner approval)
 - New **Job Costing & Profit** screen answers "which jobs and clients actually make
   money?". It is behind the same **Invoicing & Money** switch as Invoicing & A/R
   (Manager always; others via Settings → Users → Optional modules). A Sales
