@@ -32,6 +32,7 @@ const CustomersView = dynamic(() => import("@/components/CustomersView"), { load
 const InventoryView = dynamic(() => import("@/components/InventoryView"), { loading: ScreenLoading });
 const PurchasingView = dynamic(() => import("@/components/PurchasingView"), { loading: ScreenLoading });
 const InvoicingView = dynamic(() => import("@/components/InvoicingView"), { loading: ScreenLoading });
+const JobCostingView = dynamic(() => import("@/components/JobCostingView"), { loading: ScreenLoading });
 const WarehouseView = dynamic(() => import("@/components/WarehouseView"), { loading: ScreenLoading });
 const FloorReceptionView = dynamic(() => import("@/components/FloorReceptionView"), { loading: ScreenLoading });
 const ScheduleView = dynamic(() => import("@/components/ScheduleView"), { loading: ScreenLoading });
@@ -598,7 +599,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -727,6 +728,7 @@ export default function WoodTekERP() {
           {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} currentUser={currentUser} canSeeMoney={canSeeMoney(currentUser, optionalConfig)} onCreatePurchaseOrder={canPurchase ? startPurchaseForItem : undefined} />}
           {activeTab === "purchasing" && canPurchase && <PurchasingView key={currentUser.id} initialItemId={purchaseReorderItemId} onInitialItemConsumed={() => setPurchaseReorderItemId(null)} onStockChanged={refreshInventoryData} />}
           {activeTab === "invoicing" && canInvoice && <InvoicingView key={currentUser.id} />}
+          {activeTab === "jobcosting" && canInvoice && <JobCostingView key={currentUser.id} canEditRates={currentUser.role === "Manager"} />}
           {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
           {activeTab === "reception" && <FloorReceptionView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "gantt" && (

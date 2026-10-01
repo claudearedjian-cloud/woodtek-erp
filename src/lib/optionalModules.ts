@@ -60,7 +60,7 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
  * their own screens ship. A grant is enforced on server routes separately.
  */
 export const OPTIONAL_MODULE_SCREENS: Record<OptionalModuleId, readonly string[]> = {
-  invoicing: ["invoicing"],
+  invoicing: ["invoicing", "jobcosting"],
   purchasing: ["purchasing"],
   payroll: [],
 };
