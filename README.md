@@ -33,7 +33,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
-## Purchasing & Suppliers (pending owner approval)
+## Purchasing & Suppliers (shipped in PR #10, merged 2026-10-01)
 - Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
   Settings → Users → Optional modules and grant the role or person. **Invoicing &
   Money** is a separate grant for PO prices, material unit costs and machine
@@ -47,9 +47,9 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 - The first visit to the granted screen creates five purchasing tables and their
   indexes additively; the database role needs permission to create tables. No
   separate migration command is needed for existing factory installations.
-  Do not deploy until the owner approves and merges the PR.
+  PR #10 merged 2026-10-01 — run the usual factory PC update ritual to deploy.
 
-## Invoicing & A/R (pending owner approval)
+## Invoicing & A/R (shipped in PR #10, merged 2026-10-01)
 - Manager always has access. For anyone else, turn on **Invoicing & Money** in
   Settings → Users → Optional modules and grant the role or person — the same
   switch that reveals money everywhere else now also owns the **Invoicing & A/R**
@@ -71,8 +71,8 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   count twice — those entries are marked "Invoicing & A/R" and cannot be deleted
   from the ledger (void the document instead).
 - The first visit to the granted screen creates four invoicing tables and their
-  indexes additively, alongside the purchasing tables' ritual. Do not deploy
-  until the owner approves and merges the PR.
+  indexes additively, alongside the purchasing tables' ritual. PR #10 merged
+  2026-10-01 — run the usual factory PC update ritual to deploy.
 
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
