@@ -1,64 +1,28 @@
 import { NextResponse } from "next/server";
-import fs from "node:fs";
-import path from "node:path";
-import { writeJsonAtomic } from "@/lib/atomicFile.server";
-import { db } from "@/db";
-import { customers } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import { authorize, authorizeModule } from "@/lib/auth";
 import { MONEY_MODULE } from "@/lib/optionalModules";
+import {
+  loadMergedLedger,
+  readLedgerFile,
+  summarize,
+  syncCustomerBalance,
+  writeLedgerFile,
+  type LedgerEntry,
+} from "@/lib/clientLedger.server";
 
 
 // ============================================================================
-// Client ledger: invoices vs payments per client. Stored in a JSON overlay
-// (data/client-ledger.json — same pattern as bom-status / dispatch-status,
-// no DB migration). After every change the client's currentBalance column is
+// Client ledger: invoices vs payments per client. Manual adjustments live in
+// a JSON overlay (data/client-ledger.json — same pattern as bom-status /
+// dispatch-status, no DB migration); structured documents from Invoicing & A/R
+// (VAT invoices and their payments) are merged in at read time and carry
+// source:"document". After every change the client's currentBalance column is
 // re-synced so credit checks elsewhere see the real outstanding amount.
-//   GET    — entries + summary (customers:read)
-//   POST   — add an invoice or payment entry (customers:write)
-//   DELETE — remove an entry (?entryId=, customers:write)
+//   GET    — merged entries + summary (customers:read + money grant)
+//   POST   — add a manual invoice or payment entry (customers:write + money)
+//   DELETE — remove a MANUAL entry (?entryId=; document entries are managed
+//            in Invoicing & A/R and cannot be deleted here)
 // ============================================================================
-
-interface LedgerEntry {
-  id: number;
-  type: "invoice" | "payment";
-  amount: number;
-  reference: string | null;
-  notes: string | null;
-  at: string;
-}
-
-type LedgerFile = { version: 1; entries: Record<string, LedgerEntry[]> };
-
-function fileLocation(): string {
-  const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
-  return path.join(dir, "client-ledger.json");
-}
-
-function readFile(): LedgerFile {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
-    if (parsed?.entries && typeof parsed.entries === "object") return { version: 1, entries: parsed.entries };
-  } catch {
-    /* first run */
-  }
-  return { version: 1, entries: {} };
-}
-
-function writeFile(data: LedgerFile) {
-  writeJsonAtomic(fileLocation(), data);
-}
-
-function summarize(entries: LedgerEntry[]) {
-  const invoiced = entries.filter((e) => e.type === "invoice").reduce((s, e) => s + e.amount, 0);
-  const paid = entries.filter((e) => e.type === "payment").reduce((s, e) => s + e.amount, 0);
-  const balance = Math.round((invoiced - paid) * 100) / 100;
-  return { invoiced: Math.round(invoiced * 100) / 100, paid: Math.round(paid * 100) / 100, balance };
-}
-
-async function syncBalance(customerId: number, balance: number) {
-  await db.update(customers).set({ currentBalance: String(balance) }).where(eq(customers.id, customerId));
-}
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { error: authError } = await authorize("customers:read");
@@ -69,8 +33,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (moneyError) return moneyError;
   try {
     const { id } = await context.params;
-    const entries = readFile().entries[String(Number(id))] ?? [];
-    return NextResponse.json({ entries, ...summarize(entries) });
+    const merged = await loadMergedLedger(Number(id));
+    return NextResponse.json(merged);
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Failed to load the client ledger" }, { status: 500 });
   }
@@ -93,7 +57,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return NextResponse.json({ error: "Enter an amount greater than zero." }, { status: 400 });
     }
 
-    const data = readFile();
+    const data = readLedgerFile();
     const list = data.entries[String(customerId)] ?? [];
     const entry: LedgerEntry = {
       id: Date.now(),
@@ -102,14 +66,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       reference: body.reference ? String(body.reference).slice(0, 80) : null,
       notes: body.notes ? String(body.notes).slice(0, 300) : null,
       at: new Date().toISOString(),
+      source: "manual",
     };
     list.push(entry);
     data.entries[String(customerId)] = list;
-    writeFile(data);
+    writeLedgerFile(data);
 
-    const summary = summarize(list);
-    await syncBalance(customerId, summary.balance);
-    return NextResponse.json({ entries: list, ...summary }, { status: 201 });
+    await syncCustomerBalance(customerId);
+    return NextResponse.json(await loadMergedLedger(customerId), { status: 201 });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Failed to record the ledger entry" }, { status: 500 });
   }
@@ -125,17 +89,22 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const { id } = await context.params;
     const customerId = Number(id);
-    const entryId = Number(new URL(request.url).searchParams.get("entryId"));
-    if (!entryId) return NextResponse.json({ error: "Entry ID required" }, { status: 400 });
+    const rawId = new URL(request.url).searchParams.get("entryId");
+    const entryId = Number(rawId);
+    if (!entryId || !Number.isFinite(entryId)) {
+      return NextResponse.json(
+        { error: "Entries from Invoicing & A/R are managed there — void the invoice or delete the payment instead." },
+        { status: 400 },
+      );
+    }
 
-    const data = readFile();
+    const data = readLedgerFile();
     const list = (data.entries[String(customerId)] ?? []).filter((e) => e.id !== entryId);
     data.entries[String(customerId)] = list;
-    writeFile(data);
+    writeLedgerFile(data);
 
-    const summary = summarize(list);
-    await syncBalance(customerId, summary.balance);
-    return NextResponse.json({ entries: list, ...summary });
+    await syncCustomerBalance(customerId);
+    return NextResponse.json(await loadMergedLedger(customerId));
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "Failed to delete the ledger entry" }, { status: 500 });
   }

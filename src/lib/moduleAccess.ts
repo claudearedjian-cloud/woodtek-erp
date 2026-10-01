@@ -18,6 +18,7 @@ export type ModuleId =
   | "customers"
   | "inventory"
   | "purchasing"
+  | "invoicing"
   | "schedule"
   | "gantt"
   | "production"
@@ -48,6 +49,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "customers",
     "inventory",
     "purchasing",
+    "invoicing",
     "schedule",
     "gantt",
     "production",
@@ -69,6 +71,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "dashboard",
     "orders",
     "customers",
+    "invoicing",
     "schedule",
     "reports",
     "wip",
@@ -137,6 +140,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   customers: "Clients & Architects",
   inventory: "Wood & Edge Stock",
   purchasing: "Purchasing & Suppliers",
+  invoicing: "Invoicing & A/R",
   schedule: "Dispatch Schedule",
   gantt: "Gantt Chart",
   production: "Production Report",
@@ -163,10 +167,11 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
 export function canAccessModule(role: Role | string | null | undefined, module: ModuleId): boolean {
   if (!role) return false;
   const custom = getCustomRoles().find((r) => r.name === role);
-  // An optional purchasing grant is independent of the legacy screen matrix.
-  // The sidebar/page must ALSO check screenAllowedForSubject(user, config),
-  // including a personal grant — a bare role cannot resolve that by itself.
-  if (module === "purchasing") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
+  // Optional screens (purchasing, invoicing & A/R) are independent of the
+  // legacy screen matrix. The sidebar/page must ALSO check
+  // screenAllowedForSubject(user, config), including a personal grant — a
+  // bare role cannot resolve that by itself.
+  if (module === "purchasing" || module === "invoicing") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
   if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
   // Manager-saved screen override for this exact role name wins over defaults.
   const overrides = getModuleOverrides();

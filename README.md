@@ -49,6 +49,31 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   separate migration command is needed for existing factory installations.
   Do not deploy until the owner approves and merges the PR.
 
+## Invoicing & A/R (pending owner approval)
+- Manager always has access. For anyone else, turn on **Invoicing & Money** in
+  Settings → Users → Optional modules and grant the role or person — the same
+  switch that reveals money everywhere else now also owns the **Invoicing & A/R**
+  screen. Nothing on this screen (prices, totals, payments) is visible without it.
+- Create a **quotation** (VAT rate defaults to 11% Lebanon, editable per
+  document) → when the client accepts, **Convert to invoice** (issued today,
+  default 30-day terms or your own due date; the quote stays in history) →
+  **Record payments** (cash/transfer/check/other) as they arrive. An invoice is
+  fixed once issued — to correct one, delete its payments and cancel it; the
+  legal number is never reused. Documents number themselves per calendar year
+  (QUO-2026-000001, INV-2026-000001) without gaps.
+- The **A/R aging** tab buckets every unpaid remainder per client (Current,
+  1–30, 31–60, 61–90, 90+ days past the due date). Each document prints a
+  house-style **PDF** (lines, VAT totals, payment history and balance due).
+- Invoices and their payments appear automatically in the client's **ledger**
+  tab (Clients & Architects) and feed the Statement PDF and the cached client
+  balance used for credit checks. Hand-entered ledger entries (opening balances,
+  goodwill credits) still work; do not also record a document by hand or it will
+  count twice — those entries are marked "Invoicing & A/R" and cannot be deleted
+  from the ledger (void the document instead).
+- The first visit to the granted screen creates four invoicing tables and their
+  indexes additively, alongside the purchasing tables' ritual. Do not deploy
+  until the owner approves and merges the PR.
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.

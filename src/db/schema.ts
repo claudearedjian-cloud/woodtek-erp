@@ -2,6 +2,7 @@ import {
   pgTable, 
   index,
   uniqueIndex,
+  primaryKey,
   serial, 
   text, 
   integer, 
@@ -9,7 +10,8 @@ import {
   numeric, 
   boolean,
   json,
-  date
+  date,
+  type AnyPgColumn
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -334,6 +336,72 @@ export const goodsReceiptLines = pgTable("goods_receipt_lines", {
 }, (t) => [
   uniqueIndex("goods_receipt_lines_unique_idx").on(t.receiptId, t.poLineId),
   index("goods_receipt_lines_po_line_idx").on(t.poLineId),
+]);
+
+// Invoicing & A/R: quotations and VAT invoices with legal per-year numbering,
+// immutable line snapshots, and payments against invoices. Money amounts are
+// integer cents; the VAT rate is snapshotted per document at 11% (Lebanon).
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull().default("Invoice"), // Quote | Invoice
+  number: text("number").notNull().unique(), // INV-2026-000001 / QUO-2026-000001
+  customerId: integer("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  // Snapshot: a legal document must still print after the client record changes.
+  customerName: text("customer_name").notNull(),
+  customerCompany: text("customer_company").notNull().default(""),
+  issueDate: date("issue_date", { mode: "string" }).notNull(),
+  dueDate: date("due_date", { mode: "string" }), // payment due (invoice) / valid until (quote)
+  status: text("status").notNull().default("Open"), // Open | Converted (quotes) | Cancelled
+  vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("11.00"),
+  subtotalCents: integer("subtotal_cents").notNull().default(0),
+  vatCents: integer("vat_cents").notNull().default(0),
+  totalCents: integer("total_cents").notNull().default(0),
+  notes: text("notes").notNull().default(""),
+  // Self-reference needs AnyPgColumn to break the type-inference cycle.
+  convertedFromId: integer("converted_from_id").references((): AnyPgColumn => invoices.id),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("invoices_customer_kind_status_idx").on(t.customerId, t.kind, t.status),
+  index("invoices_issue_date_idx").on(t.issueDate),
+  index("invoices_due_date_idx").on(t.dueDate),
+]);
+
+export const invoiceLines = pgTable("invoice_lines", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").notNull().references(() => invoices.id),
+  description: text("description").notNull(),
+  quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull().default("1.00"),
+  unitPriceCents: integer("unit_price_cents").notNull().default(0),
+  lineTotalCents: integer("line_total_cents").notNull().default(0),
+}, (t) => [
+  index("invoice_lines_invoice_idx").on(t.invoiceId),
+]);
+
+export const invoicePayments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").notNull().references(() => invoices.id),
+  amountCents: integer("amount_cents").notNull(),
+  paidAt: date("paid_at", { mode: "string" }).notNull(),
+  method: text("method").notNull().default("Cash"), // Cash | Transfer | Check | Other
+  reference: text("reference").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  recordedById: integer("recorded_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("payments_invoice_idx").on(t.invoiceId),
+  index("payments_paid_at_idx").on(t.paidAt),
+]);
+
+// Gapless legal document numbering, one row per (series, calendar year).
+// Bumped inside the creating transaction: a rolled-back insert rolls the
+// number back too (no gaps), and the row lock serializes concurrent creates.
+export const documentCounters = pgTable("document_counters", {
+  series: text("series").notNull(), // INV | QUO
+  year: integer("year").notNull(),
+  lastNumber: integer("last_number").notNull().default(0),
+}, (t) => [
+  primaryKey({ columns: [t.series, t.year] }),
 ]);
 
 // Relations

@@ -87,6 +87,7 @@ const ICONS: Record<string, any> = {
   customers: Users,
   inventory: Package,
   purchasing: Truck,
+  invoicing: Receipt,
   pims: Import,
   reports: FileText,
   settings: SettingsIcon,

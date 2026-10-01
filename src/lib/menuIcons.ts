@@ -93,6 +93,7 @@ export const MENU_ICON_CHOICES: MenuIconChoice[] = [
   { key: "customers", label: "People", Icon: Users },
   { key: "inventory", label: "Package", Icon: Package },
   { key: "purchasing", label: "Purchasing", Icon: Truck },
+  { key: "invoicing", label: "Invoicing", Icon: Receipt },
   { key: "warehouse", label: "Warehouse", Icon: Warehouse },
   { key: "reception", label: "Received", Icon: PackageCheck },
   { key: "pims", label: "Import", Icon: Import },

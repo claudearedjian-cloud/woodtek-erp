@@ -36,7 +36,7 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
     id: "invoicing",
     label: "Invoicing & Money",
     description:
-      "Order values, material costs, client balances and credit limits, profitability and every money column in reports.",
+      "VAT quotations & invoices, payments, A/R aging — plus every money column: order values, material costs, client balances and credit limits, profitability and reports.",
     ready: true,
   },
   {
@@ -60,7 +60,7 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
  * their own screens ship. A grant is enforced on server routes separately.
  */
 export const OPTIONAL_MODULE_SCREENS: Record<OptionalModuleId, readonly string[]> = {
-  invoicing: [],
+  invoicing: ["invoicing"],
   purchasing: ["purchasing"],
   payroll: [],
 };
