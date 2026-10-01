@@ -66,6 +66,7 @@ import {
   Sparkle,
 } from "lucide-react";
 import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuConfig";
+import { screenAllowedForSubject, type OptionalModulesConfig } from "@/lib/optionalModules";
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 
@@ -85,6 +86,8 @@ const ICONS: Record<string, any> = {
   station: Tablet,
   customers: Users,
   inventory: Package,
+  purchasing: Truck,
+  invoicing: Receipt,
   pims: Import,
   reports: FileText,
   settings: SettingsIcon,
@@ -141,6 +144,7 @@ interface SidebarProps {
   onSwitchUser: (user: any) => void;
   onRequestSwitch: () => void;
   menuConfig: MenuConfig | null;
+  optionalModulesConfig?: OptionalModulesConfig | null;
   isOpen: boolean;
   onClose: () => void;
   lang?: Lang;
@@ -154,13 +158,22 @@ export default function Sidebar({
   onSwitchUser,
   onRequestSwitch,
   menuConfig,
+  optionalModulesConfig,
   isOpen,
   onClose,
   lang = "en",
 }: SidebarProps) {
   // Custom roles: menu overrides are keyed by the custom name, and the base
   // role decides module access — resolveMenu handles both.
-  const resolved = resolveMenu(currentUser?.displayRole || currentUser?.role, menuConfig);
+  const rawMenu = resolveMenu(currentUser?.displayRole || currentUser?.role, menuConfig);
+  const visible = (item: ResolvedMenuItem) => screenAllowedForSubject(
+    item.kind === "link" ? item.id : (item.target || item.id), currentUser, optionalModulesConfig,
+  );
+  const resolved = {
+    top: rawMenu.top.filter(visible),
+    settings: rawMenu.settings.filter(visible),
+    sections: rawMenu.sections.map((s) => ({ ...s, items: s.items.filter(visible) })),
+  };
 
   // Shop-floor operators get a clean touchscreen: the Active Role Persona
   // panel (profile card + hover role switcher) is hidden for them. They

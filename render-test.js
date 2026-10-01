@@ -63,6 +63,8 @@ compile("src/lib/emailDispatch.ts", "lib/emailDispatch.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
 compile("src/lib/optionalModules.server.ts", "lib/optionalModules.server.js");
+compile("src/lib/purchasing.ts", "lib/purchasing.js");
+compile("src/lib/invoicing.ts", "lib/invoicing.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -668,7 +670,7 @@ const ATOMIC_STORES = [
   "src/lib/productionPlan.server.ts",
   "src/lib/rolesConfig.server.ts",
   "src/app/api/bom-kits/route.ts",
-  "src/app/api/customers/[id]/ledger/route.ts",
+  "src/lib/clientLedger.server.ts",
   "src/app/api/delivery-photos/route.ts",
   "src/app/api/machine-categories/route.ts",
   "src/app/api/menu-config/route.ts",
@@ -754,9 +756,10 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|invoices_|invoice_lines_|payments_)/g) || []).length;
 check(
-  schemaIndexCount === dbx.DB_INDEX_PLAN.length && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
-  "dbx: schema.ts declares exactly the same " + dbx.DB_INDEX_PLAN.length + " indexes as the plan",
+  schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
+  "dbx: schema.ts keeps every existing index in the plan, plus purchasing/invoicing-only indexes",
 );
 const dbxViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
@@ -2095,8 +2098,9 @@ const optMod = require("./compiled/lib/optionalModules.js");
 const optModServer = require("./compiled/lib/optionalModules.server.js");
 const repMoney = require("./compiled/lib/reportMoney.js");
 check(optMod.OPTIONAL_MODULE_IDS.includes("invoicing") && optMod.OPTIONAL_MODULE_IDS.includes("purchasing") && optMod.OPTIONAL_MODULE_IDS.includes("payroll"), "optional modules: registry has invoicing, purchasing, payroll");
-check(optMod.OPTIONAL_MODULES.length === 3 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true, "optional modules: invoicing is ready, others not yet");
-check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === false && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === false, "optional modules: purchasing and payroll ready: false");
+check(optMod.OPTIONAL_MODULES.length === 3 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true, "optional modules: invoicing remains ready");
+check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === true && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === false, "optional modules: purchasing shipped; payroll stays not ready");
+check(optMod.OPTIONAL_MODULE_SCREENS.purchasing.includes("purchasing"), "optional modules: purchasing screen is registered with the grant");
 check(optMod.MONEY_MODULE === "invoicing", "optional modules: MONEY_MODULE is invoicing");
 check(optMod.MANAGER_ROLE === "Manager", "optional modules: MANAGER_ROLE is Manager");
 check(optMod.isOptionalModuleId("invoicing") && !optMod.isOptionalModuleId("unknown"), "optional modules: isOptionalModuleId validates IDs");
@@ -2197,12 +2201,150 @@ check(dashboardApiSource.includes("canSeeMoney") && dashboardApiSource.includes(
 
 const reportsRouteSrc = fs.readFileSync("src/app/api/reports/route.ts", "utf8");
 check(reportsRouteSrc.includes("isMoneyOnlyReport") && reportsRouteSrc.includes("canSeeMoney"), "reports API: imports isMoneyOnlyReport and canSeeMoney");
-check(reportsRouteSrc.includes("isMoneyOnlyReport(report.type) && !canSeeMoney") && reportsRouteSrc.includes("status: 403"), "reports API: GET returns 403 when opening saved money-only report without grant");
-check(reportsRouteSrc.includes("savedReports.filter(r => !isMoneyOnlyReport(r.type))"), "reports API: GET filters money-only reports from saved list when !canSeeMoney");
+check(reportsRouteSrc.includes("isMoneyOnlyReport(report.type) && !money") && reportsRouteSrc.includes("status: 403"), "reports API: GET returns 403 when opening saved money-only report without grant");
+check(reportsRouteSrc.includes(".filter(r => !isMoneyOnlyReport(r.type))"), "reports API: GET filters money-only reports from saved list when !canSeeMoney");
+check(reportsRouteSrc.includes("redactReportMoney(report.type, report.dataJson)") && reportsRouteSrc.includes("redactReportMoney(r.type, r.dataJson)"), "reports API: detail and list redact saved mixed money reports at read time, even if saved by Manager");
 check(reportsRouteSrc.includes("isMoneyOnlyReport(type) && !money") && reportsRouteSrc.includes("redactReportMoney(type, reportData)"), "reports API: POST 403 on generating money report without grant and redacts before insert");
 
 const reportViewSrc = fs.readFileSync("src/components/ReportView.tsx", "utf8");
 check(reportViewSrc.includes("moneyText") && reportViewSrc.includes("pdfMoneyText") && reportViewSrc.includes("csvMoney"), "report view: formats redacted money figures with em dash, restricted and csv marker");
+
+// ---- Purchasing & Suppliers: optional grants, validation, receipts, stock ----
+const purchasing = require("./compiled/lib/purchasing.js");
+const rejectsPurchase = (fn, status = 400) => {
+  try { fn(); return false; }
+  catch (error) { return error instanceof purchasing.PurchasingError && error.status === status; }
+};
+const supplierParsed = purchasing.parseSupplier({ name: "  Cedar Supply  ", contactName: " Lina ", email: " ORDERS@CEDAR.COM " });
+check(supplierParsed.name === "Cedar Supply" && supplierParsed.email === "orders@cedar.com" && supplierParsed.contactName === "Lina", "purchasing: supplier record trims contact and email");
+check(rejectsPurchase(() => purchasing.parseSupplier({ name: "", email: "bad" })) && rejectsPurchase(() => purchasing.parseSupplier({ name: "Cedar", email: "invalid" })), "purchasing: supplier name and email are validated");
+check(purchasing.priceCents("12.34") === 1234 && purchasing.priceCents("0.5") === 50 && purchasing.moneyFromCents(1005) === "10.05", "purchasing: unit prices use integer cents and exact two-decimal display");
+check(rejectsPurchase(() => purchasing.priceCents("-2")) && rejectsPurchase(() => purchasing.priceCents("2.345")) && rejectsPurchase(() => purchasing.priceCents("Infinity")), "purchasing: negative, excess precision and non-finite prices are rejected");
+check(rejectsPurchase(() => purchasing.positiveId(true)) && rejectsPurchase(() => purchasing.positiveId("0")) && rejectsPurchase(() => purchasing.positiveId(1.5)), "purchasing: ids cannot be booleans, zero or fractions");
+const newPo = { supplierId: 4, expectedAt: "2028-02-29", notes: "Rush", lines: [{ itemId: 3, quantity: 10, unitPrice: "1.25" }] };
+check(purchasing.parsePurchaseOrder(newPo, true).lines[0].unitPrice === "1.25", "purchasing: valid supplier, leap-day, item, quantity and price make a PO");
+check(rejectsPurchase(() => purchasing.parsePurchaseOrder({ ...newPo, expectedAt: "2026-02-29" }, true)), "purchasing: impossible delivery date is rejected");
+check(rejectsPurchase(() => purchasing.parsePurchaseOrder({ ...newPo, lines: [...newPo.lines, newPo.lines[0]] }, true)), "purchasing: duplicate stock lines are rejected");
+check(rejectsPurchase(() => purchasing.parsePurchaseOrder({ ...newPo, lines: [{ itemId: 3, quantity: -1, unitPrice: "0" }] }, true)) && rejectsPurchase(() => purchasing.parsePurchaseOrder({ ...newPo, lines: [{ itemId: 3, quantity: 1.5, unitPrice: "0" }] }, true)), "purchasing: negative and fractional quantities are rejected");
+check(rejectsPurchase(() => purchasing.parsePurchaseOrder(newPo, false), 403), "purchasing: a purchasing-only grant cannot set a nonzero PO price");
+check(purchasing.parsePurchaseOrder({ ...newPo, lines: [{ itemId: 3, quantity: 2 }] }, false).lines[0].unitPrice === "0.00", "purchasing: quantity-only PO is allowed without a money grant");
+const uuid = "11111111-2222-4333-8444-555555555555";
+const receiptInput = { requestKey: uuid, lines: [{ poLineId: 7, quantity: 4 }] };
+check(purchasing.parseGoodsReceipt(receiptInput).requestKey === uuid && purchasing.parseGoodsReceipt(receiptInput).lines[0].quantity === 4, "purchasing: a GRN carries a UUID and actual received quantities");
+const lanReceiptKey = purchasing.newReceiptRequestKey({ getRandomValues: (bytes) => { bytes.set(Array.from({ length: 16 }, (_, i) => i)); return bytes; } });
+check(lanReceiptKey === "00010203-0405-4607-8809-0a0b0c0d0e0f" && purchasing.parseGoodsReceipt({ ...receiptInput, requestKey: lanReceiptKey }).requestKey === lanReceiptKey, "purchasing: HTTP-LAN browser fallback creates an RFC 4122 v4 receipt key from secure random bytes");
+check(purchasing.newReceiptRequestKey({ randomUUID: () => uuid, getRandomValues: () => { throw Error("fallback should not run"); } }) === uuid, "purchasing: secure-context browser uses native randomUUID when available");
+check(rejectsPurchase(() => purchasing.parseGoodsReceipt({ ...receiptInput, requestKey: "not-a-uuid" })) && rejectsPurchase(() => purchasing.parseGoodsReceipt({ ...receiptInput, lines: [receiptInput.lines[0], receiptInput.lines[0]] })), "purchasing: invalid receipt key and duplicate PO lines are rejected");
+const poLine = { id: 7, itemId: 3, itemSku: "MDF-1", itemName: "MDF", itemUnit: "sheets", quantity: 10, unitPrice: "1.25" };
+const pendingPo = purchasing.summarizeOrderLines([poLine], [{ poLineId: 7, quantity: 4 }], "Open", true);
+check(pendingPo.orderedQty === 10 && pendingPo.receivedQty === 4 && pendingPo.awaitingQty === 6 && pendingPo.lines[0].remainingQuantity === 6 && pendingPo.total === "12.50" && pendingPo.awaitingValue === "7.50", "purchasing: partial GRN leaves exactly 6 of 10 outstanding and money totals use cents");
+check(purchasing.summarizeOrderLines([poLine], [{ poLineId: 7, quantity: 4 }], "Closed", true).awaitingQty === 0, "purchasing: manually closed remainder is no longer awaiting delivery");
+const blindPo = purchasing.summarizeOrderLines([poLine], [], "Open", false);
+check(blindPo.total === null && blindPo.awaitingValue === null && blindPo.lines[0].unitPrice === null && blindPo.lines[0].lineTotal === null, "purchasing: all PO money fields are null without the Invoicing & Money grant");
+check(purchasing.suggestedReorderQty(5, 10) === 15 && purchasing.suggestedReorderQty(5, 10, 8) === 7 && purchasing.suggestedReorderQty(5, 10, 20) === 0, "purchasing: reorder suggestion accounts for stock already awaiting on an open PO");
+check(purchasing.purchaseNumber(12) === "PUR-00012" && purchasing.goodsReceiptNumber(8) === "GRN-00008", "purchasing: PO and GRN references are distinct from production order numbers");
+
+const purchasingGrants = { version: 1, enabled: ["invoicing", "purchasing"], roles: { Technician: ["purchasing"] }, users: { "9": ["purchasing"] } };
+const renderPurchaseSidebar = (role, cfg, id = 1) => renderToString(React.createElement(Sidebar, { ...props(role), currentUser: { ...props(role).currentUser, id }, optionalModulesConfig: cfg }));
+check(mgr.includes("Purchasing &amp; Suppliers"), "purchasing: Manager always sees the new sidebar screen");
+check(!renderPurchaseSidebar("Technician", null).includes("Purchasing &amp; Suppliers"), "purchasing: ungranted role cannot see Purchasing in sidebar");
+check(renderPurchaseSidebar("Technician", purchasingGrants).includes("Purchasing &amp; Suppliers"), "purchasing: granted role gets the Purchasing screen");
+check(renderPurchaseSidebar("Machine Operator", purchasingGrants, 9).includes("Purchasing &amp; Suppliers"), "purchasing: personal grant works even when legacy role screen list excludes purchasing");
+check(!renderPurchaseSidebar("Machine Operator", { ...purchasingGrants, enabled: ["invoicing"] }, 9).includes("Purchasing &amp; Suppliers"), "purchasing: switched-off module hides even a personally granted screen");
+check(optMod.screenOwnerModule("purchasing") === "purchasing" && optMod.screenAllowedForSubject("purchasing", { id: 9, role: "Machine Operator" }, purchasingGrants), "purchasing: page screen ownership and personal-grant check agree");
+
+const purchaseRoutePaths = [
+  "src/app/api/purchasing/route.ts", "src/app/api/purchasing/suppliers/route.ts",
+  "src/app/api/purchasing/suppliers/[id]/route.ts", "src/app/api/purchasing/orders/route.ts",
+  "src/app/api/purchasing/orders/[id]/route.ts", "src/app/api/purchasing/orders/[id]/receipts/route.ts",
+];
+check(purchaseRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes('authorizeModule("purchasing")')), "purchasing: EVERY supplier/PO/GRN route enforces the optional module on the server");
+const purchaseApiSource = fs.readFileSync("src/lib/purchasing.server.ts", "utf8");
+const purchaseSchemaSource = fs.readFileSync("src/lib/purchasingSchema.server.ts", "utf8");
+const purchaseUiSource = fs.readFileSync("src/components/PurchasingView.tsx", "utf8");
+check(purchaseSchemaSource.includes("create table if not exists suppliers") && purchaseSchemaSource.includes("goods_receipt_lines_unique_idx") && purchaseSchemaSource.includes("pg_advisory_xact_lock") && !/DROP\s+(TABLE|COLUMN)|TRUNCATE/i.test(purchaseSchemaSource), "purchasing: additive lazy table setup is transaction-serialized and never destructive");
+check(purchaseApiSource.includes('.for("update")') && purchaseApiSource.includes("summary.lines") && purchaseApiSource.includes("requested.quantity > line.remainingQuantity"), "purchasing: PO row lock and outstanding checks prevent concurrent over-receipt");
+check(purchaseApiSource.includes("requestKey") && purchaseSchemaSource.includes("request_key text not null unique") && purchaseApiSource.includes("replayed: true"), "purchasing: receipt retry key is unique and replay is stock-idempotent");
+check(purchaseApiSource.includes("tx.insert(goodsReceipts)") && purchaseApiSource.includes("tx.insert(goodsReceiptLines)") && purchaseApiSource.includes("tx.update(inventoryItems)") && purchaseApiSource.includes("stockQuantity: sql`") && purchaseApiSource.includes("throw new PurchasingError(\"Stock item unavailable"), "purchasing: GRN and additive stock increment commit in the same transaction or roll back together");
+check(purchaseApiSource.includes('isolationLevel: "repeatable read"') && purchaseApiSource.includes("awaitingQuantity"), "purchasing: supplier awaiting list reads a consistent PO/GRN/stock snapshot");
+check(purchaseUiSource.includes("/api/purchasing/orders") && purchaseUiSource.includes("newReceiptRequestKey()") && purchaseUiSource.includes("onStockChanged") && purchaseUiSource.includes("suggestedReorderQty"), "purchasing: UI creates POs, posts receipts with a retry key and refreshes stock");
+check(pageSource.includes("<PurchasingView") && pageSource.includes("screenAllowedForSubject(activeTab, currentUser, optionalConfig)") && fs.readFileSync("src/components/Sidebar.tsx", "utf8").includes("screenAllowedForSubject"), "purchasing: sidebar, page guard and rendering all honor per-person grants");
+check(dashboardSource.includes("onCreatePurchaseOrder(a.itemId)") && fs.readFileSync("src/app/api/alerts/route.ts", "utf8").includes("suggestedReorderQty"), "purchasing: low-stock bell offers a one-click prefilled PO path");
+const purchaseInvRouteSource = fs.readFileSync("src/app/api/inventory/route.ts", "utf8");
+const purchaseInvIdRouteSource = fs.readFileSync("src/app/api/inventory/[id]/route.ts", "utf8");
+const purchaseMachineIdRouteSource = fs.readFileSync("src/app/api/machines/[id]/route.ts", "utf8");
+check(purchaseInvRouteSource.includes("canSeeMoney") && purchaseInvIdRouteSource.includes("canSeeMoney") && inventoryImportApiSource.includes("canSeeMoney") && dataAccessSource.includes("if (!canSeeMoney(user, readOptionalModules()))"), "purchasing: inventory reads, writes and costed Excel imports follow money grants");
+check(machinesSource.includes("canSeeMoney") && purchaseMachineIdRouteSource.includes("canSeeMoney") && dataAccessSource.includes("if (canSeeMoney(user, readOptionalModules())) return rows"), "purchasing: machine list, detail and mutation rates follow money grants");
+check(machinesSource.includes('const hourlyCost = money ? String(body.hourlyCost ?? "65.00") : "0.00"'), "purchasing: no-money machine creation cannot silently set a financial hourly rate");
+check(dashboardApiSource.includes("unitCost: money ? i.unitCost : null") && fs.readFileSync("src/app/api/orders/[id]/materials/route.ts", "utf8").includes("return maySeeMoney ? rows : rows.map"), "purchasing: dashboard low-stock items and order BOM list cannot leak material costs");
+
+// =====================================================================
+// Invoicing & A/R (PR #10 — quotes, VAT invoices, payments, aging, ledger)
+// =====================================================================
+const inv = require("./compiled/lib/invoicing.js");
+const rejectsInvoice = (fn, status = 400) => {
+  try { fn(); return false; }
+  catch (error) { return error instanceof inv.InvoicingError && (status === undefined || error.status === status); }
+};
+
+check(inv.documentNumber("INV", 2026, 7) === "INV-2026-000007" && inv.documentNumber("QUO", 2026, 42) === "QUO-2026-000042" && inv.seriesFor("Quote") === "QUO" && inv.seriesFor("Invoice") === "INV", "invoicing: legal per-year numbering keeps separate QUO and INV series");
+const docInput = { customerId: 4, issueDate: "2026-03-01", dueDate: "2026-03-31", vatRate: "11.00", notes: "50% deposit", lines: [{ description: "Oak kitchen", quantity: "1.5", unitPrice: "1200.00" }] };
+const docParsed = inv.parseDocument("Invoice", docInput);
+check(docParsed.lines[0].quantityHundredths === 150 && docParsed.lines[0].lineTotalCents === 180000 && docParsed.subtotalCents === 180000 && docParsed.vatCents === 19800 && docParsed.totalCents === 199800, "invoicing: 11% VAT snapshots to cents ($1,800.00 + $198.00 = $1,998.00)");
+check(inv.parseDocument("Invoice", { ...docInput, vatRate: "0" }).vatCents === 0 && inv.vatRateBps("11") === 1100 && inv.vatRateFromBps(1100) === "11.00" && inv.parseDocument("Quote", { ...docInput, vatRate: "8.25" }).vatRateBps === 825, "invoicing: VAT defaults to the Lebanese 11% and round-trips exactly");
+check(inv.parseDocument("Invoice", { ...docInput, vatRate: "" }).vatRateBps === 1100, "invoicing: a blank VAT rate falls back to 11% (Lebanon default)");
+check(rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, vatRate: "101" })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, vatRate: "11.005" })) && rejectsInvoice(() => inv.parseDocument("Note", docInput)), "invoicing: impossible VAT rates and unknown document kinds are rejected");
+check(rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [] })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: Array.from({ length: 51 }, () => ({ description: "x", quantity: "1", unitPrice: "0" })) })), "invoicing: documents need 1 to 50 lines");
+check(rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ description: "", quantity: "1", unitPrice: "0" }] })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ description: "x", quantity: "0", unitPrice: "0" }] })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ description: "x", quantity: "1.234", unitPrice: "0" }] })), "invoicing: empty descriptions, zero quantities and excess precision are rejected");
+check(rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, issueDate: "2026-02-30" })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, issueDate: "01/03/2026" })), "invoicing: impossible or non-ISO issue dates are rejected");
+check(inv.parseDocument("Quote", { ...docInput, dueDate: "" }).dueDate === null && inv.quantityHundredths("0.05") === 5 && inv.quantityHundredths("999999.99") === 99999999 && rejectsInvoice(() => inv.quantityHundredths("1000000")), "invoicing: quotes may omit valid-until; quantities allow 2 decimals inside the limits");
+check(inv.parseDocument("Invoice", docInput).dueDate < inv.parseDocument("Invoice", docInput).issueDate === false, "invoicing: accepted document dates are ISO-normalized");
+
+const payParsed = inv.parsePayment({ amount: "250.50", paidAt: "2026-03-15", method: "Transfer", reference: "CHQ-9", notes: "" });
+check(payParsed.amountCents === 25050 && payParsed.method === "Transfer" && payParsed.reference === "CHQ-9", "invoicing: payments parse to cents with method, date and reference");
+check(rejectsInvoice(() => inv.parsePayment({ amount: "0", paidAt: "2026-03-15" })) && rejectsInvoice(() => inv.parsePayment({ amount: "5", paidAt: "2026-3-5" })) && rejectsInvoice(() => inv.parsePayment({ amount: "5", paidAt: "2026-03-15", method: "Crypto" })), "invoicing: zero amounts, bad dates and unknown payment methods are rejected");
+
+check(inv.paymentState(1000, 0) === "Unpaid" && inv.paymentState(1000, 400) === "Partially paid" && inv.paymentState(1000, 1000) === "Paid" && inv.paymentState(1000, 1200) === "Paid", "invoicing: payment state derives from amounts");
+check(inv.daysPastDue("2026-03-31", "2026-03-31") === 0 && inv.daysPastDue(null, "2026-03-31") === -1, "invoicing: due today is current, a missing due date never ages");
+check(
+  inv.agingBucketFor("2026-04-01", "2026-03-31") === "current" && inv.agingBucketFor("2026-03-31", "2026-03-31") === "current"
+  && inv.agingBucketFor("2026-03-30", "2026-03-31") === "d1-30" && inv.agingBucketFor("2026-03-01", "2026-03-31") === "d1-30"
+  && inv.agingBucketFor("2026-02-28", "2026-03-31") === "d31-60" && inv.agingBucketFor("2026-01-30", "2026-03-31") === "d31-60"
+  && inv.agingBucketFor("2026-01-29", "2026-03-31") === "d61-90" && inv.agingBucketFor("2025-12-30", "2026-03-31") === "d90+",
+  "invoicing: A/R aging buckets split at 0/30/60/90 days past due",
+);
+check(inv.addDaysIso("2026-03-01", 30) === "2026-03-31" && inv.addDaysIso("2026-12-28", 5) === "2027-01-02", "invoicing: 30-day payment terms cross month and year ends correctly");
+check(i18n.tt("ar", "Invoicing & A/R") === "الفواتير والذمم" && i18n.tt("fr", "Invoicing & A/R") === "Facturation & créances", "invoicing: Arabic and French sidebar labels ship with the screen");
+
+check(mgr.includes("Invoicing &amp; A/R"), "invoicing: Manager always sees the Invoicing & A/R screen");
+const invGrants = { version: 1, enabled: ["invoicing"], roles: { Technician: ["invoicing"] }, users: { "9": ["invoicing"] } };
+check(!renderPurchaseSidebar("Technician", null).includes("Invoicing &amp; A/R"), "invoicing: ungranted role cannot see Invoicing in the sidebar");
+check(renderPurchaseSidebar("Technician", invGrants).includes("Invoicing &amp; A/R"), "invoicing: granted role gets the Invoicing screen");
+check(renderPurchaseSidebar("Machine Operator", invGrants, 9).includes("Invoicing &amp; A/R"), "invoicing: personal grant works even when the legacy role list excludes invoicing");
+check(!renderPurchaseSidebar("Machine Operator", { ...invGrants, enabled: [] }, 9).includes("Invoicing &amp; A/R"), "invoicing: switched-off module hides even a personally granted screen");
+check(optMod.OPTIONAL_MODULE_SCREENS.invoicing.includes("invoicing") && optMod.screenOwnerModule("invoicing") === "invoicing" && optMod.screenAllowedForSubject("invoicing", { id: 9, role: "Machine Operator" }, invGrants), "invoicing: screen ownership and personal-grant check agree");
+
+const invoicingRoutePaths = [
+  "src/app/api/invoicing/route.ts", "src/app/api/invoicing/[id]/route.ts",
+  "src/app/api/invoicing/[id]/convert/route.ts", "src/app/api/invoicing/[id]/cancel/route.ts",
+  "src/app/api/invoicing/[id]/payments/route.ts", "src/app/api/invoicing/payments/[id]/route.ts",
+];
+check(invoicingRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes('authorizeModule("invoicing")')), "invoicing: EVERY quote/invoice/payment route enforces the optional module on the server");
+const invApiSource = fs.readFileSync("src/lib/invoicing.server.ts", "utf8");
+const invSchemaSource = fs.readFileSync("src/lib/invoicingSchema.server.ts", "utf8");
+const invUiSource = fs.readFileSync("src/components/InvoicingView.tsx", "utf8");
+const ledgerRouteSource = fs.readFileSync("src/app/api/customers/[id]/ledger/route.ts", "utf8");
+const ledgerServerSource = fs.readFileSync("src/lib/clientLedger.server.ts", "utf8");
+check(invSchemaSource.includes("create table if not exists invoices") && invSchemaSource.includes("document_counters") && invSchemaSource.includes("pg_advisory_xact_lock") && !/DROP\\s+(TABLE|COLUMN)|TRUNCATE/i.test(invSchemaSource), "invoicing: additive lazy table setup is transaction-serialized and never destructive");
+check(invApiSource.includes('.for("update")') && invApiSource.includes("payload.amountCents > outstandingCents"), "invoicing: invoice row lock + outstanding check stop overpayment and payment races");
+check(invApiSource.includes("nextNumber(tx") && invApiSource.includes("onConflictDoUpdate") && invApiSource.includes("lastNumber: sql`"), "invoicing: legal numbers are reserved in the creating transaction (gapless under concurrency)");
+check(invApiSource.includes('status: "Converted"') && invApiSource.includes("convertedFromId: quote.id"), "invoicing: quotation conversion copies lines and links both documents");
+check(invApiSource.includes("recorded payments cannot be cancelled") && invApiSource.includes('status !== "Open"'), "invoicing: paid invoices cannot be voided and closed documents cannot change");
+check(invApiSource.includes('isolationLevel: "repeatable read"') && invApiSource.includes("agingBucketFor") && invApiSource.includes("syncCustomerBalance"), "invoicing: board, aging and balance sync read consistent snapshots");
+check(ledgerServerSource.includes('source: "document"') && ledgerServerSource.includes("loadMergedLedger") && ledgerRouteSource.includes("loadMergedLedger") && ledgerRouteSource.includes("Invoicing & A/R are managed there") && ledgerRouteSource.includes("authorizeModule(MONEY_MODULE)"), "invoicing: client ledger merges documents, keeps the money gate and blocks hand-deleting them");
+check(ledgerServerSource.includes("currentBalance: String(summary.balance)"), "invoicing: client balance re-syncs so credit checks see document totals");
+check(invUiSource.includes("/api/invoicing") && invUiSource.includes("jsPDF") && invUiSource.includes("Convert to invoice") && invUiSource.includes("Record payment") && invUiSource.includes("A/R aging"), "invoicing: UI issues quotes, invoices, payments, aging and printable PDFs");
+check(pageSource.includes("<InvoicingView") && pageSource.includes('subjectHasModule("invoicing", currentUser, optionalConfig)'), "invoicing: screen mounts behind the per-person grant");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

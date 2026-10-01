@@ -25,6 +25,7 @@ interface DashboardViewProps {
   loading: boolean;
   onNavigate: (tab: string, status?: string) => void;
   currentUser?: any;
+  onCreatePurchaseOrder?: (itemId: number) => void;
 }
 
 // Top bar: one button per order status, click to open Orders & Routing pre-filtered.
@@ -37,7 +38,7 @@ const STATUS_BUTTONS = [
   { label: "On Hold", key: "OnHold", cls: "border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300" },
 ] as const;
 
-export default function DashboardView({ data, loading, onNavigate, currentUser }: DashboardViewProps) {
+export default function DashboardView({ data, loading, onNavigate, currentUser, onCreatePurchaseOrder }: DashboardViewProps) {
   // Label language (top-bar EN / AR / FR) — resolves to English by default.
   const t = useT();
   // Attention center: polls /api/alerts (overdue orders, missing materials, CMMS service, low stock).
@@ -227,19 +228,28 @@ export default function DashboardView({ data, loading, onNavigate, currentUser }
                     <div className="p-4 text-center text-xs text-slate-500">{t("All clear — nothing needs attention.")}</div>
                   ) : (
                     alerts.map((a: any, i: number) => (
-                      <button
-                        key={i}
-                        onClick={() => { onNavigate(a.tab); setShowAlerts(false); }}
-                        className="mb-1 w-full rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-left transition hover:border-amber-500/40"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className={`h-2 w-2 flex-shrink-0 rounded-full ${
-                            a.severity === "rose" ? "bg-rose-400" : a.severity === "amber" ? "bg-amber-400" : a.severity === "orange" ? "bg-orange-400" : "bg-violet-400"
-                          }`} />
-                          <span className="text-[11px] font-black text-white">{a.title}</span>
-                        </div>
-                        <div className="mt-0.5 pl-3.5 text-[10px] text-slate-400">{a.detail}</div>
-                      </button>
+                      <div key={i} className="mb-1 rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 transition hover:border-amber-500/40">
+                        <button
+                          onClick={() => { onNavigate(a.tab); setShowAlerts(false); }}
+                          className="w-full text-left"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className={`h-2 w-2 flex-shrink-0 rounded-full ${
+                              a.severity === "rose" ? "bg-rose-400" : a.severity === "amber" ? "bg-amber-400" : a.severity === "orange" ? "bg-orange-400" : "bg-violet-400"
+                            }`} />
+                            <span className="text-[11px] font-black text-white">{a.title}</span>
+                          </div>
+                          <div className="mt-0.5 pl-3.5 text-[10px] text-slate-400">{a.detail}</div>
+                        </button>
+                        {a.kind === "stock" && a.itemId && onCreatePurchaseOrder && (
+                          <button
+                            onClick={() => { onCreatePurchaseOrder(a.itemId); setShowAlerts(false); }}
+                            className="ml-3.5 mt-2 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] font-black text-amber-300 hover:bg-amber-500/25"
+                          >
+                            + Create PO · suggested {a.suggestedQty} units
+                          </button>
+                        )}
+                      </div>
                     ))
                   )}
                 </div>

@@ -23,7 +23,7 @@ export const MENU_ICON_KEYS: string[] = [
   // built-in screens (keep today's automatic look available explicitly)
   "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "production", "machines",
   "cmms", "downtime", "quality", "workforce", "station", "customers",
-  "inventory", "pims", "reports", "settings", "designer", "warehouse",
+  "inventory", "purchasing", "invoicing", "pims", "reports", "settings", "designer", "warehouse",
   "reception", "plant",
   // generic factory/office icons for custom entries
   "box", "boxes", "hammer", "wrench", "truck", "hard-hat", "clipboard-check",
@@ -65,6 +65,8 @@ export const MENU_REGISTRY: MenuRegistryItem[] = [
   { id: "warehouse", label: "Warehouse & BOM", badge: "BOM", group: "top" },
   { id: "reception", label: "Material Reception", badge: "RX", group: "top" },
   { id: "inventory", label: "Wood & Edge Stock", badge: "", group: "settings" },
+  { id: "purchasing", label: "Purchasing & Suppliers", badge: "PO", group: "top" },
+  { id: "invoicing", label: "Invoicing & A/R", badge: "AR", group: "top" },
   { id: "pims", label: "PIMS Import", badge: "Link", group: "settings" },
   { id: "reports", label: "System Reports", badge: "PDF", group: "top" },
   { id: "settings", label: "General Settings", badge: "", group: "top" },

@@ -400,9 +400,9 @@ export async function listMachinesForUser(user: SessionUser): Promise<ScopedMach
     ? baseQuery.where(and(...whereClauses))
     : baseQuery);
 
-  if (isManager(user)) return rows as ScopedMachine[];
+  if (canSeeMoney(user, readOptionalModules())) return rows as ScopedMachine[];
 
-  // Hide hourly cost from non-Managers
+  // Machine rates belong to the Invoicing & Money grant, not a fixed role.
   return rows.map(m => ({
     ...m,
     hourlyCost: null as unknown as string,
@@ -625,9 +625,9 @@ export async function computeDashboardKpisForUser(user: SessionUser): Promise<Da
 // -------------------------------------------------------------------- INVENTORY
 
 export async function listInventoryForUser(user: SessionUser) {
-  // Inventory is shared; only Sales Coordinators are cost-restricted (unitCost hidden)
+  // Inventory quantities are shared; unit cost requires Invoicing & Money.
   const rows = await db.select().from(inventoryItems).orderBy(asc(inventoryItems.name));
-  if (user.role === "Sales Coordinator") {
+  if (!canSeeMoney(user, readOptionalModules())) {
     return rows.map(i => ({ ...i, unitCost: null as unknown as string }));
   }
   return rows;

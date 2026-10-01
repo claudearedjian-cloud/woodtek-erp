@@ -353,6 +353,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         return;
       }
       setModuleCfg(shapeModules(data));
+      window.dispatchEvent(new Event("woodtek:optional-modules-changed"));
       setModuleMsg("Saved.");
     } catch {
       setModuleMsg("Network error \u2014 optional modules not saved.");

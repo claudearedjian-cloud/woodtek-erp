@@ -12,6 +12,7 @@ import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
 import { LangProvider } from "@/lib/langContext";
 import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
+import { canSeeMoney, sanitizeOptionalModules, screenAllowedForSubject, subjectHasModule, type OptionalModulesConfig } from "@/lib/optionalModules";
 
 const ScreenLoading = () => (
   <div className="mx-auto mt-16 max-w-sm rounded-2xl border border-slate-800 bg-slate-900/70 px-6 py-5 text-center text-sm font-bold text-slate-400">
@@ -29,6 +30,8 @@ const MachinesView = dynamic(() => import("@/components/MachinesView"), { loadin
 const OperatorStationView = dynamic(() => import("@/components/OperatorStationView"), { loading: ScreenLoading });
 const CustomersView = dynamic(() => import("@/components/CustomersView"), { loading: ScreenLoading });
 const InventoryView = dynamic(() => import("@/components/InventoryView"), { loading: ScreenLoading });
+const PurchasingView = dynamic(() => import("@/components/PurchasingView"), { loading: ScreenLoading });
+const InvoicingView = dynamic(() => import("@/components/InvoicingView"), { loading: ScreenLoading });
 const WarehouseView = dynamic(() => import("@/components/WarehouseView"), { loading: ScreenLoading });
 const FloorReceptionView = dynamic(() => import("@/components/FloorReceptionView"), { loading: ScreenLoading });
 const ScheduleView = dynamic(() => import("@/components/ScheduleView"), { loading: ScreenLoading });
@@ -89,6 +92,15 @@ export default function WoodTekERP() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [menuConfig, setMenuConfig] = useState<MenuConfig | null>(null);
+  const [optionalConfig, setOptionalConfig] = useState<OptionalModulesConfig | null>(null);
+  const [purchaseReorderItemId, setPurchaseReorderItemId] = useState<number | null>(null);
+  const canPurchase = subjectHasModule("purchasing", currentUser, optionalConfig);
+  const canInvoice = subjectHasModule("invoicing", currentUser, optionalConfig);
+  const startPurchaseForItem = (itemId: number) => {
+    if (!canPurchase) return;
+    setPurchaseReorderItemId(itemId);
+    setActiveTab("purchasing");
+  };
   // Label language (sidebar / sign-in / top bar). EN default, per device.
   const [lang, setLang] = useState<Lang>("en");
   useEffect(() => { setLang(loadSavedLang()); }, []);
@@ -333,6 +345,39 @@ export default function WoodTekERP() {
     }
   };
 
+  // Grants are not a legacy role capability: fetch them for each signed-in
+  // person, including personal grants. A revoked grant also hides its screen
+  // on focus / the short poll; every purchasing API has its own server guard.
+  useEffect(() => {
+    if (!currentUser) { setOptionalConfig(null); return; }
+    let active = true;
+    let requestSequence = 0;
+    setOptionalConfig(null); // never show the previous profile's module grants
+    const refreshGrants = async () => {
+      const sequence = ++requestSequence;
+      try {
+        const response = await fetch("/api/optional-modules", { cache: "no-store" });
+        const config = response.ok ? sanitizeOptionalModules(await response.json()) : null;
+        if (active && sequence === requestSequence) setOptionalConfig(config);
+      } catch {
+        if (active && sequence === requestSequence) setOptionalConfig(null);
+      }
+    };
+    void refreshGrants();
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshGrants(); };
+    window.addEventListener("woodtek:optional-modules-changed", refreshGrants);
+    window.addEventListener("focus", refreshGrants);
+    document.addEventListener("visibilitychange", onVisible);
+    const interval = setInterval(() => { if (document.visibilityState === "visible") void refreshGrants(); }, 30000);
+    return () => {
+      active = false;
+      window.removeEventListener("woodtek:optional-modules-changed", refreshGrants);
+      window.removeEventListener("focus", refreshGrants);
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
+    };
+  }, [currentUser?.id]);
+
   useEffect(() => {
     if (!currentUser || activeTab !== "dashboard" || !dashboardDirtyRef.current || fullRefreshInFlightRef.current) return;
     let cancelled = false;
@@ -553,7 +598,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -566,23 +611,24 @@ export default function WoodTekERP() {
     // Bounce when the tab is inaccessible OR unknown (e.g. left over from the
     // previous profile after a user switch — "reception" stuck on a warehouse
     // user would otherwise render a screen that is not theirs).
-    if (!m || !canAccessModule(guardRole, m)) {
-      // Bounce to the role's landing tab when it has one (operator -> station,
-      // warehouse supervisor -> warehouse, floor supervisor -> reception);
-      // otherwise the first module this role may actually see.
+    if (!m || !canAccessModule(guardRole, m) || !screenAllowedForSubject(activeTab, currentUser, optionalConfig)) {
+      // A configured landing tab can itself be a revoked optional screen:
+      // check every candidate, including custom-role and personal grants.
       const LANDING: Record<string, string> = {
         "Machine Operator": "station",
         "Floor Supervisor": "reception",
         "Warehouse Supervisor": "warehouse",
       };
-      const first = listModulesForRole(guardRole)[0];
-      const configured =
-        getLandingTab(guardRole, menuConfig) ?? getLandingTab(currentUser.role, menuConfig);
-      const fallback =
-        configured ?? LANDING[guardRole] ?? (first === "operator" ? "station" : first ?? "station");
+      const configured = getLandingTab(guardRole, menuConfig) ?? getLandingTab(currentUser.role, menuConfig);
+      const candidates = [configured, LANDING[guardRole], ...listModulesForRole(guardRole).map((id) => id === "operator" ? "station" : id)];
+      const fallback = candidates.find((tab) => {
+        if (!tab) return false;
+        const targetModule = tabToModule(tab);
+        return targetModule && canAccessModule(guardRole, targetModule) && screenAllowedForSubject(tab, currentUser, optionalConfig);
+      }) ?? "station";
       setActiveTab(fallback);
     }
-  }, [currentUser, activeTab, menuConfig]);
+  }, [currentUser, activeTab, menuConfig, optionalConfig]);
 
   return (
     <LangProvider lang={lang}>
@@ -623,6 +669,7 @@ export default function WoodTekERP() {
         onSwitchUser={(user) => requestProfileSwitch(user)}
         onRequestSwitch={() => requestProfileSwitch()}
         menuConfig={menuConfig}
+        optionalModulesConfig={optionalConfig}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         lang={lang}
@@ -658,7 +705,7 @@ export default function WoodTekERP() {
         <main key={activeTab} className="flex-1 pb-16 animate-fade-up">
           {currentUser && (
             <>
-          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} currentUser={currentUser} />}
+          {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} currentUser={currentUser} onCreatePurchaseOrder={canPurchase ? startPurchaseForItem : undefined} />}
           {activeTab === "plant" && <PlantView onNavigate={setActiveTab} />}
           {activeTab === "orders" && (
             <OrdersView orders={orders} loading={loading} onSelectOrder={handleSelectOrder} onRefresh={refreshOrderWorkspace}
@@ -677,7 +724,9 @@ export default function WoodTekERP() {
           {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={refreshMachineData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={refreshStationShellData} onSelectOrder={handleSelectOrder} />}
           {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={refreshCustomerData} onSelectOrder={handleSelectOrder} />}
-          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} currentUser={currentUser} />}
+          {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} currentUser={currentUser} canSeeMoney={canSeeMoney(currentUser, optionalConfig)} onCreatePurchaseOrder={canPurchase ? startPurchaseForItem : undefined} />}
+          {activeTab === "purchasing" && canPurchase && <PurchasingView key={currentUser.id} initialItemId={purchaseReorderItemId} onInitialItemConsumed={() => setPurchaseReorderItemId(null)} onStockChanged={refreshInventoryData} />}
+          {activeTab === "invoicing" && canInvoice && <InvoicingView key={currentUser.id} />}
           {activeTab === "warehouse" && <WarehouseView currentUser={currentUser} />}
           {activeTab === "reception" && <FloorReceptionView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "gantt" && (

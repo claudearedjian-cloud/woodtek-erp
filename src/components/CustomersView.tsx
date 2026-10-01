@@ -642,11 +642,11 @@ export default function CustomersView({
                               <div className="min-w-0">
                                 <div className="font-mono text-sm font-black text-white">${Number(e.amount).toLocaleString()}</div>
                                 <div className="text-[10px] text-slate-500 truncate">
-                                  {new Date(e.at).toLocaleString()}{e.reference ? ` · ${e.reference}` : ""}{e.notes ? ` · ${e.notes}` : ""}
+                                  {e.source === "document" ? new Date(e.at).toLocaleDateString() : new Date(e.at).toLocaleString()}{e.reference ? ` · ${e.reference}` : ""}{e.notes ? ` · ${e.notes}` : ""}{e.source === "document" ? " · Invoicing & A/R" : ""}
                                 </div>
                               </div>
                             </div>
-                            <button onClick={() => deleteLedgerEntry(e.id)} className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete entry">
+                            <button onClick={() => deleteLedgerEntry(e.id)} disabled={e.source === "document"} className={`rounded-lg p-1.5 transition ${e.source === "document" ? "text-slate-800 opacity-30" : "text-slate-600 hover:bg-rose-500/20 hover:text-rose-400"}`} title={e.source === "document" ? "From Invoicing & A/R — void the invoice or delete the payment there" : "Delete entry"}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>

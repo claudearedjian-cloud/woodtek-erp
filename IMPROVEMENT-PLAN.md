@@ -76,7 +76,7 @@ What exists today is a strong **production/operations ERP**: orders, routing, sc
 
 ### Phase B — Close the money loop (highest business value)
 1. **Purchasing & Suppliers** — supplier records, purchase orders, goods-receipt (GRN) that increments stock, supplier bills & payments, "awaiting delivery" list per supplier. Today stock arrives via Excel import with no procurement trail. Hooks directly into the reorder-point alerts that already exist (`stockCheck.ts`).
-2. **Invoicing & Accounts Receivable** — proper **VAT invoices** (11% Lebanon) with legal numbering, quotation → invoice conversion, payment recording, A/R aging per client, and printable/PDF invoices (the PDF engine and client ledger already exist — this completes the loop they started).
+2. **Invoicing & Accounts Receivable** ✅ *(shipped in PR #10, awaiting owner approval)* — proper **VAT invoices** (11% Lebanon) with legal numbering, quotation → invoice conversion, payment recording, A/R aging per client, and printable/PDF invoices (the PDF engine and client ledger already exist — this completes the loop they started).
 3. **Job costing & profitability** — per-order and per-client margin: quoted value − materials consumed (already costed) − labor hours × rate (hours already tracked) − machine time × hourly rate. This is usually the #1 missing insight for a furniture maker: *which jobs and clients actually make money?*
 
 ### Phase C — Operations depth
@@ -110,8 +110,8 @@ Everything in the fix list is closed. What is left is the **business** side; the
 
 | Priority | Improvement | What it unlocks | Effort |
 |---|---|---|---|
-| 1 | **Purchasing & Suppliers** | The only completely missing ERP area: supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO creation from the reorder alerts that already exist. Today material only enters the system through the Excel import, so there is no record of what was ordered, from whom, at what price, or what is still outstanding. | 2–3 days |
-| 2 | **Invoicing + VAT + A/R aging** | Turns a finished order into a legal invoice (11% VAT, sequential numbering), records payments, ages the receivables 0-30/31-60/61-90/90+, prints the invoice PDF and exports for the accountant. The client ledger exists but stores bare amounts — this completes the loop the quotations started. | 2–3 days |
+| 1 | **Purchasing & Suppliers** — implemented in PR #10, **awaiting owner approval** | Supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO drafting from the reorder alerts. A supplier must be selected and the PO confirmed; no order is sent automatically. Supplier bills/payments (from Phase B) are separate follow-up work. | 2–3 days |
+| 2 | **Invoicing + VAT + A/R aging** — implemented in PR #10, **awaiting owner approval** | Quotations and legal VAT invoices (11% Lebanon, gapless per-year numbering QUO-/INV-), quotation → invoice conversion, payment recording with derived paid/partial state, A/R aging 0/1–30/31–60/61–90/90+ per client, printable invoice PDFs, and automatic merge into the existing client ledger + statement + cached balance. An accountant Excel/CSV export and billing a finished order in one click are listed as cheap follow-ups below. | 2–3 days |
 | 3 | **HR: leave/absence + payroll** | Attendance and shifts are already recorded; this adds leave tracking, a payroll calculator and printable payslips. | 2 days |
 | 4 | **Quality depth: NCR + supplier score** | Non-conformance reports (internal + supplier defects) feeding a supplier-quality score; reuses the existing scrap/rework data. | 1–2 days |
 | 5 | **CRM pipeline for Sales** | Multiple contacts per client, a communication log and follow-up reminders on top of the existing stale-quotation alerts. | 1–2 days |

@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { orderMaterials, orders, customers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { canSeeMoney } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
 
 /**
  * Returns ALL orders that have ever allocated the given inventory item,
@@ -13,8 +15,9 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const { error } = await authorize("inventory:read");
+  const { user, error } = await authorize("inventory:read");
   if (error) return error;
+  const money = canSeeMoney(user, readOptionalModules());
 
   try {
     const { id } = await context.params;
@@ -58,10 +61,11 @@ export async function GET(
       itemId,
       active: active.map((a) => ({
         ...a,
+        costPerUnit: money ? a.costPerUnit : null,
         // Compute remaining for each active allocation
         remaining: a.quantityUsed, // all of it is still "in use" until consumed
       })),
-      consumed,
+      consumed: consumed.map((a) => ({ ...a, costPerUnit: money ? a.costPerUnit : null })),
     });
   } catch (error: any) {
     console.error("GET inventory orders error:", error);
