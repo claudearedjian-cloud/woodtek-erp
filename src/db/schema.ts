@@ -338,6 +338,53 @@ export const goodsReceiptLines = pgTable("goods_receipt_lines", {
   index("goods_receipt_lines_po_line_idx").on(t.poLineId),
 ]);
 
+// Supplier bills/AP: the supplier's reference and total are snapshotted, with
+// optional PO traceability. Payment state and aging are derived from posted
+// payments; voiding a payment preserves its audit history.
+export const supplierBills = pgTable("supplier_bills", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrders.id, { onDelete: "set null" }),
+  reference: text("reference").notNull(),
+  issueDate: date("issue_date", { mode: "string" }).notNull(),
+  dueDate: date("due_date", { mode: "string" }),
+  totalCents: integer("total_cents").notNull(),
+  notes: text("notes").notNull().default(""),
+  status: text("status").notNull().default("Open"), // Open | Cancelled
+  cancelledAt: timestamp("cancelled_at"),
+  cancelledById: integer("cancelled_by_id").references(() => users.id, { onDelete: "set null" }),
+  cancelReason: text("cancel_reason").notNull().default(""),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("supplier_bills_supplier_ref_ci_idx")
+    .on(t.supplierId, sql`lower(${t.reference})`)
+    .where(sql`${t.status} = 'Open'`),
+  index("supplier_bills_supplier_status_idx").on(t.supplierId, t.status),
+  index("supplier_bills_due_status_idx").on(t.dueDate, t.status),
+  index("supplier_bills_purchase_order_idx").on(t.purchaseOrderId),
+]);
+
+export const supplierBillPayments = pgTable("supplier_bill_payments", {
+  id: serial("id").primaryKey(),
+  billId: integer("bill_id").notNull().references(() => supplierBills.id),
+  requestKey: text("request_key").notNull().unique(),
+  amountCents: integer("amount_cents").notNull(),
+  paidAt: date("paid_at", { mode: "string" }).notNull(),
+  method: text("method").notNull().default("Transfer"), // Cash | Transfer | Check | Other
+  reference: text("reference").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  status: text("status").notNull().default("Posted"), // Posted | Voided
+  voidedAt: timestamp("voided_at"),
+  voidedById: integer("voided_by_id").references(() => users.id, { onDelete: "set null" }),
+  voidReason: text("void_reason").notNull().default(""),
+  recordedById: integer("recorded_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("supplier_bill_payments_bill_idx").on(t.billId),
+  index("supplier_bill_payments_paid_at_idx").on(t.paidAt),
+]);
+
 // Invoicing & A/R: quotations and VAT invoices with legal per-year numbering,
 // immutable line snapshots, and payments against invoices. Money amounts are
 // integer cents; the VAT rate is snapshotted per document at 11% (Lebanon).

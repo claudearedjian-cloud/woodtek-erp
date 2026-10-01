@@ -64,17 +64,20 @@ compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
 compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
 compile("src/lib/optionalModules.server.ts", "lib/optionalModules.server.js");
 compile("src/lib/purchasing.ts", "lib/purchasing.js");
+compile("src/lib/payables.ts", "lib/payables.js");
 compile("src/lib/invoicing.ts", "lib/invoicing.js");
 compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
+compile("src/components/SupplierBillsView.tsx", "components/SupplierBillsView.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
 compile("src/components/MachineDowntimeLoginAlert.tsx", "components/MachineDowntimeLoginAlert.js");
 
 const React = require("react");
 const { renderToString } = require("react-dom/server");
 const Sidebar = require("./compiled/components/Sidebar.js").default;
+const SupplierBillsView = require("./compiled/components/SupplierBillsView.js").default;
 const NewOrderWizard = require("./compiled/components/NewOrderWizard.js").default;
 const MachineDowntimeLoginAlert = require("./compiled/components/MachineDowntimeLoginAlert.js").default;
 
@@ -757,10 +760,10 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
-const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|invoices_|invoice_lines_|payments_)/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_)/g) || []).length;
 check(
   schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
-  "dbx: schema.ts keeps every existing index in the plan, plus purchasing/invoicing-only indexes",
+  "dbx: schema.ts keeps every planned index, plus purchasing, payables and invoicing-only indexes",
 );
 const dbxViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
@@ -2245,6 +2248,31 @@ check(blindPo.total === null && blindPo.awaitingValue === null && blindPo.lines[
 check(purchasing.suggestedReorderQty(5, 10) === 15 && purchasing.suggestedReorderQty(5, 10, 8) === 7 && purchasing.suggestedReorderQty(5, 10, 20) === 0, "purchasing: reorder suggestion accounts for stock already awaiting on an open PO");
 check(purchasing.purchaseNumber(12) === "PUR-00012" && purchasing.goodsReceiptNumber(8) === "GRN-00008", "purchasing: PO and GRN references are distinct from production order numbers");
 
+// ---- Supplier bills & Accounts Payable: grants, amounts, payment safety, aging ----
+const payables = require("./compiled/lib/payables.js");
+const rejectsPayable = (fn, status = 400) => {
+  try { fn(); return false; }
+  catch (error) { return error instanceof purchasing.PurchasingError && error.status === status; }
+};
+const sampleBill = {
+  supplierId: 4, purchaseOrderId: 12, reference: "  INV-4587 ",
+  issueDate: "2026-09-01", dueDate: "2026-10-01", amount: "125.50", notes: "Hardware delivery",
+};
+const parsedBill = payables.parseSupplierBill(sampleBill);
+check(parsedBill.supplierId === 4 && parsedBill.purchaseOrderId === 12 && parsedBill.reference === "INV-4587" && parsedBill.totalCents === 12550, "A/P: bill captures supplier reference, PO link, valid dates and exact integer cents");
+check(rejectsPayable(() => payables.parseSupplierBill({ ...sampleBill, reference: " " })) && rejectsPayable(() => payables.parseSupplierBill({ ...sampleBill, amount: "0" })) && rejectsPayable(() => payables.parseSupplierBill({ ...sampleBill, amount: "1.239" })), "A/P: blank supplier references, zero bills and excess money precision are rejected");
+check(rejectsPayable(() => payables.parseSupplierBill({ ...sampleBill, dueDate: "2026-08-31" })) && rejectsPayable(() => payables.parseSupplierBill({ ...sampleBill, issueDate: "2026-02-29" })), "A/P: bill dates must be real and due date cannot precede issue date");
+const billPayment = payables.parseSupplierBillPayment({
+  requestKey: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE", amount: "25.25", paidAt: "2026-09-30",
+  method: "Transfer", reference: "TR-22", notes: "First part",
+});
+check(billPayment.requestKey === "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" && billPayment.amountCents === 2525 && billPayment.method === "Transfer", "A/P: payment dates, methods, UUID retry keys and cents parse consistently");
+check(rejectsPayable(() => payables.parseSupplierBillPayment({ requestKey: "bad", amount: "20", paidAt: "2026-09-30", method: "Transfer" })) && rejectsPayable(() => payables.parseSupplierBillPayment({ requestKey: uuid, amount: "0", paidAt: "2026-09-30", method: "Bitcoin" })), "A/P: payments require a UUID, positive amount and supported method");
+check(rejectsPayable(() => payables.parseSupplierBillCancellation({ reason: " " })) && payables.parseSupplierBillVoid({ reason: "  bank returned  " }).reason === "bank returned", "A/P: bill cancellation and payment void require a trimmed audit reason");
+check(payables.paymentState(10000, 0) === "Unpaid" && payables.paymentState(10000, 1) === "Partially paid" && payables.paymentState(10000, 10000) === "Paid", "A/P: payment state is derived from posted cents");
+check(payables.payableAgingBucket(null, "2026-10-01") === "current" && payables.payableAgingBucket("2026-10-01", "2026-10-01") === "current" && payables.payableAgingBucket("2026-09-01", "2026-10-01") === "d1-30" && payables.payableAgingBucket("2026-08-31", "2026-10-01") === "d31-60" && payables.payableAgingBucket("2026-08-01", "2026-10-01") === "d61-90" && payables.payableAgingBucket("2026-07-02", "2026-10-01") === "d90+", "A/P: due-date aging boundaries are current / 1–30 / 31–60 / 61–90 / 90+");
+check(payables.supplierBillNumber(14) === "SB-000014" && purchasing.newSupplierPaymentRequestKey({ randomUUID: () => uuid, getRandomValues: () => { throw Error("fallback should not run"); } }) === uuid, "A/P: internal bill IDs are stable and payment retry keys use secure UUIDs");
+
 const purchasingGrants = { version: 1, enabled: ["invoicing", "purchasing"], roles: { Technician: ["purchasing"] }, users: { "9": ["purchasing"] } };
 const renderPurchaseSidebar = (role, cfg, id = 1) => renderToString(React.createElement(Sidebar, { ...props(role), currentUser: { ...props(role).currentUser, id }, optionalModulesConfig: cfg }));
 check(mgr.includes("Purchasing &amp; Suppliers"), "purchasing: Manager always sees the new sidebar screen");
@@ -2260,6 +2288,25 @@ const purchaseRoutePaths = [
   "src/app/api/purchasing/orders/[id]/route.ts", "src/app/api/purchasing/orders/[id]/receipts/route.ts",
 ];
 check(purchaseRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes('authorizeModule("purchasing")')), "purchasing: EVERY supplier/PO/GRN route enforces the optional module on the server");
+const payableRoutePaths = [
+  "src/app/api/purchasing/payables/route.ts", "src/app/api/purchasing/bills/route.ts",
+  "src/app/api/purchasing/bills/[id]/payments/route.ts", "src/app/api/purchasing/bills/[id]/cancel/route.ts",
+  "src/app/api/purchasing/payments/[id]/void/route.ts",
+];
+check(payableRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes("authorizePayables()")), "A/P: EVERY bill, payment, void and aging route enforces both Purchasing and Money grants");
+const payablesApiSource = fs.readFileSync("src/lib/payables.server.ts", "utf8");
+const payablesSchemaSource = fs.readFileSync("src/lib/payablesSchema.server.ts", "utf8");
+const payablesUiSource = fs.readFileSync("src/components/SupplierBillsView.tsx", "utf8");
+const authPayablesSource = fs.readFileSync("src/lib/auth.ts", "utf8");
+check(authPayablesSource.includes('authorizeModule("purchasing")') && authPayablesSource.includes("canSeeMoney(user, readOptionalModules())"), "A/P: server authorization requires the independent Purchasing and Invoicing & Money grants");
+check(payablesSchemaSource.includes("create table if not exists supplier_bills") && payablesSchemaSource.includes("create table if not exists supplier_bill_payments") && payablesSchemaSource.includes("pg_advisory_xact_lock") && payablesSchemaSource.includes("where status = 'Open'") && !/DROP\s+(TABLE|COLUMN)|TRUNCATE/i.test(payablesSchemaSource), "A/P: lazy DDL is additive, serialized, reference-deduplicated and allows corrected cancelled bills");
+check(payablesApiSource.includes('.for("update")') && payablesApiSource.includes("postedTotal") && payablesApiSource.includes("outstandingCents") && payablesApiSource.includes('isolationLevel: "repeatable read"'), "A/P: bill locks prevent concurrent overpayment/cancel races and board balances use one consistent snapshot");
+check(payablesApiSource.includes("requestKey") && payablesSchemaSource.includes("request_key text not null unique") && payablesApiSource.includes("replayed: true") && payablesApiSource.includes('status: "Voided"'), "A/P: payment retries are idempotent and voids retain their audit records");
+check(payablesUiSource.includes("A/P aging") && payablesUiSource.includes("/api/purchasing/bills") && payablesUiSource.includes("/void") && payablesUiSource.includes("PAYABLE_AGING_BUCKETS"), "A/P: UI records bills, payments and reasons for cancel/void, and renders aging buckets");
+const payablesHtml = renderToString(React.createElement(SupplierBillsView, { suppliers: [], orders: [], supplierId: null }));
+check(payablesHtml.includes("Supplier bills") && payablesHtml.includes("A/P aging") && payablesHtml.includes("Supplier bill register"), "A/P: supplier bill and aging screen renders cleanly in its initial state");
+const payablesParentUiSource = fs.readFileSync("src/components/PurchasingView.tsx", "utf8");
+check(payablesParentUiSource.includes("<SupplierBillsView") && payablesParentUiSource.includes('panel === "payables" && board?.canSeeMoney'), "A/P: supplier bill screen is mounted only inside Purchasing for users with the money grant");
 const purchaseApiSource = fs.readFileSync("src/lib/purchasing.server.ts", "utf8");
 const purchaseSchemaSource = fs.readFileSync("src/lib/purchasingSchema.server.ts", "utf8");
 const purchaseUiSource = fs.readFileSync("src/components/PurchasingView.tsx", "utf8");
@@ -2336,7 +2383,7 @@ const invSchemaSource = fs.readFileSync("src/lib/invoicingSchema.server.ts", "ut
 const invUiSource = fs.readFileSync("src/components/InvoicingView.tsx", "utf8");
 const ledgerRouteSource = fs.readFileSync("src/app/api/customers/[id]/ledger/route.ts", "utf8");
 const ledgerServerSource = fs.readFileSync("src/lib/clientLedger.server.ts", "utf8");
-check(invSchemaSource.includes("create table if not exists invoices") && invSchemaSource.includes("document_counters") && invSchemaSource.includes("pg_advisory_xact_lock") && !/DROP\\s+(TABLE|COLUMN)|TRUNCATE/i.test(invSchemaSource), "invoicing: additive lazy table setup is transaction-serialized and never destructive");
+check(invSchemaSource.includes("create table if not exists invoices") && invSchemaSource.includes("document_counters") && invSchemaSource.includes("pg_advisory_xact_lock") && !/DROP\s+(TABLE|COLUMN)|TRUNCATE/i.test(invSchemaSource), "invoicing: additive lazy table setup is transaction-serialized and never destructive");
 check(invApiSource.includes('.for("update")') && invApiSource.includes("payload.amountCents > outstandingCents"), "invoicing: invoice row lock + outstanding check stop overpayment and payment races");
 check(invApiSource.includes("nextNumber(tx") && invApiSource.includes("onConflictDoUpdate") && invApiSource.includes("lastNumber: sql`"), "invoicing: legal numbers are reserved in the creating transaction (gapless under concurrency)");
 check(invApiSource.includes('status: "Converted"') && invApiSource.includes("convertedFromId: quote.id"), "invoicing: quotation conversion copies lines and links both documents");

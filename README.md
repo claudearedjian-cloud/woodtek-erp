@@ -33,21 +33,28 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
-## Purchasing & Suppliers (shipped in PR #10, merged 2026-10-01)
+## Purchasing & Suppliers (POs/GRNs shipped in PR #10; supplier A/P follow-up added 2026-10-01)
 - Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
   Settings → Users → Optional modules and grant the role or person. **Invoicing &
   Money** is a separate grant for PO prices, material unit costs and machine
   hourly rates; without it, staff can still create quantity-only POs and GRNs.
+  Supplier bills, payments and A/P aging require **both** grants.
 - Add a supplier → create a PO (or use **+ Create PO** on a low-stock alert to
   prefill the material, suggested quantity and recent supplier) → record a goods
   receipt for the quantity actually delivered. The GRN increments stock in the
   same database transaction and keeps a history; partial deliveries remain
-  awaiting per supplier. Closing a short PO preserves its GRNs. Supplier
-  bills/payments are not part of this bundle.
-- The first visit to the granted screen creates five purchasing tables and their
-  indexes additively; the database role needs permission to create tables. No
-  separate migration command is needed for existing factory installations.
-  PR #10 merged 2026-10-01 — run the usual factory PC update ritual to deploy.
+  awaiting per supplier. Closing a short PO preserves its GRNs.
+- With both grants, use **Supplier bills & A/P** to record a supplier invoice
+  reference, bill/due dates, total including supplier tax, notes and optional PO
+  link. Record partial/full cash, transfer, check or other payments, see outstanding
+  balances and per-supplier aging (Current through 90+ days). Payment retries
+  cannot double-post; voids and bill cancellations require a reason and stay in
+  the register. A bill entry is an AP record only—it does not add stock or alter
+  the PO's prices.
+- First granted Purchasing visit creates five procurement tables; first A/P visit
+  creates two supplier-bill/payment tables, all indexes additively. The database
+  role needs permission to create tables. No separate migration command is
+  needed for existing factory installations; run the usual update ritual.
 
 ## Invoicing & A/R (shipped in PR #10, merged 2026-10-01)
 - Manager always has access. For anyone else, turn on **Invoicing & Money** in

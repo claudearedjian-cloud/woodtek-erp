@@ -3,7 +3,7 @@
 _Audit date: 2026-09-30. Branch: `arena/01a0ed73-woodtek-erp`, commit `ec526a6` (includes PR #5).
 Everything below was verified hands-on: install, typecheck, 555 render-test checks, ESLint attempt, `npm audit`, and a full standalone production build (52 pages)._
 
-> **Status 2026-09-30 (after PR #8):** fix bundles 1+2+3 are **implemented** (security updates, ESLint + CI, atomic writes, .env.example, repo hygiene), #4 database indexes is **merged**, and the owner-chosen **hardening + Arabic/French bundle** closed the remaining crash-safety gaps, cut lint warnings 792 → 710 (unused-vars bucket now 0) and extended AR/FR from 48 to 107 labels per language across the shop-floor, warehouse, orders and dispatch screens. **Remaining: the Phase B–D ERP modules below** — starting with Purchasing & Suppliers, then Invoicing + VAT + A/R.
+> **Status 2026-10-01 (after PR #12 and supplier A/P follow-up):** the security, CI, crash-safety, indexes and Arabic/French hardening bundles are implemented; Purchasing & Suppliers now includes supplier bills/payments and A/P aging, Invoicing & A/R is complete, and Job Costing is merged. **Phase B's money loop is complete.** Remaining business bundles are Phase C operations depth (HR/payroll, warehouse depth, supplier quality/NCR, CRM) and Phase D polish (management pack, user guides, accountant exports, full AR/FR UI + RTL).
 
 
 
@@ -75,7 +75,7 @@ Every check is run manually by the agent. A GitHub Actions workflow that runs `t
 What exists today is a strong **production/operations ERP**: orders, routing, scheduling (Gantt + auto-planner), shop floor (operator station, WIP, wall board, reception), CMMS, inventory + BOM + warehouse, dispatch/delivery, quality, downtime, workforce/shifts/attendance, customers + quotations + ledger, reports/OEE/production report, email docs, backups. The gaps to "full ERP" are mostly on the **money side** and **people side**:
 
 ### Phase B — Close the money loop (highest business value)
-1. **Purchasing & Suppliers** — supplier records, purchase orders, goods-receipt (GRN) that increments stock, supplier bills & payments, "awaiting delivery" list per supplier. Today stock arrives via Excel import with no procurement trail. Hooks directly into the reorder-point alerts that already exist (`stockCheck.ts`).
+1. **Purchasing & Suppliers** ✅ *(POs/GRNs merged in PR #10; supplier bills/AP follow-up implemented 2026-10-01)* — supplier records, purchase orders, goods-receipt (GRN) that increments stock, supplier bills and payments, A/P aging, "awaiting delivery" list per supplier, and reorder-point integration. Supplier bills capture the supplier's reference and total including tax, optionally link to a same-supplier PO, and require the separate Invoicing & Money grant; they do not themselves change stock.
 2. **Invoicing & Accounts Receivable** ✅ *(merged in PR #10, 2026-10-01)* — proper **VAT invoices** (11% Lebanon) with legal numbering, quotation → invoice conversion, payment recording, A/R aging per client, and printable/PDF invoices (the PDF engine and client ledger already exist — this completes the loop they started).
 3. **Job costing & profitability** ✅ *(merged in PR #12, 2026-10-01)* — per-order and per-client margin: quoted value − materials consumed (already costed) − labor hours × rate (hours already tracked) − machine time × hourly rate. This is usually the #1 missing insight for a furniture maker: *which jobs and clients actually make money?*
 
@@ -104,13 +104,13 @@ What exists today is a strong **production/operations ERP**: orders, routing, sc
 
 Each item ships as its own PR — built, verified (typecheck + render-test + build), then **held for your approval before merging**, per your standing rule.
 
-## Part 4 — Where the next improvements are (state after PR #8)
+## Part 4 — Where the next improvements are (state after PR #12 + supplier A/P follow-up)
 
 Everything in the fix list is closed. What is left is the **business** side; these are ordered by how much the factory feels them:
 
 | Priority | Improvement | What it unlocks | Effort |
 |---|---|---|---|
-| 1 | **Purchasing & Suppliers** — ✅ merged in PR #10 (2026-10-01) | Supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, and one-click PO drafting from the reorder alerts. A supplier must be selected and the PO confirmed; no order is sent automatically. Supplier bills/payments (from Phase B) are separate follow-up work. | 2–3 days |
+| 1 | **Purchasing & Suppliers + supplier A/P** — ✅ POs/GRNs merged in PR #10; supplier bills/AP added 2026-10-01 | Supplier records, purchase orders, a goods-received note that increases stock, "what is on order / awaiting delivery" per supplier, one-click PO drafting from reorder alerts, supplier bill register, recorded/voidable payments, and A/P aging. Bills are money-gated and may link to a same-supplier PO; they do not change inventory. POs still require a supplier and explicit confirmation; nothing is auto-sent. | Complete |
 | 2 | **Invoicing + VAT + A/R aging** — ✅ merged in PR #10 (2026-10-01) | Quotations and legal VAT invoices (11% Lebanon, gapless per-year numbering QUO-/INV-), quotation → invoice conversion, payment recording with derived paid/partial state, A/R aging 0/1–30/31–60/61–90/90+ per client, printable invoice PDFs, and automatic merge into the existing client ledger + statement + cached balance. An accountant Excel/CSV export and billing a finished order in one click are listed as cheap follow-ups below. | 2–3 days |
 | 2b | **Job costing & profitability** — ✅ merged in PR #12 (2026-10-01) | Per-order and per-client/project-type margin: order value − materials − machine time − operator labor − overhead; final margin on finished orders, projected margin on open ones; loss/thin-margin flags; CSV export; the Order Profitability report now shares the same engine. Behind the Invoicing & Money grant; no new tables. Cheap follow-ups: crew-size labor multiplier, link invoices to orders (margin on billed value), per-order PDF cost sheet. | 1–2 days |
 | 3 | **HR: leave/absence + payroll** | Attendance and shifts are already recorded; this adds leave tracking, a payroll calculator and printable payslips. | 2 days |
