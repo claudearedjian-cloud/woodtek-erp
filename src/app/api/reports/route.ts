@@ -18,6 +18,7 @@ import { baseRoleOf } from "@/lib/permissions";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 import { isMoneyOnlyReport, redactReportMoney } from "@/lib/reportMoney";
+import { jobCostRowsForReport } from "@/lib/jobCosting.server";
 
 
 export async function GET(request: Request) {
@@ -312,50 +313,30 @@ export async function POST(request: Request) {
         timeline,
       };
     } else if (type === "Order Profitability") {
-      const allOrders = await db.select().from(orders);
-      const allMats = await db.select().from(orderMaterials);
-      const allOps = await db.select().from(orderOperations);
-      const allMachines = await db.select().from(machines);
-      const allCustomers = await db.select().from(customers);
-      const dateFromObj = new Date(dateFrom);
-      const dateToObj = new Date(dateTo);
-      const rate = new Map(allMachines.map(m => [m.id, parseFloat(m.hourlyCost || "0") || 0]));
-      const custName = new Map(allCustomers.map(c => [c.id, c.company]));
+      // One costing engine for the Job Costing screen AND this report
+      // (src/lib/jobCosting.ts): released materials are excluded, machine time
+      // and operator labor are costed separately, a finished order is judged on
+      // actual time and an open one on its projection. Scope follows the same
+      // deny-by-default order subqueries as every other order screen.
+      const dollars = (cents: number) => cents / 100;
       const round2 = (n: number) => Math.round(n * 100) / 100;
+      const costed = await jobCostRowsForReport(user, new Date(dateFrom), new Date(dateTo));
 
-      const inRange = allOrders.filter(o =>
-        o.status !== "Cancelled" &&
-        new Date(o.createdAt) >= dateFromObj &&
-        new Date(o.createdAt) <= dateToObj,
-      );
-
-      const rows = inRange.map(o => {
-        const materialCost = allMats
-          .filter(m => m.orderId === o.id)
-          .reduce((s, m) => s + m.quantityUsed * (parseFloat(m.costPerUnit || "0") || 0), 0);
-        const ops = allOps.filter(p => p.orderId === o.id);
-        const laborMinutes = ops.reduce((s, p) => s + (p.actualMinutes || p.estimatedMinutes || 0), 0);
-        const laborCost = ops.reduce(
-          (s, p) => s + ((p.actualMinutes || p.estimatedMinutes || 0) / 60) * (p.machineId ? rate.get(p.machineId) ?? 0 : 0),
-          0,
-        );
-        const quoted = parseFloat(o.totalValue || "0") || 0;
-        const totalCost = materialCost + laborCost;
-        const profit = quoted - totalCost;
-        return {
-          orderNumber: o.orderNumber,
-          title: o.title,
-          status: o.status,
-          customer: custName.get(o.customerId) ?? "—",
-          quoted: round2(quoted),
-          materialCost: round2(materialCost),
-          laborCost: round2(laborCost),
-          laborHours: Math.round((laborMinutes / 60) * 10) / 10,
-          totalCost: round2(totalCost),
-          profit: round2(profit),
-          marginPercent: quoted > 0 ? Math.round((profit / quoted) * 100) : 0,
-        };
-      }).sort((a, b) => b.profit - a.profit);
+      const rows = costed.map(r => ({
+        orderNumber: r.orderNumber,
+        title: r.title,
+        status: r.status,
+        customer: r.customer,
+        quoted: round2(dollars(r.revenueCents)),
+        materialCost: round2(dollars(r.materialsCents)),
+        // "Labor" = machine time + operator labor; overhead is its own column.
+        laborCost: round2(dollars(r.machineCents + r.laborCents)),
+        overheadCost: round2(dollars(r.overheadCents)),
+        laborHours: Math.round(((r.basis === "Final" ? r.actualMinutes : r.projectedMinutes) / 60) * 10) / 10,
+        totalCost: round2(dollars(r.costCents)),
+        profit: round2(dollars(r.profitCents)),
+        marginPercent: r.marginBps == null ? 0 : Math.round(r.marginBps / 100),
+      })).sort((a, b) => b.profit - a.profit);
 
       const clientMap: Record<string, { customer: string; orders: number; quoted: number; cost: number; profit: number }> = {};
       rows.forEach(r => {
@@ -382,6 +363,7 @@ export async function POST(request: Request) {
           quoted: round2(rows.reduce((s, r) => s + r.quoted, 0)),
           materialCost: round2(rows.reduce((s, r) => s + r.materialCost, 0)),
           laborCost: round2(rows.reduce((s, r) => s + r.laborCost, 0)),
+          overheadCost: round2(rows.reduce((s, r) => s + r.overheadCost, 0)),
           totalCost: round2(rows.reduce((s, r) => s + r.totalCost, 0)),
           profit: round2(rows.reduce((s, r) => s + r.profit, 0)),
         },

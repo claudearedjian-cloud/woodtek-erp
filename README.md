@@ -74,6 +74,34 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   indexes additively, alongside the purchasing tables' ritual. PR #10 merged
   2026-10-01 — run the usual factory PC update ritual to deploy.
 
+## Job Costing & Profit (Phase B item 3 — awaiting owner approval)
+- New **Job Costing & Profit** screen answers "which jobs and clients actually make
+  money?". It is behind the same **Invoicing & Money** switch as Invoicing & A/R
+  (Manager always; others via Settings → Users → Optional modules). A Sales
+  Coordinator who holds the grant sees only their own orders.
+- Per order: **order value − materials − machine time − operator labor − overhead**.
+  Materials come from the order's stock allocation (consumed + reserved; released
+  stock costs nothing). Machine time = recorded minutes × each machine's hourly
+  rate (Shop Floor Monitor). Operator labor and overhead are set once by a
+  Manager under **Rates** on the screen (labor $ per hour, overhead % of direct
+  cost) — until a labor rate is entered, people's time counts as $0 and an amber
+  banner says so.
+- **Completed/Delivered orders show their final margin from actual time; open
+  orders show a projected margin** (unfinished steps at plan, overruns at actual)
+  so a half-built job never looks better than it will be. Scrap/rework is shown as
+  a memo and not charged twice.
+- Tabs: **Orders** (sortable/searchable, click a row for the full cost sheet),
+  **By client** and **By project type** (ranked by profit). Filter by period (all
+  time / this year / last 90 days / this month) and by finished vs in progress;
+  **CSV** exports the rows shown. Red dot = losing money, amber = thin margin or
+  time overrun, grey = data to check (e.g. a machine with no hourly rate).
+- Costs are calculated when you open the screen, not stored — changing a rate
+  re-prices every order, old and new. No database changes: nothing to run on the
+  factory PC beyond the normal update ritual.
+- The **System Reports → Order Profitability** report now uses the same numbers
+  (it also gained an Overhead column, no longer charges released stock, and is
+  limited to the signed-in user's own orders).
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.

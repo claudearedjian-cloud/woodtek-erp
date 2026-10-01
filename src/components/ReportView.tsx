@@ -265,13 +265,14 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       startY += 6;
       autoTable(doc, {
         startY,
-        head: [["Order #", "Client", "Quoted", "Materials", "Labor", "Profit", "Margin"]],
+        head: [["Order #", "Client", "Quoted", "Materials", "Machine & labor", "Overhead", "Profit", "Margin"]],
         body: (data.orders ?? []).slice(0, 40).map((o: any) => [
           o.orderNumber,
           String(o.customer).substring(0, 22),
           `$${o.quoted}`,
           `$${o.materialCost}`,
           `$${o.laborCost}`,
+          `$${o.overheadCost ?? 0}`,
           `$${o.profit}`,
           `${o.marginPercent}%`,
         ]),
@@ -477,8 +478,8 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       );
     } else if (reportType === "Order Profitability") {
       csv = toCSV(
-        ["Order #", "Client", "Status", "Quoted", "Materials", "Labor", "Labor Hours", "Total Cost", "Profit", "Margin %"],
-        (data.orders ?? []).map((o: any) => [o.orderNumber, o.customer, o.status, csvMoney(o.quoted), csvMoney(o.materialCost), csvMoney(o.laborCost), o.laborHours, csvMoney(o.totalCost), csvMoney(o.profit), o.marginPercent]),
+        ["Order #", "Client", "Status", "Quoted", "Materials", "Machine & labor", "Overhead", "Hours", "Total Cost", "Profit", "Margin %"],
+        (data.orders ?? []).map((o: any) => [o.orderNumber, o.customer, o.status, csvMoney(o.quoted), csvMoney(o.materialCost), csvMoney(o.laborCost), csvMoney(o.overheadCost ?? 0), o.laborHours, csvMoney(o.totalCost), csvMoney(o.profit), o.marginPercent]),
       );
     } else if (reportType === "Inventory Status") {
       csv = toCSV(
@@ -1117,7 +1118,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <StatCard label="Quoted" value={`$${quotedTotal.toLocaleString()}`} icon={DollarSign} />
           <StatCard label="Materials Cost" value={`${moneyText(t.materialCost)}`} color="text-rose-600" icon={Package} />
-          <StatCard label="Labor Cost" value={`${moneyText(t.laborCost)}`} color="text-amber-600" icon={Cpu} />
+          <StatCard label="Machine & Labor" value={`${moneyText(t.laborCost)}`} color="text-amber-600" icon={Cpu} />
           <StatCard label="Gross Profit" value={`${moneyText(t.profit)}`} color="text-emerald-600" icon={TrendingUp} />
           <StatCard label="Avg Margin" value={`${avgMargin}%`} color={avgMargin >= 20 ? "text-emerald-600" : "text-rose-600"} icon={TrendingUp} />
         </div>
@@ -1133,7 +1134,8 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                   <th className="py-2 px-3">Status</th>
                   <th className="py-2 px-3 text-right">Quoted</th>
                   <th className="py-2 px-3 text-right">Materials</th>
-                  <th className="py-2 px-3 text-right">Labor</th>
+                  <th className="py-2 px-3 text-right">Machine &amp; labor</th>
+                  <th className="py-2 px-3 text-right">Overhead</th>
                   <th className="py-2 px-3 text-right">Total Cost</th>
                   <th className="py-2 px-3 text-right">Profit</th>
                   <th className="py-2 px-3 text-right">Margin</th>
@@ -1148,6 +1150,7 @@ function ReportContent({ data, type }: { data: any; type: string }) {
                     <td className="py-2 px-3 text-right font-mono">{moneyText(o.quoted)}</td>
                     <td className="py-2 px-3 text-right font-mono text-rose-600">{moneyText(o.materialCost)}</td>
                     <td className="py-2 px-3 text-right font-mono text-amber-600">{moneyText(o.laborCost)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-slate-500">{moneyText(o.overheadCost ?? 0)}</td>
                     <td className="py-2 px-3 text-right font-mono">{moneyText(o.totalCost)}</td>
                     <td className={`py-2 px-3 text-right font-mono font-bold ${o.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{moneyText(o.profit)}</td>
                     <td className={`py-2 px-3 text-right font-mono font-bold ${o.marginPercent >= 20 ? "text-emerald-600" : o.marginPercent >= 0 ? "text-amber-600" : "text-rose-600"}`}>{o.marginPercent}%</td>

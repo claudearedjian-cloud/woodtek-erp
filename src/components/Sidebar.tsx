@@ -88,6 +88,7 @@ const ICONS: Record<string, any> = {
   inventory: Package,
   purchasing: Truck,
   invoicing: Receipt,
+  jobcosting: PieChart,
   pims: Import,
   reports: FileText,
   settings: SettingsIcon,

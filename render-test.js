@@ -65,6 +65,7 @@ compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
 compile("src/lib/optionalModules.server.ts", "lib/optionalModules.server.js");
 compile("src/lib/purchasing.ts", "lib/purchasing.js");
 compile("src/lib/invoicing.ts", "lib/invoicing.js");
+compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -2345,6 +2346,92 @@ check(ledgerServerSource.includes('source: "document"') && ledgerServerSource.in
 check(ledgerServerSource.includes("currentBalance: String(summary.balance)"), "invoicing: client balance re-syncs so credit checks see document totals");
 check(invUiSource.includes("/api/invoicing") && invUiSource.includes("jsPDF") && invUiSource.includes("Convert to invoice") && invUiSource.includes("Record payment") && invUiSource.includes("A/R aging"), "invoicing: UI issues quotes, invoices, payments, aging and printable PDFs");
 check(pageSource.includes("<InvoicingView") && pageSource.includes('subjectHasModule("invoicing", currentUser, optionalConfig)'), "invoicing: screen mounts behind the per-person grant");
+
+// =====================================================================
+// Job costing & profitability (Phase B item 3)
+// =====================================================================
+const jc = require("./compiled/lib/jobCosting.js");
+const rejectsJc = (fn, status = 400) => {
+  try { fn(); return false; }
+  catch (error) { return error instanceof jc.JobCostingError && error.status === status; }
+};
+
+check(jc.moneyToCents("12.5") === 1250 && jc.moneyToCents("$0.07") === 7 && jc.moneyToCents("100") === 10000 && rejectsJc(() => jc.moneyToCents("-1")) && rejectsJc(() => jc.moneyToCents("1.234")) && rejectsJc(() => jc.moneyToCents("abc")), "job costing: money parses to exact cents and refuses negatives/over-precision");
+check(jc.percentToBps("12.5") === 1250 && jc.percentToBps("10%") === 1000 && rejectsJc(() => jc.percentToBps("-5")), "job costing: percentages parse to basis points");
+const jcSet = jc.parseJobCostSettings({ laborRate: "18.50", overheadPercent: "12" });
+check(jcSet.laborRateCentsPerHour === 1850 && jcSet.overheadBps === 1200, "job costing: Manager settings parse (labor $/h + overhead %)");
+check(jc.parseJobCostSettings({}).laborRateCentsPerHour === 0 && jc.parseJobCostSettings({ laborRate: "", overheadPercent: "" }).overheadBps === 0, "job costing: blank settings switch the line off (0)");
+check(rejectsJc(() => jc.parseJobCostSettings({ laborRate: "1000000" })) && rejectsJc(() => jc.parseJobCostSettings({ overheadPercent: "501" })), "job costing: absurd labor rates and overhead are refused as typos");
+check(jc.sanitizeJobCostSettings({ laborRateCentsPerHour: -5, overheadBps: "x" }).laborRateCentsPerHour === 0 && jc.sanitizeJobCostSettings(null).overheadBps === 0 && jc.sanitizeJobCostSettings({ laborRateCentsPerHour: 2500, overheadBps: 800 }).overheadBps === 800, "job costing: a corrupt settings file falls back to safe defaults");
+check(jc.centsToMoney(114950) === "1149.50" && jc.centsToMoney(-5) === "-0.05" && jc.numericToCents("65.00") === 6500 && jc.numericToCents(null) === 0 && jc.numericToCents("-3") === 0, "job costing: cents formatting and numeric(…) text conversion");
+
+const jcNow = new Date("2026-10-01T12:00:00Z");
+const jcRates = new Map([[1, 6000], [2, 12000]]);
+const jcOrder = (over = {}) => ({ id: 7, orderNumber: "ORD-2026-0007", title: "Oak kitchen", status: "In Production", projectType: "Custom Kitchens", customerId: 3, customerName: "Acme", totalValue: "10000.00", createdAt: "2026-09-01T08:00:00Z", dueDate: "2026-10-20T08:00:00Z", ...over });
+const jcMats = [
+  { id: 1, itemName: "Oak board", itemSku: "OAK-18", unit: "sheets", quantityUsed: 10, costPerUnit: "50.00", consumed: true, released: false },
+  { id: 2, itemName: "Hinge", itemSku: "HNG-1", unit: "pcs", quantityUsed: 2, costPerUnit: "100.00", consumed: false, released: false },
+  { id: 3, itemName: "Released board", itemSku: "REL-1", unit: "sheets", quantityUsed: 5, costPerUnit: "99.00", consumed: false, released: true },
+];
+const jcOps = [
+  { id: 11, stepOrder: 1, operationName: "Cut", machineId: 1, machineCode: "BEAM-01", status: "Completed", estimatedMinutes: 100, actualMinutes: 120, startTime: null, endTime: null },
+  { id: 12, stepOrder: 2, operationName: "Drill", machineId: 2, machineCode: "DRL-01", status: "Completed", estimatedMinutes: 30, actualMinutes: 0, startTime: "2026-09-10T08:00:00Z", endTime: "2026-09-10T08:30:00Z" },
+  { id: 13, stepOrder: 3, operationName: "Assemble", machineId: 1, machineCode: "BEAM-01", status: "Pending", estimatedMinutes: 60, actualMinutes: 0, startTime: null, endTime: null },
+];
+const jcSettings = { laborRateCentsPerHour: 3000, overheadBps: 1000 };
+const jcOpen = jc.costOrder({ order: jcOrder(), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcOpen.materialsCents === 70000 && jcOpen.materialsConsumedCents === 50000 && jcOpen.materialsReservedCents === 20000 && jcOpen.materialLines.length === 2, "job costing: released allocations cost nothing; consumed and reserved are both counted");
+check(jcOpen.basis === "Projected" && jcOpen.machineCents === 24000 && jcOpen.laborCents === 10500 && jcOpen.overheadCents === 10450 && jcOpen.costCents === 114950, "job costing: open order = materials + machine + labor + overhead on the PROJECTED plan");
+check(jcOpen.actualCostCents === 105050 && jcOpen.projectedCostCents === 114950 && jcOpen.revenueCents === 1000000 && jcOpen.profitCents === 885050 && jcOpen.marginBps === 8851, "job costing: actual-to-date vs projected cost, profit and margin in exact cents");
+check(jcOpen.operationLines[1].actualMinutes === 30 && jcOpen.operationLines[1].basis === "recorded" && jcOpen.operationLines[2].projectedMinutes === 60 && jcOpen.operationLines[2].actualMinutes === 0, "job costing: finished step with no minutes uses start→end; unstarted step costs its estimate only in the projection");
+const jcFinal = jc.costOrder({ order: jcOrder({ status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcFinal.basis === "Final" && jcFinal.costCents === 105050 && jcFinal.machineCents === 18000 && jcFinal.laborCents === 7500, "job costing: a Completed order is judged on ACTUAL time (final margin)");
+check(jc.isFinalOrderStatus("Delivered") && jc.isFinalOrderStatus("Completed") && !jc.isFinalOrderStatus("In Production") && !jc.isFinalOrderStatus(null), "job costing: Completed and Delivered are the final statuses");
+const jcZero = jc.costOrder({ order: jcOrder(), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
+check(jcZero.laborCents === 0 && jcZero.overheadCents === 0 && jcZero.costCents === 94000, "job costing: unset labor rate / overhead add $0 (machine time still counts)");
+const jcRunning = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 21, stepOrder: 1, operationName: "Route", machineId: 1, machineCode: "BEAM-01", status: "In Progress", estimatedMinutes: 30, actualMinutes: 0, startTime: "2026-10-01T10:00:00Z", endTime: null }], quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
+check(jcRunning.operationLines[0].actualMinutes === 120 && jcRunning.operationLines[0].basis === "elapsed" && jcRunning.machineCents === 12000, "job costing: a step running right now costs its elapsed time once it overruns the plan");
+const jcLoss = jc.costOrder({ order: jcOrder({ totalValue: "500.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcLoss.profitCents < 0 && jcLoss.flags.includes("loss") && jcLoss.marginBps < 0, "job costing: an order below cost is flagged as losing money");
+const jcThin = jc.costOrder({ order: jcOrder({ totalValue: "1100.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcThin.flags.includes("low-margin") && !jcThin.flags.includes("loss"), "job costing: margin under 10% is flagged as thin, not as a loss");
+const jcNoVal = jc.costOrder({ order: jcOrder({ totalValue: "0.00" }), materials: [], operations: [], quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcNoVal.marginBps === null && jcNoVal.flags.includes("no-revenue") && jcNoVal.flags.includes("no-materials") && jc.marginText(null) === "—", "job costing: a zero-value order has no margin (never a fake 0% or −100%)");
+const jcNoTime = jc.costOrder({ order: jcOrder({ status: "Completed" }), materials: [], operations: [{ id: 31, stepOrder: 1, operationName: "Sand", machineId: 9, machineCode: "X", status: "Completed", estimatedMinutes: 45, actualMinutes: 0, startTime: null, endTime: null }], quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcNoTime.flags.includes("no-time") && jcNoTime.flags.includes("rate-missing") && jcNoTime.operationLines[0].basis === "planned" && jcNoTime.actualMinutes === 45, "job costing: untimed finished steps fall back to plan and are flagged, as are machines with no rate");
+const jcOver = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 41, stepOrder: 1, operationName: "Cut", machineId: 1, machineCode: "B", status: "Completed", estimatedMinutes: 60, actualMinutes: 90, startTime: null, endTime: null }], quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcOver.flags.includes("time-overrun"), "job costing: more than 15% over the planned time is flagged");
+const jcQ = jc.costOrder({ order: jcOrder(), materials: jcMats, operations: jcOps, quality: [{ id: 1, eventType: "scrap", quantity: 2, estimatedCost: "40.00", reason: "Chip" }, { id: 2, eventType: "rework", quantity: 1, estimatedCost: "15.50", reason: "Edge" }], machineRates: jcRates, settings: jcSettings, now: jcNow });
+check(jcQ.scrapCents === 8000 && jcQ.reworkCents === 1550 && jcQ.costCents === jcOpen.costCents, "job costing: scrap/rework is a memo and is NOT charged on top of the materials line");
+
+const jcRows = [jcOpen, jcLoss, jcFinal, jc.costOrder({ order: jcOrder({ id: 8, orderNumber: "ORD-2026-0008", customerId: 4, customerName: "Beta", projectType: "Wardrobe Fit-out", status: "Delivered" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow })];
+const jcTot = jc.totalsOf(jcRows);
+check(jcTot.orders === 4 && jcTot.lossMaking === 1 && jcTot.revenueCents === jcRows.reduce((s, r) => s + r.revenueCents, 0) && jcTot.profitCents === jcRows.reduce((s, r) => s + r.profitCents, 0) && jcTot.costCents === jcTot.materialsCents + jcTot.machineCents + jcTot.laborCents + jcTot.overheadCents, "job costing: totals are plain sums, so cost = materials + machine + labor + overhead always adds up");
+const jcGroups = jc.groupJobCosts(jcRows, (r) => ({ key: String(r.customerId), label: r.customer }));
+check(jcGroups.length === 2 && jcGroups[0].profitCents >= jcGroups[1].profitCents && jcGroups.find((g) => g.label === "Acme").orders === 3, "job costing: client roll-up groups orders and ranks the biggest profit first");
+check(jc.parseRange("DAYS90") === "days90" && jc.parseRange("junk") === "all" && jc.parseScope("final") === "final" && jc.parseScope("x") === "all", "job costing: range/scope query parameters are whitelisted");
+check(jc.rangeStart("all", jcNow) === null && jc.rangeStart("ytd", jcNow).getMonth() === 0 && jc.rangeStart("month", jcNow).getDate() === 1 && Math.round((jcNow - jc.rangeStart("days90", jcNow)) / 86400000) === 90, "job costing: period windows start where they say");
+check(jc.inScope("Completed", "final") && !jc.inScope("Completed", "open") && jc.inScope("On Hold", "open") && jc.inScope("Delivered", "all"), "job costing: scope filter separates finished from in-progress");
+const jcCsv = jc.jobCostCsv([{ ...jcOpen, title: '=HYPERLINK("x"),evil', customer: "A, B" }]);
+check(jcCsv.split("\r\n").length === 2 && jcCsv.includes("\"'=HYPERLINK(\"\"x\"\"),evil\"") && jcCsv.includes('"A, B"') && jcCsv.includes(",88.5,"), "job costing: CSV quotes properly, neutralises spreadsheet formulas and exports margin %");
+
+// ---- wiring: grant, routes, screen, report ----
+const jcRoutePaths = ["src/app/api/job-costing/route.ts", "src/app/api/job-costing/[id]/route.ts", "src/app/api/job-costing/settings/route.ts"];
+check(jcRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes('authorizeModule("invoicing")')), "job costing: EVERY route enforces the Invoicing & Money grant on the server");
+check(fs.readFileSync("src/app/api/job-costing/settings/route.ts", "utf8").includes('user.role !== "Manager"') && fs.readFileSync("src/app/api/job-costing/settings/route.ts", "utf8").includes("logAudit"), "job costing: only a Manager can change labor rate / overhead, and it is audit-logged");
+const jcServerSource = fs.readFileSync("src/lib/jobCosting.server.ts", "utf8");
+check(jcServerSource.includes("listOrdersForUser(user)") && jcServerSource.includes("listOperationsForUser(user") && jcServerSource.includes("listQualityEventsForUser(user") && !/\.from\(orders\)|\.from\(orderOperations\)/.test(jcServerSource), "job costing: orders/operations/quality go through the deny-by-default scoped readers (a Sales user sees only their own margins)");
+check(!/create table|alter table|drop table/i.test(jcServerSource) && jcServerSource.includes("writeJsonAtomic") && jcServerSource.includes("job-costing.json"), "job costing: no new tables or migration — only a crash-safe JSON settings file");
+check(optMod.OPTIONAL_MODULE_SCREENS.invoicing.includes("jobcosting") && optMod.screenOwnerModule("jobcosting") === "invoicing", "job costing: the screen belongs to the Invoicing & Money module");
+check(mgr.includes("Job Costing &amp; Profit"), "job costing: Manager always sees the Job Costing screen");
+check(!renderPurchaseSidebar("Technician", null).includes("Job Costing &amp; Profit") && renderPurchaseSidebar("Technician", invGrants).includes("Job Costing &amp; Profit"), "job costing: hidden without the money grant, visible with it");
+check(renderPurchaseSidebar("Machine Operator", invGrants, 9).includes("Job Costing &amp; Profit") && !renderPurchaseSidebar("Machine Operator", { ...invGrants, enabled: [] }, 9).includes("Job Costing &amp; Profit"), "job costing: personal money grant shows it; switching the module off hides it again");
+check(i18n.tt("ar", "Job Costing & Profit") !== "Job Costing & Profit" && i18n.tt("fr", "Job Costing & Profit") === "Coût de revient & rentabilité", "job costing: Arabic and French sidebar labels ship with the screen");
+const jcUi = fs.readFileSync("src/components/JobCostingView.tsx", "utf8");
+check(jcUi.includes("/api/job-costing?range=") && jcUi.includes("/api/job-costing/settings") && jcUi.includes("jobCostCsv") && jcUi.includes("labor rate is not set") && jcUi.includes("canEditRates"), "job costing: UI loads the board + drill-down, exports CSV, warns when labor rate is unset and gates the Rates editor");
+check(pageSource.includes("<JobCostingView") && pageSource.includes('activeTab === "jobcosting" && canInvoice') && pageSource.includes('canEditRates={currentUser.role === "Manager"}'), "job costing: screen mounts behind the money grant; only Managers get the Rates editor");
+const jcReportSource = fs.readFileSync("src/app/api/reports/route.ts", "utf8");
+check(jcReportSource.includes("jobCostRowsForReport(user") && !/db\.select\(\)\.from\(orderMaterials\)/.test(jcReportSource), "job costing: the Order Profitability report now uses the same costing engine (released materials no longer counted, scoped to the user)");
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

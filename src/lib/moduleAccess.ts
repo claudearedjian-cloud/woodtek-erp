@@ -19,6 +19,7 @@ export type ModuleId =
   | "inventory"
   | "purchasing"
   | "invoicing"
+  | "jobcosting"
   | "schedule"
   | "gantt"
   | "production"
@@ -50,6 +51,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "inventory",
     "purchasing",
     "invoicing",
+    "jobcosting",
     "schedule",
     "gantt",
     "production",
@@ -141,6 +143,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   inventory: "Wood & Edge Stock",
   purchasing: "Purchasing & Suppliers",
   invoicing: "Invoicing & A/R",
+  jobcosting: "Job Costing & Profit",
   schedule: "Dispatch Schedule",
   gantt: "Gantt Chart",
   production: "Production Report",
@@ -171,7 +174,7 @@ export function canAccessModule(role: Role | string | null | undefined, module: 
   // legacy screen matrix. The sidebar/page must ALSO check
   // screenAllowedForSubject(user, config), including a personal grant — a
   // bare role cannot resolve that by itself.
-  if (module === "purchasing" || module === "invoicing") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
+  if (module === "purchasing" || module === "invoicing" || module === "jobcosting") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
   if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
   // Manager-saved screen override for this exact role name wins over defaults.
   const overrides = getModuleOverrides();
