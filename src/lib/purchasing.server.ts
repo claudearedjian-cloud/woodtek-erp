@@ -17,18 +17,21 @@ export async function purchasingBoard(maySeeMoney: boolean) {
   await ensurePurchasingSchema();
   // One repeatable-read snapshot: do not show half a GRN (receipt header from
   // one instant and stock / receipt lines from another) on the awaiting board.
-  const [supplierRows, orderRows, lines, receipts, receiptLines, stock] = await db.transaction(async (tx) => Promise.all([
-    tx.select().from(suppliers).orderBy(asc(suppliers.name)),
-    tx.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id)),
-    tx.select().from(purchaseOrderLines),
-    tx.select().from(goodsReceipts).orderBy(desc(goodsReceipts.receivedAt), desc(goodsReceipts.id)),
-    tx.select().from(goodsReceiptLines),
-    tx.select({
+  // The reads run sequentially on the transaction's single connection —
+  // node-postgres deprecates (pg@9 rejects) parallel queries on one client.
+  const [supplierRows, orderRows, lines, receipts, receiptLines, stock] = await db.transaction(async (tx) => {
+    const supplierRows = await tx.select().from(suppliers).orderBy(asc(suppliers.name));
+    const orderRows = await tx.select().from(purchaseOrders).orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id));
+    const lines = await tx.select().from(purchaseOrderLines);
+    const receipts = await tx.select().from(goodsReceipts).orderBy(desc(goodsReceipts.receivedAt), desc(goodsReceipts.id));
+    const receiptLines = await tx.select().from(goodsReceiptLines);
+    const stock = await tx.select({
       id: inventoryItems.id, sku: inventoryItems.sku, name: inventoryItems.name,
       unit: inventoryItems.unit, stockQuantity: inventoryItems.stockQuantity,
       reorderLevel: inventoryItems.reorderLevel, unitCost: inventoryItems.unitCost,
-    }).from(inventoryItems).orderBy(asc(inventoryItems.name)),
-  ]), { isolationLevel: "repeatable read", accessMode: "read only" });
+    }).from(inventoryItems).orderBy(asc(inventoryItems.name));
+    return [supplierRows, orderRows, lines, receipts, receiptLines, stock] as const;
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
   const byOrder = new Map<number, typeof lines>();
   for (const line of lines) {
     const list = byOrder.get(line.orderId) ?? [];
