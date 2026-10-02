@@ -10,6 +10,14 @@ import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 import { canSeeMoney, moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
+import {
+  actionOwnerAddon,
+  addonLabel,
+  isAddonInstalled,
+  isOptionalModuleInstalled,
+  type InstallerAddonId,
+} from "@/lib/installedEdition";
+import { readInstalledEdition } from "@/lib/installedEdition.server";
 
 export const SESSION_COOKIE = "woodtek_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // one working shift + margin
@@ -202,8 +210,45 @@ export async function authorize(
       error: NextResponse.json({ error: "You are signed out. Please sign in again." }, { status: 401 }),
     };
   }
-  if (action && !can(user.role, action)) {
-    return { user: null, error: NextResponse.json({ error: deniedMessage(user.role, action) }, { status: 403 }) };
+  if (action) {
+    const ownerAddon = actionOwnerAddon(action);
+    if (ownerAddon && !isAddonInstalled(ownerAddon, readInstalledEdition())) {
+      return {
+        user: null,
+        error: NextResponse.json(
+          {
+            error: `${addonLabel(ownerAddon)} is not installed on this PC. Re-run WoodTek ERP Setup (.exe) to install this module.`,
+          },
+          { status: 403 },
+        ),
+      };
+    }
+    if (!can(user.role, action)) {
+      return { user: null, error: NextResponse.json({ error: deniedMessage(user.role, action) }, { status: 403 }) };
+    }
+  }
+  return { user, error: null };
+}
+
+/**
+ * Gate an API route on an installer add-on pack (plus optional role action).
+ */
+export async function authorizeAddon(
+  addon: InstallerAddonId,
+  action?: Action,
+): Promise<{ user: SessionUser; error: null } | { user: null; error: NextResponse }> {
+  const { user, error } = await authorize(action);
+  if (error) return { user: null, error };
+  if (!isAddonInstalled(addon, readInstalledEdition())) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        {
+          error: `${addonLabel(addon)} is not installed on this PC. Re-run WoodTek ERP Setup (.exe) to install this module.`,
+        },
+        { status: 403 },
+      ),
+    };
   }
   return { user, error: null };
 }
@@ -225,6 +270,17 @@ export async function authorizeModule(
     return {
       user: null,
       error: NextResponse.json({ error: "You are signed out. Please sign in again." }, { status: 401 }),
+    };
+  }
+  if (!isOptionalModuleInstalled(id, readInstalledEdition())) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        {
+          error: `${moduleLabel(id)} is not installed on this PC. Re-run WoodTek ERP Setup (.exe) to install this module.`,
+        },
+        { status: 403 },
+      ),
     };
   }
   if (!subjectHasModule(id, user, readOptionalModules())) {

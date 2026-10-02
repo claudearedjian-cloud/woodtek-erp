@@ -97,6 +97,8 @@ export default function WoodTekERP() {
   const [purchaseReorderItemId, setPurchaseReorderItemId] = useState<number | null>(null);
   const canPurchase = subjectHasModule("purchasing", currentUser, optionalConfig);
   const canInvoice = subjectHasModule("invoicing", currentUser, optionalConfig);
+  const canCmms = screenAllowedForSubject("cmms", currentUser, optionalConfig);
+  const canWorkforce = screenAllowedForSubject("workforce", currentUser, optionalConfig);
   const startPurchaseForItem = (itemId: number) => {
     if (!canPurchase) return;
     setPurchaseReorderItemId(itemId);
@@ -735,11 +737,11 @@ export default function WoodTekERP() {
             <GanttView machines={machines} onSelectOrder={handleSelectOrder} searchQuery={searchQuery} />
           )}
           {activeTab === "production" && <ProductionReportView />}
-          {activeTab === "cmms" && (
+          {activeTab === "cmms" && canCmms && (
             <CmmsView currentUser={currentUser} machines={machines} searchQuery={searchQuery} />
           )}
           {activeTab === "reports" && <ReportView currentUser={currentUser} searchQuery={searchQuery} />}
-          {activeTab === "workforce" && <WorkforceView currentUser={currentUser} machines={machines} />}
+          {activeTab === "workforce" && canWorkforce && <WorkforceView currentUser={currentUser} machines={machines} />}
           {activeTab === "wip" && <WipBoardView onSelectOrder={handleSelectOrder} onNavigate={setActiveTab} />}
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}

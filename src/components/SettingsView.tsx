@@ -34,6 +34,12 @@ import {
   type OptionalModuleId,
   type OptionalModulesConfig,
 } from "@/lib/optionalModules";
+import {
+  CORE_EDITION_SUMMARY,
+  INSTALLER_ADDONS,
+  isAddonInstalled,
+  isOptionalModuleInstalled,
+} from "@/lib/installedEdition";
 
 interface SettingsViewProps {
   currentUser: any;
@@ -326,6 +332,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     enabled: Array.isArray(d?.enabled) ? d.enabled : [],
     roles: d?.roles && typeof d.roles === "object" ? d.roles : {},
     users: d?.users && typeof d.users === "object" ? d.users : {},
+    ...(Array.isArray(d?.installedAddons) ? { installedAddons: d.installedAddons } : {}),
   });
 
   useEffect(() => {
@@ -361,6 +368,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   };
 
   const toggleModuleEnabled = (id: OptionalModuleId) => {
+    if (!isOptionalModuleInstalled(id, moduleCfg)) return;
     const on = moduleCfg.enabled.includes(id);
     saveModules({
       ...moduleCfg,
@@ -403,12 +411,49 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </h3>
         <p className="text-[11px] text-slate-400 mt-1">
           Switched off for everybody, then handed to a role and/or to one person. Saving happens on
-          every click. Manager always keeps access, so you cannot lock yourself out.
+          every click. Manager always keeps access to installed modules, so you cannot lock yourself out.
         </p>
       </div>
 
+      {/* Installed Edition summary (Windows Setup.exe hard lock) */}
+      <div className="rounded-xl border border-slate-800/90 bg-slate-950/60 p-3 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-black uppercase tracking-wider text-amber-400">
+            Installed Edition on this PC (Setup.exe)
+          </div>
+          <span className="text-[10px] font-semibold text-slate-500">
+            Re-run WoodTek-ERP-Setup.exe to install or remove module packs
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <span
+            title={CORE_EDITION_SUMMARY.description}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-300"
+          >
+            ✓ {CORE_EDITION_SUMMARY.label} (Base)
+          </span>
+          {INSTALLER_ADDONS.map((addon) => {
+            const installed = isAddonInstalled(addon.id, moduleCfg);
+            return (
+              <span
+                key={addon.id}
+                title={addon.description}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-bold ${
+                  installed
+                    ? "border-emerald-600/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-800 bg-slate-900/80 text-slate-500"
+                }`}
+              >
+                {installed ? `✓ ${addon.shortLabel}` : `🔒 ${addon.shortLabel} (Not installed)`}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
       {OPTIONAL_MODULES.map((mod) => {
-        const on = moduleCfg.enabled.includes(mod.id);
+        const installed = isOptionalModuleInstalled(mod.id, moduleCfg);
+        const on = installed && moduleCfg.enabled.includes(mod.id);
         const roleNames = [...ROLES, ...customRoles.map((c: any) => c.name)];
         return (
           <div key={mod.id} className="border border-slate-800 rounded-xl p-3 bg-slate-950/40">
@@ -416,31 +461,35 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
               <div className="min-w-0">
                 <div className="text-xs font-bold text-white">
                   {mod.label}
-                  {!mod.ready && (
+                  {!installed ? (
+                    <span className="ml-2 text-[10px] font-bold text-amber-500/80">
+                      not installed on this PC — re-run WoodTek-ERP-Setup.exe to add
+                    </span>
+                  ) : !mod.ready ? (
                     <span className="ml-2 text-[10px] font-bold text-slate-500">
                       arrives in the next bundle
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 <div className="text-[10px] text-slate-500">{mod.description}</div>
               </div>
               <button
                 type="button"
-                disabled={!mod.ready}
+                disabled={!mod.ready || !installed}
                 onClick={() => toggleModuleEnabled(mod.id)}
                 className={`shrink-0 text-[10px] font-black px-3 py-1.5 rounded-lg border transition ${
-                  !mod.ready
+                  !installed || !mod.ready
                     ? "border-slate-800 text-slate-600 cursor-not-allowed"
                     : on
                     ? "border-emerald-600 bg-emerald-500/15 text-emerald-300"
                     : "border-slate-700 bg-slate-900 text-slate-400 hover:text-white"
                 }`}
               >
-                {on ? "ON" : "OFF"}
+                {!installed ? "NOT INSTALLED" : on ? "ON" : "OFF"}
               </button>
             </div>
 
-            {mod.ready && on && (
+            {installed && mod.ready && on && (
               <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div>
                   <div className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">Roles</div>

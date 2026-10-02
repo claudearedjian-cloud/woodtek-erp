@@ -61,13 +61,14 @@ export default defineConfig([
     "next-env.d.ts",
     "tsconfig.tsbuildinfo",
     "drizzle/meta/**",
+    "dist-installer/**",
   ]),
   ...withSeverityOverrides(nextCoreWebVitals),
   ...withSeverityOverrides(nextTypescript),
   {
     // Plain CommonJS: the watchdog launcher, build script and the SSR test
     // harness. require() is the correct module system for these.
-    files: ["*.cjs", "render-test.js", "scripts/**/*.cjs"],
+    files: ["*.cjs", "render-test.js", "scripts/**/*.cjs", "installer/**/*.cjs"],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },

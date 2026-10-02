@@ -29,12 +29,36 @@ const STANDALONE = path.join(ROOT, ".next", "standalone");
 const SERVER = path.join(STANDALONE, "server.js");
 const NO_BROWSER = process.argv.includes("--no-browser");
 
-// Load .env (dotenv is a project dependency).
+// Load .env (uses dotenv when available; built-in parser fallback for
+// standalone installer deployments that do not carry a top-level node_modules).
+function loadDotEnvFallback(envPath) {
+  if (!fs.existsSync(envPath)) return;
+  const raw = fs.readFileSync(envPath, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined) {
+      process.env[key] = val;
+    }
+  }
+}
+
 try {
   require("dotenv").config({ path: path.join(ROOT, ".env") });
 } catch {
-  // dotenv missing — fall back to whatever is already in the environment.
+  loadDotEnvFallback(path.join(ROOT, ".env"));
 }
+loadDotEnvFallback(path.join(ROOT, ".env"));
 
 const PORT = process.env.PORT || "3000";
 const HOST = process.env.HOSTNAME || "0.0.0.0";

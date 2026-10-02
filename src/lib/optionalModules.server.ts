@@ -18,6 +18,10 @@ import {
   sanitizeOptionalModules,
   type OptionalModulesConfig,
 } from "@/lib/optionalModules";
+import {
+  hasInstalledEditionFile,
+  readInstalledEdition,
+} from "@/lib/installedEdition.server";
 
 export const OPTIONAL_MODULES_FILE = "optional-modules.json";
 
@@ -26,27 +30,45 @@ function fileLocation(): string {
   return path.join(dir, OPTIONAL_MODULES_FILE);
 }
 
-let cache: { mtimeMs: number; cfg: OptionalModulesConfig } | null = null;
+let cache: { filePath: string; mtimeMs: number; cfg: OptionalModulesConfig } | null = null;
+
+function applyEditionLock(base: OptionalModulesConfig): OptionalModulesConfig {
+  if (!hasInstalledEditionFile()) return base;
+  const edition = readInstalledEdition();
+  return sanitizeOptionalModules({
+    ...base,
+    installedAddons: edition.addons,
+  });
+}
 
 /** Reads the grant file (mtime-cached) and returns a validated config. */
 export function readOptionalModules(): OptionalModulesConfig {
+  const loc = fileLocation();
   try {
-    const st = fs.statSync(fileLocation());
-    if (cache && cache.mtimeMs === st.mtimeMs) return cache.cfg;
-    const parsed = JSON.parse(fs.readFileSync(fileLocation(), "utf8"));
+    const st = fs.statSync(loc);
+    if (cache && cache.filePath === loc && cache.mtimeMs === st.mtimeMs) {
+      return applyEditionLock(cache.cfg);
+    }
+    const parsed = JSON.parse(fs.readFileSync(loc, "utf8"));
     const cfg = sanitizeOptionalModules(parsed);
-    cache = { mtimeMs: st.mtimeMs, cfg };
-    return cfg;
+    cache = { filePath: loc, mtimeMs: st.mtimeMs, cfg };
+    return applyEditionLock(cfg);
   } catch {
     // No file, unreadable file or corrupt JSON: fall back to today's access.
-    return defaultOptionalModulesConfig();
+    return applyEditionLock(defaultOptionalModulesConfig());
   }
 }
 
 /** Validates and writes the config atomically, then drops the cache. */
 export function writeOptionalModules(input: OptionalModulesConfig): OptionalModulesConfig {
-  const clean = sanitizeOptionalModules(input);
-  writeJsonAtomic(fileLocation(), clean);
+  const locked = applyEditionLock(sanitizeOptionalModules(input));
+  const diskPayload: OptionalModulesConfig = {
+    version: 1,
+    enabled: locked.enabled,
+    roles: locked.roles,
+    users: locked.users,
+  };
+  writeJsonAtomic(fileLocation(), diskPayload);
   cache = null; // force a re-read on the next access
-  return clean;
+  return applyEditionLock(diskPayload);
 }

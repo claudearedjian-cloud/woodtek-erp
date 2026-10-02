@@ -1,10 +1,29 @@
 # WoodTek ERP — Handoff for a New Chat / Agent Session
 
-_Last updated 2026-10-01. Read this first. The owner is NOT a developer — give exact copy-paste commands._
+_Last updated 2026-10-02. Read this first. The owner is NOT a developer — give exact copy-paste commands._
 
 ## STANDING RULES (owner-set, 2026-09-30)
 1. **NEVER merge a PR without asking the owner first.** Open the PR, verify it, then wait for the owner's explicit OK. The owner merges, or tells the agent to merge.
 2. **Push before ending each session.** Commit and push completed work to the session branch, open/update its PR, and report the PR URL and verification results. A local-only commit is not a handoff. Do not merge without the owner's OK.
+
+## Turnkey Windows `.exe` Installer + Hard-Locked Module Selection (2026-10-02)
+- **Single-file Windows `.exe` installer (`dist-installer\WoodTek-ERP-Setup.exe`):** built on the owner's PC via `build-installer.bat` (or `powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1 [-SkipBuild] [-BundlePostgres]`). Uses Windows' built-in `.NET Framework 4.0+` `csc.exe` compiler (`installer\SetupWizard.cs` + `installer\app.manifest` with `requireAdministrator` UAC elevation) and appends the compressed payload archive with a 16-byte SFX trailer (`WTSETUP1` + 8-byte Int64 length) — zero third-party compiler dependencies required.
+- **What the `.exe` packs and installs on a brand-new PC (`installer\install-engine.ps1` + `installer\bootstrap-db.cjs` + `installer\schema.sql`):**
+  1. Production Next.js standalone server (`.next\standalone` + `.next\static` + `public`).
+  2. Portable Node.js runtime (`runtime\node\node.exe` copied from the build machine; `start-woodtek-prod.bat` and `start-woodtek-prod-silent.bat` prefer `runtime\node\node.exe` automatically, and `install-engine.ps1` also auto-downloads portable Node 20 LTS if ever missing). `start-prod.cjs` now also includes a zero-dependency `.env` parser fallback so standalone deployments without a top-level `node_modules\dotenv` always load `.env`.
+  3. Automatic local PostgreSQL setup: starts existing `postgresql*` Windows service or silently installs PostgreSQL 16 (`--mode unattended --superpassword <pwd> --servicename postgresql-x64-16 --serverport 5432`) from bundled `prereqs\postgresql-setup.exe` or official EnterpriseDB download, creates database `woodtek_erp`, and applies `installer\schema.sql` (all 31 tables + indexes idempotently inside an advisory-locked transaction) using the standalone bundle's `pg` driver — no `drizzle-kit` or TypeScript required on the target PC.
+  4. Seeds the initial Manager account (hashed PIN via `bcryptjs`) and default Morning/Afternoon shifts when `users` is empty; generates `.env` with a cryptographic 32-byte `AUTH_SECRET` (preserving existing `.env` on upgrade); opens Windows Firewall TCP port 3000; registers `\WoodTek ERP` and `WoodTek Nightly Backup` scheduled tasks; creates Desktop and Start Menu shortcuts; starts the server and waits for `/api/health` 200 OK.
+- **Selectable Module Packs & Hard Edition Lock (`src/lib/installedEdition.ts` + `src/lib/installedEdition.server.ts`):**
+  - **Core Production & Stock** is always installed (locked checkbox in the wizard).
+  - **4 selectable add-on packs** in the Setup Wizard (`InstallerAddonId`):
+    1. `invoicing` — **Invoicing, Job Costing & Money** (`invoicing`, `jobcosting` screens + `invoicing` optional module + `canSeeMoney` everywhere)
+    2. `purchasing` — **Purchasing & Suppliers** (`purchasing` screen + `purchasing` optional module, POs, GRNs, Supplier Bills & A/P)
+    3. `cmms` — **Asset CMMS** (`cmms` screen + `/api/cmms*` routes + CMMS alerts/digest)
+    4. `workforce` — **Workforce, Shifts & HR** (`workforce` screen + `/api/shifts*` & `/api/attendance*` routes + `payroll` optional module)
+  - Selection is persisted to `data/installed-edition.json` (crash-safe `writeJsonAtomic`, mtime-cached, no web PUT route). When `data/installed-edition.json` is absent (existing factory PC), all 4 add-ons default to installed (100% backward compatible).
+  - When an add-on is omitted from `installed-edition.json`, it is **hard-locked** on that PC: `subjectHasModule`, `canSeeMoney` and `screenAllowedForSubject` return `false` **even for Manager**; `authorize()` / `authorizeModule()` / `authorizeAddon()` and `PUT /api/optional-modules` return 403 (`Re-run WoodTek ERP Setup (.exe) to install this module`); Settings → Optional modules shows the **Installed Edition on this PC (Setup.exe)** badge bar and locks uninstalled modules as `NOT INSTALLED`.
+  - Also includes `installer\configure-edition.ps1` (`-Addons "invoicing,cmms"`) to test or change the edition lock on an existing PC in one command.
+- **Verification (2026-10-02):** `npm run typecheck` clean; `npm run lint` **0 errors** (723 legacy warnings, 0 added); `node render-test.js` **862/862 ALL PASS** (839 → 862, +23 checks: edition registry, core-only/partial/full sanitization, screen/action/optional-module mapping, atomic server store, Manager hard-lock on money/screens/sidebar SSR, `PUT /api/optional-modules` 403 guard, `auth.ts` + alerts/digest CMMS gating, `bootstrap-db.cjs --config-only` CLI smoke test, and installer files/SFX wiring); standalone production build clean (53 pages).
 
 ## Invoice/quote line stock picker (follow-up to PR #10 — PR #15 open, in review, NOT deployed)
 - Each draft line's **description field is now a searchable stock combobox** in Invoicing & A/R (quotes and invoices alike): clicking opens the stock list, typing filters by **item name, SKU, category or unit**, arrow keys + Enter pick, Escape closes. Picking stores `invoice_lines.inventory_item_id` plus a stable **"Name (SKU)" description snapshot**; editing the text or pressing **Unlink (keep as custom text)** clears the link so custom service/fee descriptions remain a first-class option.

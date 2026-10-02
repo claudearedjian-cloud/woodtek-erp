@@ -61,6 +61,8 @@ compile("src/lib/dispatchPack.ts", "lib/dispatchPack.js");
 compile("src/lib/emailConfig.ts", "lib/emailConfig.js");
 compile("src/lib/emailDispatch.ts", "lib/emailDispatch.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
+compile("src/lib/installedEdition.ts", "lib/installedEdition.js");
+compile("src/lib/installedEdition.server.ts", "lib/installedEdition.server.js");
 compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
 compile("src/lib/optionalModules.server.ts", "lib/optionalModules.server.js");
 compile("src/lib/purchasing.ts", "lib/purchasing.js");
@@ -669,6 +671,7 @@ const ATOMIC_STORES = [
   "src/lib/materialProgress.server.ts",
   "src/lib/materialRoutes.server.ts",
   "src/lib/operationMachineCandidates.server.ts",
+  "src/lib/installedEdition.server.ts",
   "src/lib/optionalModules.server.ts",
   "src/lib/orderCleanup.server.ts",
   "src/lib/packingQc.server.ts",
@@ -2534,6 +2537,186 @@ check(jcUi.includes("/api/job-costing?range=") && jcUi.includes("/api/job-costin
 check(pageSource.includes("<JobCostingView") && pageSource.includes('activeTab === "jobcosting" && canInvoice') && pageSource.includes('canEditRates={currentUser.role === "Manager"}'), "job costing: screen mounts behind the money grant; only Managers get the Rates editor");
 const jcReportSource = fs.readFileSync("src/app/api/reports/route.ts", "utf8");
 check(jcReportSource.includes("jobCostRowsForReport(user") && !/db\.select\(\)\.from\(orderMaterials\)/.test(jcReportSource), "job costing: the Order Profitability report now uses the same costing engine (released materials no longer counted, scoped to the user)");
+
+// ---- Turnkey Windows .exe installer & hard-locked edition (22 checks) ----
+const instEd = require("./compiled/lib/installedEdition.js");
+const instEdServer = require("./compiled/lib/installedEdition.server.js");
+
+check(
+  instEd.INSTALLER_ADDON_IDS.length === 4 &&
+    instEd.INSTALLER_ADDON_IDS.includes("invoicing") &&
+    instEd.INSTALLER_ADDON_IDS.includes("purchasing") &&
+    instEd.INSTALLER_ADDON_IDS.includes("cmms") &&
+    instEd.INSTALLER_ADDON_IDS.includes("workforce"),
+  "installer edition: registry defines the 4 selectable add-on packs (invoicing, purchasing, cmms, workforce)",
+);
+const defEd = instEd.defaultInstalledEdition();
+check(
+  defEd.version === 1 && defEd.addons.length === 4 && instEd.sanitizeInstalledEdition(null).addons.length === 4,
+  "installer edition: default and null fallback keep all 4 add-ons installed (backward compatible)",
+);
+const coreOnlyEd = instEd.sanitizeInstalledEdition({ addons: [] });
+check(
+  coreOnlyEd.version === 1 && coreOnlyEd.addons.length === 0 && !instEd.isAddonInstalled("cmms", coreOnlyEd),
+  "installer edition: explicit empty addons array is preserved as a Core-only installation",
+);
+const cmmsOnlyEd = instEd.sanitizeInstalledEdition({ addons: ["cmms", "bogus"], installedAt: "2026-10-02T10:00:00Z", installerVersion: "1.0.0" });
+check(
+  cmmsOnlyEd.addons.length === 1 && cmmsOnlyEd.addons[0] === "cmms" && cmmsOnlyEd.installerVersion === "1.0.0",
+  "installer edition: sanitizer filters unknown add-ons and preserves metadata",
+);
+check(
+  instEd.screenOwnerAddon("invoicing") === "invoicing" &&
+    instEd.screenOwnerAddon("jobcosting") === "invoicing" &&
+    instEd.screenOwnerAddon("purchasing") === "purchasing" &&
+    instEd.screenOwnerAddon("cmms") === "cmms" &&
+    instEd.screenOwnerAddon("workforce") === "workforce" &&
+    instEd.screenOwnerAddon("orders") === null,
+  "installer edition: screenOwnerAddon maps add-on screens and leaves Core screens unowned",
+);
+check(
+  instEd.isScreenInstalled("orders", coreOnlyEd) &&
+    !instEd.isScreenInstalled("cmms", coreOnlyEd) &&
+    instEd.isScreenInstalled("cmms", cmmsOnlyEd) &&
+    !instEd.isScreenInstalled("invoicing", cmmsOnlyEd),
+  "installer edition: isScreenInstalled enforces selected add-on packs while keeping Core screens always on",
+);
+check(
+  instEd.actionOwnerAddon("cmms:read") === "cmms" &&
+    instEd.actionOwnerAddon("shifts:write") === "workforce" &&
+    instEd.actionOwnerAddon("attendance:read") === "workforce" &&
+    instEd.actionOwnerAddon("orders:read") === null,
+  "installer edition: actionOwnerAddon maps CMMS and Workforce permission actions to their add-on packs",
+);
+
+const edTmp = fs.mkdtempSync(path.join(os.tmpdir(), "ed-lock-test-"));
+process.env.WOODTEK_DATA_DIR = edTmp;
+check(
+  !instEdServer.hasInstalledEditionFile() && instEdServer.readInstalledEdition().addons.length === 4,
+  "installer edition server: missing installed-edition.json defaults to Full Edition without writing a file",
+);
+instEdServer.writeInstalledEdition({ addons: ["cmms"] });
+check(
+  instEdServer.hasInstalledEditionFile() && instEdServer.readInstalledEdition().addons.join(",") === "cmms",
+  "installer edition server: writeInstalledEdition persists installed-edition.json atomically",
+);
+const lockedOptCfg = optModServer.readOptionalModules();
+check(
+  Array.isArray(lockedOptCfg.installedAddons) &&
+    lockedOptCfg.installedAddons.join(",") === "cmms" &&
+    !lockedOptCfg.enabled.includes("invoicing") &&
+    !lockedOptCfg.enabled.includes("purchasing"),
+  "installer edition server: readOptionalModules attaches installedAddons and strips uninstalled modules from enabled",
+);
+check(
+  optMod.subjectHasModule("invoicing", { role: "Manager" }, lockedOptCfg) === false &&
+    optMod.canSeeMoney({ role: "Manager" }, lockedOptCfg) === false &&
+    optMod.subjectHasModule("purchasing", { role: "Manager" }, lockedOptCfg) === false,
+  "installer edition hard lock: even Manager loses access to uninstalled optional modules and money",
+);
+check(
+  optMod.screenAllowedForSubject("cmms", { role: "Manager" }, lockedOptCfg) === true &&
+    optMod.screenAllowedForSubject("orders", { role: "Manager" }, lockedOptCfg) === true &&
+    optMod.screenAllowedForSubject("workforce", { role: "Manager" }, lockedOptCfg) === false &&
+    optMod.screenAllowedForSubject("invoicing", { role: "Manager" }, lockedOptCfg) === false &&
+    optMod.screenAllowedForSubject("jobcosting", { role: "Manager" }, lockedOptCfg) === false &&
+    optMod.screenAllowedForSubject("purchasing", { role: "Manager" }, lockedOptCfg) === false,
+  "installer edition hard lock: screenAllowedForSubject blocks uninstalled add-on screens for Manager while keeping Core + installed add-ons",
+);
+const mgrCmmsOnlySidebar = renderPurchaseSidebar("Manager", lockedOptCfg, 1);
+check(
+  mgrCmmsOnlySidebar.includes("Orders &amp; Routing") &&
+    mgrCmmsOnlySidebar.includes("Asset CMMS") &&
+    !mgrCmmsOnlySidebar.includes("Invoicing &amp; A/R") &&
+    !mgrCmmsOnlySidebar.includes("Job Costing &amp; Profit") &&
+    !mgrCmmsOnlySidebar.includes("Purchasing &amp; Suppliers") &&
+    !mgrCmmsOnlySidebar.includes("Workforce &amp; Shifts"),
+  "installer edition SSR: Manager sidebar renders Core + CMMS only and hides unselected add-on screens",
+);
+const attemptedEnable = optModServer.writeOptionalModules({
+  version: 1,
+  enabled: ["invoicing", "purchasing"],
+  roles: {},
+  users: {},
+});
+check(
+  attemptedEnable.enabled.length === 0,
+  "installer edition hard lock: writeOptionalModules refuses to persist uninstalled modules as enabled",
+);
+fs.rmSync(edTmp, { recursive: true, force: true });
+delete process.env.WOODTEK_DATA_DIR;
+
+// Verify bootstrap-db.cjs --config-only CLI mode on a temp folder
+const { execFileSync } = require("node:child_process");
+const bootTmp = fs.mkdtempSync(path.join(os.tmpdir(), "boot-cli-test-"));
+execFileSync(
+  process.execPath,
+  [path.join(__dirname, "installer/bootstrap-db.cjs"), "--config-only", "--addons=invoicing,cmms", `--data-dir=${bootTmp}`],
+  { stdio: "pipe" },
+);
+const bootEd = JSON.parse(fs.readFileSync(path.join(bootTmp, "installed-edition.json"), "utf8"));
+const bootOpt = JSON.parse(fs.readFileSync(path.join(bootTmp, "optional-modules.json"), "utf8"));
+check(
+  bootEd.addons.join(",") === "invoicing,cmms" &&
+    bootOpt.enabled.includes("invoicing") &&
+    !bootOpt.enabled.includes("purchasing"),
+  "installer bootstrap CLI: --config-only writes installed-edition.json and syncs optional-modules.json",
+);
+fs.rmSync(bootTmp, { recursive: true, force: true });
+
+check(
+  authSrc.includes("actionOwnerAddon") &&
+    authSrc.includes("isAddonInstalled") &&
+    authSrc.includes("isOptionalModuleInstalled") &&
+    authSrc.includes("Re-run WoodTek ERP Setup (.exe)"),
+  "installer edition API guard: auth.ts enforces hard lock for both action-based add-ons (CMMS/Workforce) and optional modules",
+);
+check(
+  optApiSrc.includes("hasInstalledEditionFile") &&
+    optApiSrc.includes("isOptionalModuleInstalled") &&
+    optApiSrc.includes("status: 403"),
+  "installer edition API guard: PUT /api/optional-modules returns 403 when attempting to enable an uninstalled module",
+);
+const alertsRouteSrc = fs.readFileSync("src/app/api/alerts/route.ts", "utf8");
+const digestRouteSrc = fs.readFileSync("src/app/api/digest/route.ts", "utf8");
+check(
+  alertsRouteSrc.includes('isAddonInstalled("cmms"') && digestRouteSrc.includes('isAddonInstalled("cmms"'),
+  "installer edition alerts/digest: CMMS queries are skipped when the CMMS add-on is not installed",
+);
+check(
+  settingsViewSource.includes("Installed Edition on this PC (Setup.exe)") &&
+    settingsViewSource.includes("NOT INSTALLED"),
+  "installer edition UI: SettingsView displays the Installed Edition badges and locks uninstalled modules",
+);
+const schemaSqlSrc = fs.readFileSync("installer/schema.sql", "utf8");
+check(
+  schemaSqlSrc.includes("create table if not exists users") &&
+    schemaSqlSrc.includes("create table if not exists orders") &&
+    schemaSqlSrc.includes("create table if not exists suppliers") &&
+    schemaSqlSrc.includes("create table if not exists supplier_bills") &&
+    schemaSqlSrc.includes("create table if not exists invoices") &&
+    schemaSqlSrc.includes("create table if not exists assets") &&
+    schemaSqlSrc.includes("create table if not exists shifts"),
+  "installer schema: installer/schema.sql contains idempotent DDL for all core and add-on tables",
+);
+const wizardCsSrc = fs.readFileSync("installer/SetupWizard.cs", "utf8");
+const buildInstSrc = fs.readFileSync("installer/build-installer.ps1", "utf8");
+const enginePs1Src = fs.readFileSync("installer/install-engine.ps1", "utf8");
+check(
+  wizardCsSrc.includes("WTSETUP1") &&
+    wizardCsSrc.includes("chkInvoicing") &&
+    wizardCsSrc.includes("chkPurchasing") &&
+    wizardCsSrc.includes("chkCmms") &&
+    wizardCsSrc.includes("chkWorkforce"),
+  "installer wizard: SetupWizard.cs provides checkboxes for all 4 add-on packs and SFX payload extraction",
+);
+check(
+  buildInstSrc.includes("WoodTek-ERP-Setup.exe") &&
+    buildInstSrc.includes("WTSETUP1") &&
+    enginePs1Src.includes("bootstrap-db.cjs") &&
+    fs.existsSync("build-installer.bat"),
+  "installer builder: build-installer.ps1, install-engine.ps1 and build-installer.bat are present and wired",
+);
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

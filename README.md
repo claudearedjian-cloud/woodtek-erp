@@ -137,6 +137,26 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   (it also gained an Overhead column, no longer charges released stock, and is
   limited to the signed-in user's own orders).
 
+## Turnkey Windows `.exe` Installer (`WoodTek-ERP-Setup.exe`)
+To package WoodTek ERP as a single-file Windows installer (`dist-installer\WoodTek-ERP-Setup.exe`) that you can take to any new Windows 10/11 computer:
+```
+build-installer.bat
+```
+- **What `build-installer.bat` packs into `WoodTek-ERP-Setup.exe`:**
+  1. The production Next.js standalone server (`.next\standalone` + static assets).
+  2. A portable Node.js runtime (`runtime\node\node.exe` copied from your build PC so the target PC works immediately).
+  3. Complete idempotent database schema (`installer\schema.sql` — all 31 tables and indexes) + database bootstrapper (`installer\bootstrap-db.cjs`).
+  4. Turnkey setup engine (`installer\install-engine.ps1`) that auto-installs PostgreSQL 16 in unattended mode if PostgreSQL is not yet installed, creates the `woodtek_erp` database, writes `.env` with a fresh cryptographic `AUTH_SECRET`, opens Windows Firewall port 3000, registers `\WoodTek ERP` and `WoodTek Nightly Backup` scheduled tasks, and creates Desktop/Start Menu shortcuts. (Pass `-BundlePostgres` to `installer\build-installer.ps1` to embed the PostgreSQL installer inside the `.exe` for 100% offline setup.)
+- **Selectable Module Packs during `.exe` Installation (Hard-Locked Edition):**
+  - **Core Production & Stock** is always installed as the base (Orders & Routing, Shop Floor Monitor, Operator Station, Live WIP, Material Reception, Warehouse & BOM, Wood & Edge Stock, Dispatch Schedule, Gantt Chart, Production Report, Clients & Architects, Scrap & Rework, Downtime Log, Routing Recipes, PIMS Import, Plant Performance, System Reports, Menu Designer, Settings).
+  - During the Setup Wizard, you tick any combination of the **4 optional add-on packs**:
+    1. **Invoicing, Job Costing & Money** (`invoicing`, `jobcosting`, plus all financial columns across the app)
+    2. **Purchasing & Suppliers** (`purchasing`, POs, GRNs, and Supplier Bills & A/P)
+    3. **Asset CMMS** (`cmms` — Generators, Power Telemetry & Preventative Maintenance)
+    4. **Workforce, Shifts & HR** (`workforce` — Shift Calendar, Time & Attendance, HR/Payroll)
+  - The installer writes your selection to `data\installed-edition.json`. Any add-on **not** ticked during setup is **hard-locked** on that PC (hidden from the sidebar, blocked with 403 on all API routes even for Manager, and locked as `NOT INSTALLED` in Settings → Optional modules). To add or remove modules later, simply re-run `WoodTek-ERP-Setup.exe` (or run `powershell -ExecutionPolicy Bypass -File installer\configure-edition.ps1 -Addons "invoicing,cmms"`).
+  - Existing factory PCs without `data\installed-edition.json` default to the **Full Edition** (all 4 add-ons installed).
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.

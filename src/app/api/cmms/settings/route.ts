@@ -36,7 +36,7 @@ async function writeSetting(key: string, value: unknown) {
 }
 
 export async function GET() {
-  const { error: authError } = await authorize();
+  const { error: authError } = await authorize("cmms:read");
   if (authError) return authError;
 
   try {
