@@ -417,12 +417,17 @@ export const invoices = pgTable("invoices", {
 export const invoiceLines = pgTable("invoice_lines", {
   id: serial("id").primaryKey(),
   invoiceId: integer("invoice_id").notNull().references(() => invoices.id),
+  // Optional stock link from the line's searchable description picker. The
+  // description snapshot stays authoritative for the legal document: deleting
+  // the stock item only clears this link (on delete set null), never the text.
+  inventoryItemId: integer("inventory_item_id").references(() => inventoryItems.id, { onDelete: "set null" }),
   description: text("description").notNull(),
   quantity: numeric("quantity", { precision: 12, scale: 2 }).notNull().default("1.00"),
   unitPriceCents: integer("unit_price_cents").notNull().default(0),
   lineTotalCents: integer("line_total_cents").notNull().default(0),
 }, (t) => [
   index("invoice_lines_invoice_idx").on(t.invoiceId),
+  index("invoice_lines_inventory_item_idx").on(t.inventoryItemId),
 ]);
 
 export const invoicePayments = pgTable("payments", {

@@ -7,8 +7,10 @@
 
 export const LEBANON_VAT_RATE = "11.00"; // percent — snapshotted per document
 export const MAX_DOC_LINES = 50;
+export const MAX_LINE_DESCRIPTION = 200;
 export const MAX_LINE_QUANTITY_HUNDREDTHS = 99_999_999; // 999,999.99
 export const MAX_PRICE_CENTS = 99_999_999; // $999,999.99 per unit
+export const MAX_STOCK_PICKER_RESULTS = 50;
 export const PAYMENT_METHODS = ["Cash", "Transfer", "Check", "Other"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -106,9 +108,80 @@ export function vatRateFromBps(bps: number): string {
   return (bps / 100).toFixed(2);
 }
 
+// ------------------------------------------------------- line stock picker
+// The description field of a draft line doubles as a searchable stock picker.
+// The picker may only ever see stock IDENTITY — never costs, never quantities
+// (see `stockIdentity`). Picking an item stores the link plus a stable
+// name/SKU description snapshot, so a later rename cannot rewrite a legal
+// document; plain text stays available for services and fees.
+
+export interface StockIdentity {
+  id: number;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+}
+
+/** The only stock fields a document line may see or store. */
+export const STOCK_IDENTITY_KEYS = ["id", "sku", "name", "category", "unit"] as const;
+
+/** Strips a stock row down to its identity: no unitCost, no stockQuantity. */
+export function stockIdentity(row: {
+  id: number; sku: string; name: string; category: string; unit: string;
+}): StockIdentity {
+  return { id: row.id, sku: row.sku, name: row.name, category: row.category, unit: row.unit };
+}
+
+/** Stable line description snapshot for a picked item: "Name (SKU)". */
+export function stockLineDescription(item: { name: string; sku: string }): string {
+  const name = String(item.name ?? "").trim();
+  const sku = String(item.sku ?? "").trim();
+  const snapshot = name && sku ? `${name} (${sku})` : name || sku;
+  return snapshot.length > MAX_LINE_DESCRIPTION
+    ? `${snapshot.slice(0, MAX_LINE_DESCRIPTION - 3)}...`
+    : snapshot;
+}
+
+/** Picker filter: name, SKU, category or unit, case-insensitive; "" shows all. */
+export function filterStockItems<T extends StockIdentity>(
+  items: readonly T[],
+  query: string,
+  limit = MAX_STOCK_PICKER_RESULTS,
+): T[] {
+  const needle = String(query ?? "").trim().toLowerCase();
+  const matches = needle
+    ? items.filter((item) =>
+        [item.name, item.sku, item.category, item.unit]
+          .some((value) => String(value ?? "").toLowerCase().includes(needle)))
+    : [...items];
+  return matches.slice(0, Math.max(0, limit));
+}
+
+/**
+ * Clicking a field that still holds its item's snapshot browses the whole
+ * stock list; any other text (a search or a service description) filters it.
+ */
+export function stockPickerQuery(
+  description: string,
+  linked: Pick<StockIdentity, "name" | "sku"> | null | undefined,
+): string {
+  const text = String(description ?? "");
+  if (linked && text.trim() === stockLineDescription(linked)) return "";
+  return text;
+}
+
+/** Optional inventory link: absent/blank -> null; anything else must be a positive id. */
+export function optionalInventoryItemId(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  return positiveId(value, "Stock item id");
+}
+
 export type DocumentKind = "Quote" | "Invoice";
 
 export interface DocumentLine {
+  /** Stock item this line was picked from, or null for a custom service/fee line. */
+  inventoryItemId: number | null;
   description: string;
   quantityHundredths: number;
   unitPriceCents: number;
@@ -138,8 +211,16 @@ export function parseDocument(kind: DocumentKind, input: unknown): DocumentInput
     const line = record(value);
     const quantityHundredthsValue = quantityHundredths(line.quantity);
     const unitPriceCents = priceCents(line.unitPrice ?? "0.00");
+    const inventoryItemId = optionalInventoryItemId(line.inventoryItemId);
+    const description = text(line.description, "Line description", MAX_LINE_DESCRIPTION);
+    // A picked stock item supplies the snapshot server-side, so its text may
+    // be left empty here; a custom service/fee line must carry its own text.
+    if (!description && inventoryItemId === null) {
+      throw new InvoicingError("Line description is required.");
+    }
     return {
-      description: text(line.description, "Line description", 200, true),
+      inventoryItemId,
+      description,
       quantityHundredths: quantityHundredthsValue,
       unitPriceCents,
       lineTotalCents: Math.round((quantityHundredthsValue * unitPriceCents) / 100),

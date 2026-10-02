@@ -3,13 +3,13 @@
 // them — and the legal number is reserved in the creating transaction so a
 // rolled-back document takes its number with it (no gaps).
 import { db } from "@/db";
-import { customers, documentCounters, invoiceLines, invoicePayments, invoices } from "@/db/schema";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { customers, documentCounters, inventoryItems, invoiceLines, invoicePayments, invoices } from "@/db/schema";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   InvoicingError, addDaysIso, agingBucketFor, daysPastDue, documentNumber, emptyAging,
   moneyFromCents, optionalDateOnly, parseDocument, parsePayment, paymentState, seriesFor,
-  todayIso, vatRateFromBps,
-  type AgingBucket, type DocumentKind, type DocumentSeries,
+  stockIdentity, stockLineDescription, todayIso, vatRateFromBps,
+  type AgingBucket, type DocumentKind, type DocumentSeries, type StockIdentity,
 } from "@/lib/invoicing";
 import { ensureInvoicingSchema } from "@/lib/invoicingSchema.server";
 import { syncCustomerBalance } from "@/lib/clientLedger.server";
@@ -33,6 +33,36 @@ async function paidCentsFor(tx: Tx, invoiceId: number): Promise<number> {
     .from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
   return rows.reduce((sum, row) => sum + row.amountCents, 0);
 }
+
+/**
+ * Picker list for the line description dropdown: stock identity only. Costs,
+ * quantities, reorder levels and locations are never selected, so they cannot
+ * leak to the invoicing screen.
+ */
+export async function listStockIdentity(): Promise<StockIdentity[]> {
+  const rows = await db.select({
+    id: inventoryItems.id, sku: inventoryItems.sku, name: inventoryItems.name,
+    category: inventoryItems.category, unit: inventoryItems.unit,
+  }).from(inventoryItems).orderBy(asc(inventoryItems.name), asc(inventoryItems.sku));
+  return rows.map(stockIdentity);
+}
+
+/**
+ * Server-side validation of picked stock ids — the client is never trusted.
+ * Returns the identity rows for the ids that exist.
+ */
+async function stockIdentityById(tx: Tx, ids: number[]): Promise<Map<number, StockIdentity>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const rows = await tx.select({
+    id: inventoryItems.id, sku: inventoryItems.sku, name: inventoryItems.name,
+    category: inventoryItems.category, unit: inventoryItems.unit,
+  }).from(inventoryItems).where(inArray(inventoryItems.id, unique));
+  return new Map(rows.map((row) => [row.id, stockIdentity(row)]));
+}
+
+/** Human message shared by every refused link. */
+const STOCK_GONE = "A selected stock item no longer exists. Refresh the stock list and pick it again.";
 
 export async function invoicingBoard() {
   await ensureInvoicingSchema();
@@ -119,6 +149,11 @@ export async function createDocument(kind: DocumentKind, input: unknown, created
     const [customer] = await tx.select({ id: customers.id, name: customers.name, company: customers.company })
       .from(customers).where(eq(customers.id, payload.customerId)).for("share");
     if (!customer) throw new InvoicingError("Client not found. Refresh and try again.", 409);
+    // Every picked id must still exist; the description snapshot then comes
+    // from the item itself, never from the request body.
+    const picked = payload.lines.flatMap((line) => (line.inventoryItemId === null ? [] : [line.inventoryItemId]));
+    const stockItems = await stockIdentityById(tx, picked);
+    if (stockItems.size !== new Set(picked).size) throw new InvoicingError(STOCK_GONE, 409);
     const number = await nextNumber(tx, seriesFor(kind), Number(payload.issueDate.slice(0, 4)));
     const [doc] = await tx.insert(invoices).values({
       kind,
@@ -136,13 +171,19 @@ export async function createDocument(kind: DocumentKind, input: unknown, created
       notes: payload.notes,
       createdById,
     }).returning({ id: invoices.id, number: invoices.number });
-    await tx.insert(invoiceLines).values(payload.lines.map((line) => ({
-      invoiceId: doc.id,
-      description: line.description,
-      quantity: moneyFromCents(line.quantityHundredths),
-      unitPriceCents: line.unitPriceCents,
-      lineTotalCents: line.lineTotalCents,
-    })));
+    await tx.insert(invoiceLines).values(payload.lines.map((line) => {
+      const item = line.inventoryItemId === null ? null : stockItems.get(line.inventoryItemId) ?? null;
+      return {
+        invoiceId: doc.id,
+        inventoryItemId: item ? item.id : null,
+        // Picking the item is enough: the server writes the name/SKU snapshot
+        // when the text was left empty. Prices and stock are never touched.
+        description: line.description || (item ? stockLineDescription(item) : ""),
+        quantity: moneyFromCents(line.quantityHundredths),
+        unitPriceCents: line.unitPriceCents,
+        lineTotalCents: line.lineTotalCents,
+      };
+    }));
     return { id: doc.id, number: doc.number, kind };
   });
   if (kind === "Invoice") await syncCustomerBalance(payload.customerId);
@@ -160,6 +201,12 @@ export async function convertQuote(id: number, input: unknown, createdById: numb
     if (quote.kind !== "Quote") throw new InvoicingError("Only quotations convert to invoices.", 400);
     if (quote.status !== "Open") throw new InvoicingError("This quotation is already converted or cancelled.", 409);
     const lines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, id));
+    // The quote's stock links convert with it. An item deleted in the meantime
+    // only drops its link (same rule as the FK): the snapshot text stays.
+    const stockItems = await stockIdentityById(
+      tx,
+      lines.flatMap((line) => (line.inventoryItemId === null ? [] : [line.inventoryItemId])),
+    );
     const issueDate = todayIso();
     const dueDate = requestedDue ?? addDaysIso(issueDate, 30);
     if (dueDate < issueDate) throw new InvoicingError("Due date cannot be before the issue date.");
@@ -183,6 +230,9 @@ export async function convertQuote(id: number, input: unknown, createdById: numb
     }).returning({ id: invoices.id, number: invoices.number });
     await tx.insert(invoiceLines).values(lines.map((line) => ({
       invoiceId: doc.id,
+      inventoryItemId: line.inventoryItemId !== null && stockItems.has(line.inventoryItemId)
+        ? line.inventoryItemId
+        : null,
       description: line.description,
       quantity: line.quantity,
       unitPriceCents: line.unitPriceCents,

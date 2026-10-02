@@ -2,7 +2,10 @@
 // factory does not run migrations during its Windows update ritual, so opening
 // the granted module creates only its four new tables/indexes. The advisory
 // lock serializes simultaneous first requests; the transaction rolls back ALL
-// DDL on failure. Keep column definitions in sync with src/db/schema.ts.
+// DDL on failure. The line stock-picker follow-up adds one nullable column and
+// one index on the existing invoice_lines table — existing rows and their
+// description snapshots are preserved untouched. Keep column definitions in
+// sync with src/db/schema.ts.
 import { db } from "@/db";
 import { sql } from "drizzle-orm";
 
@@ -40,13 +43,18 @@ export async function ensureInvoicingSchema(): Promise<void> {
       create table if not exists invoice_lines (
         id serial primary key,
         invoice_id integer not null references invoices(id),
+        inventory_item_id integer references inventory_items(id) on delete set null,
         description text not null,
         quantity numeric(12,2) not null default 1.00 check (quantity > 0),
         unit_price_cents integer not null default 0 check (unit_price_cents >= 0),
         line_total_cents integer not null default 0 check (line_total_cents >= 0)
       )
     `);
+    // Stock-picker follow-up for installations that already have the table:
+    // null for every historical line, so existing snapshots stay authoritative.
+    await tx.execute(sql`alter table invoice_lines add column if not exists inventory_item_id integer references inventory_items(id) on delete set null`);
     await tx.execute(sql`create index if not exists invoice_lines_invoice_idx on invoice_lines (invoice_id)`);
+    await tx.execute(sql`create index if not exists invoice_lines_inventory_item_idx on invoice_lines (inventory_item_id)`);
     await tx.execute(sql`
       create table if not exists payments (
         id serial primary key,
