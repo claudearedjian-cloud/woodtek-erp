@@ -5,6 +5,8 @@ import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { readReceived } from "@/lib/bomStatus.server";
 import { suggestedReorderQty } from "@/lib/purchasing";
+import { isAddonInstalled } from "@/lib/installedEdition";
+import { readInstalledEdition } from "@/lib/installedEdition.server";
 
 // ============================================================================
 // GET /api/alerts — everything that needs a human's attention right now:
@@ -23,9 +25,10 @@ export async function GET() {
 
   try {
     const now = Date.now();
+    const cmmsInstalled = isAddonInstalled("cmms", readInstalledEdition());
     const [orderRows, assetRows, invRows] = await Promise.all([
       listOrdersForUser(user),
-      db.select().from(assets),
+      cmmsInstalled ? db.select().from(assets) : Promise.resolve([]),
       db.select().from(inventoryItems),
     ]);
 

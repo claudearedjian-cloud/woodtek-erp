@@ -16,3 +16,5 @@ compiled/
 # --- hygiene (2026-09-30): build artifacts & live DB dumps stay out of git ---
 *.tsbuildinfo
 *.dump
+dist-installer/
+installer/prereqs/

@@ -8,7 +8,8 @@ cd /d %~dp0
 
 if not exist "%~dp0logs" mkdir "%~dp0logs"
 
-set "PATH=C:\Program Files\nodejs;%PATH%"
+if exist "%~dp0runtime\node\node.exe" set "PATH=%~dp0runtime\node;C:\Program Files\nodejs;%PATH%"
+if not exist "%~dp0runtime\node\node.exe" set "PATH=C:\Program Files\nodejs;%PATH%"
 where node >nul 2>nul
 if errorlevel 1 (
   echo [WoodTek] node.exe not found on PATH. Install Node.js. >> "%~dp0logs\woodtek.log"

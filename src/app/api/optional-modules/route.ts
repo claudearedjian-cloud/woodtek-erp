@@ -12,9 +12,12 @@ import { NextResponse } from "next/server";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import {
+  moduleLabel,
   sanitizeOptionalModules,
   summarizeOptionalModuleChange,
 } from "@/lib/optionalModules";
+import { isOptionalModuleInstalled } from "@/lib/installedEdition";
+import { hasInstalledEditionFile, readInstalledEdition } from "@/lib/installedEdition.server";
 import { readOptionalModules, writeOptionalModules } from "@/lib/optionalModules.server";
 
 export async function GET() {
@@ -41,8 +44,22 @@ export async function PUT(request: Request) {
 
   try {
     const body = (await request.json()) as unknown;
+    const requested = sanitizeOptionalModules(body);
+    if (hasInstalledEditionFile()) {
+      const edition = readInstalledEdition();
+      for (const modId of requested.enabled) {
+        if (!isOptionalModuleInstalled(modId, edition)) {
+          return NextResponse.json(
+            {
+              error: `${moduleLabel(modId)} is not installed on this PC. Re-run WoodTek ERP Setup (.exe) to install this module.`,
+            },
+            { status: 403 },
+          );
+        }
+      }
+    }
     const prev = readOptionalModules();
-    const next = writeOptionalModules(sanitizeOptionalModules(body));
+    const next = writeOptionalModules(requested);
 
     logAudit(user, "optional-modules.save", "system", summarizeOptionalModuleChange(prev, next));
     return NextResponse.json(next);

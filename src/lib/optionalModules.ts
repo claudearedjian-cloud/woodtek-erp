@@ -15,6 +15,13 @@
 // is gated on `canSeeMoney()` at the API level as well.
 // ============================================================================
 
+import {
+  INSTALLER_ADDON_IDS,
+  isOptionalModuleInstalled,
+  isScreenInstalled,
+  type InstallerAddonId,
+} from "@/lib/installedEdition";
+
 export type OptionalModuleId = "invoicing" | "purchasing" | "payroll";
 
 export const OPTIONAL_MODULE_IDS: readonly OptionalModuleId[] = [
@@ -83,6 +90,13 @@ export interface OptionalModulesConfig {
   roles: Record<string, OptionalModuleId[]>;
   /** Personal grants, keyed by user id (stored as a string, JSON has no ints). */
   users: Record<string, OptionalModuleId[]>;
+  /**
+   * Hard installation lock (set by WoodTek-ERP-Setup.exe via
+   * data/installed-edition.json). When present, any add-on omitted from this
+   * list is locked out for everybody (including Manager) and cannot be enabled
+   * in Settings. When omitted, all four add-ons default to installed.
+   */
+  installedAddons?: InstallerAddonId[];
 }
 
 /** Anything that can be evaluated for a grant: a session user, or a bare role. */
@@ -140,8 +154,17 @@ export function sanitizeOptionalModules(input: unknown): OptionalModulesConfig {
       ? (input as Record<string, unknown>)
       : {};
 
+  const hasInstalledList = Array.isArray(source.installedAddons);
+  const installedAddons: InstallerAddonId[] | undefined = hasInstalledList
+    ? INSTALLER_ADDON_IDS.filter((id) => (source.installedAddons as unknown[]).includes(id))
+    : undefined;
+
   const enabledRaw = Array.isArray(source.enabled) ? source.enabled : [];
-  const enabled = OPTIONAL_MODULE_IDS.filter((id) => enabledRaw.includes(id));
+  const enabled = OPTIONAL_MODULE_IDS.filter(
+    (id) =>
+      enabledRaw.includes(id) &&
+      (!installedAddons || isOptionalModuleInstalled(id, { installedAddons })),
+  );
 
   const roles: Record<string, OptionalModuleId[]> = {};
   const rolesRaw = source.roles;
@@ -169,7 +192,9 @@ export function sanitizeOptionalModules(input: unknown): OptionalModulesConfig {
     }
   }
 
-  return { version: 1, enabled, roles, users };
+  return installedAddons
+    ? { version: 1, enabled, roles, users, installedAddons }
+    : { version: 1, enabled, roles, users };
 }
 
 /** The role names a subject carries: the custom role first, then the base. */
@@ -185,7 +210,9 @@ function roleNamesOf(subject: ModuleSubject): string[] {
 
 /**
  * The resolution rule, in order:
- *   1. Manager always keeps access (lock-out protection).
+ *   0. Hard installation lock: if the module's add-on pack was not selected
+ *      during Windows installation, nobody has it (even Manager).
+ *   1. Manager always keeps access to installed modules (lock-out protection).
  *   2. A module that is switched off is off for everybody else.
  *   3. A personal grant wins on its own.
  *   4. Otherwise a role grant — checked on the custom role name first, then on
@@ -199,7 +226,10 @@ export function subjectHasModule(
   if (!subject || !isOptionalModuleId(id)) return false;
   const config = cfg ?? defaultOptionalModulesConfig();
 
-  // 1 — Manager is never locked out.
+  // 0 — Hard installation lock (WoodTek-ERP-Setup.exe selection).
+  if (!isOptionalModuleInstalled(id, config)) return false;
+
+  // 1 — Manager is never locked out of installed modules.
   if (roleNamesOf(subject).includes(MANAGER_ROLE)) return true;
 
   // 2 — master switch.
@@ -239,12 +269,18 @@ export function screenOwnerModule(screenId: string | null | undefined): Optional
   return null;
 }
 
-/** True unless the screen belongs to an optional module the subject lacks. */
+/**
+ * True unless:
+ *  - the screen belongs to an installer add-on pack (`invoicing`, `purchasing`,
+ *    `cmms`, `workforce`) that was not installed on this PC, OR
+ *  - the screen belongs to an optional module the subject lacks.
+ */
 export function screenAllowedForSubject(
   screenId: string | null | undefined,
   subject: ModuleSubject,
   cfg?: OptionalModulesConfig | null,
 ): boolean {
+  if (!isScreenInstalled(screenId, cfg)) return false;
   const owner = screenOwnerModule(screenId);
   if (!owner) return true;
   return subjectHasModule(owner, subject, cfg);

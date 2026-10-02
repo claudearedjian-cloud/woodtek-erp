@@ -19,6 +19,8 @@ import { assets, downtimeEvents, inventoryItems, machines, orderMaterials } from
 import { authorize } from "@/lib/auth";
 import { listOrdersForUser } from "@/lib/dataAccess";
 import { readBomStatus, readReceived } from "@/lib/bomStatus.server";
+import { isAddonInstalled } from "@/lib/installedEdition";
+import { readInstalledEdition } from "@/lib/installedEdition.server";
 import type { DigestData } from "@/lib/digest";
 
 const OPEN_STATUSES = new Set(["Pending", "In Production", "Quality Review"]);
@@ -34,9 +36,10 @@ export async function GET() {
     startOfToday.setHours(0, 0, 0, 0);
     const in7Days = new Date(startOfToday.getTime() + 7 * DAY_MS);
 
+    const cmmsInstalled = isAddonInstalled("cmms", readInstalledEdition());
     const [orderRows, assetRows, invRows] = await Promise.all([
       listOrdersForUser(user),
-      db.select().from(assets),
+      cmmsInstalled ? db.select().from(assets) : Promise.resolve([]),
       db.select().from(inventoryItems),
     ]);
     const all = orderRows as any[];
