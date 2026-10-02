@@ -9,7 +9,7 @@ import { users } from "@/db/schema";
 import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 import { readOptionalModules } from "@/lib/optionalModules.server";
-import { moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
+import { canSeeMoney, moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
 
 export const SESSION_COOKIE = "woodtek_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // one working shift + margin
@@ -234,6 +234,28 @@ export async function authorizeModule(
         {
           error: `${moduleLabel(id)} is not switched on for your account. Ask a Manager to grant it in Settings > Optional modules.`,
         },
+        { status: 403 },
+      ),
+    };
+  }
+  return { user, error: null };
+}
+
+/**
+ * Supplier bills are part of Purchasing, but every bill amount and payment is
+ * financial data. Require BOTH the Purchasing screen grant and the separate
+ * Invoicing & Money grant on every A/P API route.
+ */
+export async function authorizePayables(): Promise<
+  { user: SessionUser; error: null } | { user: null; error: NextResponse }
+> {
+  const { user, error } = await authorizeModule("purchasing");
+  if (error) return { user: null, error };
+  if (!canSeeMoney(user, readOptionalModules())) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        { error: "Supplier bills and payments require both Purchasing and Invoicing & Money access. Ask a Manager to grant both in Settings > Optional modules." },
         { status: 403 },
       ),
     };

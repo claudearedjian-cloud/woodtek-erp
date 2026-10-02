@@ -43,7 +43,7 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
     id: "purchasing",
     label: "Purchasing & Suppliers",
     description:
-      "Suppliers, purchase orders, awaiting deliveries and goods receipts that add stock.",
+      "Suppliers, purchase orders, awaiting deliveries and goods receipts that add stock. Supplier bills, payments and A/P aging additionally require Invoicing & Money.",
     ready: true,
   },
   {

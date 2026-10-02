@@ -46,14 +46,14 @@ function quantity(value: unknown): number {
   return result;
 }
 
-export function priceCents(value: unknown): number {
+export function priceCents(value: unknown, label = "Unit price"): number {
   const price = typeof value === "number" ? String(value) : value;
   if (typeof price !== "string" || !/^(?:0|[1-9]\d{0,5})(?:\.\d{1,2})?$/.test(price)) {
-    throw new PurchasingError("Unit price must be a non-negative amount with up to 2 decimals (maximum $999,999.99).");
+    throw new PurchasingError(`${label} must be a non-negative amount with up to 2 decimals (maximum $999,999.99).`);
   }
   const [whole, fraction = ""] = price.split(".");
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-  if (cents > MAX_PRICE_CENTS) throw new PurchasingError("Unit price exceeds $999,999.99.");
+  if (cents > MAX_PRICE_CENTS) throw new PurchasingError(`${label} exceeds $999,999.99.`);
   return cents;
 }
 
@@ -62,23 +62,34 @@ export function moneyFromCents(cents: number): string {
 }
 
 /**
- * GRN retry keys must work on the factory's plain-HTTP LAN URL too.
+ * GRN and A/P retry keys must work on the factory's plain-HTTP LAN URL too.
  * randomUUID() requires a secure context in browsers; getRandomValues() is
  * available on insecure origins as well and still uses secure randomness.
  */
-export function newReceiptRequestKey(provider: {
+type SecureKeyProvider = {
   randomUUID?: () => string;
   getRandomValues: (bytes: Uint8Array) => Uint8Array;
-} = globalThis.crypto): string {
+};
+
+function newRequestKey(kind: "receipt" | "supplier payment", provider: SecureKeyProvider): string {
   if (typeof provider?.randomUUID === "function") return provider.randomUUID();
   if (typeof provider?.getRandomValues !== "function") {
-    throw new PurchasingError("This browser cannot generate a secure receipt key. Try a modern browser.");
+    throw new PurchasingError(`This browser cannot generate a secure ${kind} key. Try a modern browser.`);
   }
   const bytes = provider.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6] & 0x0f) | 0x40; // UUID v4
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function newReceiptRequestKey(provider: SecureKeyProvider = globalThis.crypto): string {
+  return newRequestKey("receipt", provider);
+}
+
+/** Retry key for a payment form: a network retry cannot post the same payment twice. */
+export function newSupplierPaymentRequestKey(provider: SecureKeyProvider = globalThis.crypto): string {
+  return newRequestKey("supplier payment", provider);
 }
 
 export interface SupplierInput {

@@ -3,10 +3,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertTriangle, ArrowRight, CheckCircle2, ClipboardList, PackageCheck,
+  AlertTriangle, ArrowRight, CheckCircle2, CircleDollarSign, ClipboardList, FileText, PackageCheck,
   Plus, RefreshCw, Search, Truck, Users, X,
 } from "lucide-react";
 import { newReceiptRequestKey, suggestedReorderQty, type SupplierInput } from "@/lib/purchasing";
+import SupplierBillsView from "@/components/SupplierBillsView";
 
 type Supplier = SupplierInput & {
   id: number; active: boolean; awaitingOrders: number; awaitingQuantity: number;
@@ -87,6 +88,7 @@ export default function PurchasingView({
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [supplierId, setSupplierId] = useState<number | null>(null);
+  const [panel, setPanel] = useState<"orders" | "payables">("orders");
   const [showHistory, setShowHistory] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -244,7 +246,7 @@ export default function PurchasingView({
         <div>
           <div className="mb-2 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-amber-400"><Truck className="h-4 w-4" /> Supply chain</div>
           <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">Purchasing &amp; Suppliers</h1>
-          <p className="mt-1 text-sm text-slate-400">Order materials, follow outstanding deliveries, and receive goods into stock with a GRN.</p>
+          <p className="mt-1 text-sm text-slate-400">Manage suppliers, material orders, goods receipts and — with a Money grant — supplier bills and payments.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button className={secondaryClass} onClick={() => { setLoading(true); void refresh(); }} disabled={loading}><RefreshCw className="mr-1 inline h-4 w-4" /> Refresh</button>
@@ -268,6 +270,12 @@ export default function PurchasingView({
             <div className="text-xs text-slate-500">{sub}</div>
           </div>
         ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-2" role="tablist" aria-label="Purchasing workspace">
+        <button role="tab" aria-selected={panel === "orders"} className={`rounded-lg px-4 py-2 text-sm font-black transition ${panel === "orders" ? "bg-amber-500 text-slate-950" : "text-slate-300 hover:bg-slate-800"}`} onClick={() => setPanel("orders")}><Truck className="mr-2 inline h-4 w-4" />Deliveries &amp; purchase orders</button>
+        {board?.canSeeMoney && <button role="tab" aria-selected={panel === "payables"} className={`rounded-lg px-4 py-2 text-sm font-black transition ${panel === "payables" ? "bg-emerald-400 text-slate-950" : "text-slate-300 hover:bg-slate-800"}`} onClick={() => setPanel("payables")}><CircleDollarSign className="mr-2 inline h-4 w-4" />Supplier bills &amp; A/P</button>}
+        {!board?.canSeeMoney && board && <span className="self-center px-2 text-[11px] text-slate-500"><FileText className="mr-1 inline h-3.5 w-3.5" />Supplier bills and payments require an Invoicing &amp; Money grant.</span>}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[290px_1fr]">
@@ -299,7 +307,7 @@ export default function PurchasingView({
           </div>}
         </section>
 
-        <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
+        {(panel === "orders" || !board?.canSeeMoney) && <section className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-lg font-black text-white">{activeSupplier ? `${activeSupplier.name} · ` : ""}Purchase orders</h2><p className="text-xs text-slate-400">{showHistory ? "All POs and receipt history" : "Open POs awaiting goods"}</p></div>
             <div className="flex flex-wrap gap-2"><button className={secondaryClass} onClick={() => setShowHistory((v) => !v)}>{showHistory ? "Open only" : "Include history"}</button></div>
@@ -331,7 +339,12 @@ export default function PurchasingView({
               </article>
             ))}
           </div>
-        </section>
+        </section>}
+        {panel === "payables" && board?.canSeeMoney && <SupplierBillsView
+          suppliers={suppliers.map(({ id, name, active }) => ({ id, name, active }))}
+          orders={orders.map(({ id, number, supplierId, status }) => ({ id, number, supplierId, status }))}
+          supplierId={supplierId}
+        />}
       </div>
 
       {supplierForm && <Modal title={supplierForm.id ? "Edit supplier" : "New supplier"} onClose={() => setSupplierForm(null)}>
