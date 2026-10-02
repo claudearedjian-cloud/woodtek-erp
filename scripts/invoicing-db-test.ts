@@ -18,12 +18,20 @@ import { db, pool } from "../src/db/index";
 import {
   customers,
   documentCounters,
+  inventoryItems,
   invoiceLines,
   invoicePayments,
   invoices,
   users,
 } from "../src/db/schema";
-import { InvoicingError, addDaysIso, documentNumber, paymentState, todayIso } from "../src/lib/invoicing";
+import {
+  InvoicingError,
+  addDaysIso,
+  documentNumber,
+  paymentState,
+  stockLineDescription,
+  todayIso,
+} from "../src/lib/invoicing";
 import {
   cancelDocument,
   convertQuote,
@@ -31,6 +39,7 @@ import {
   deletePayment,
   documentDetail,
   invoicingBoard,
+  listStockIdentity,
   recordPayment,
 } from "../src/lib/invoicing.server";
 import { ensureInvoicingSchema } from "../src/lib/invoicingSchema.server";
@@ -96,6 +105,8 @@ async function main(): Promise<void> {
 
   const usedCounters: Array<{ series: string; year: number }> = [];
   const customerIds: number[] = [];
+  const stockItemIds: number[] = [];
+  let upgradeInvoiceId = 0;
 
   if (process.argv.includes("--fresh")) {
     await db.execute(sql`drop table if exists payments cascade`);
@@ -106,6 +117,58 @@ async function main(): Promise<void> {
   }
 
   try {
+    await check("an existing invoice_lines table gains the nullable stock link additively", async () => {
+      // Upgrade path first, before anything calls the lazy DDL: on a second run
+      // the tables already exist, so strip the follow-up column (simulating the
+      // pre-follow-up factory shape) and let ensureInvoicingSchema add it back.
+      const existing = await db.execute(sql`select to_regclass('public.invoice_lines') as reg`);
+      const hadTable = Boolean((existing.rows as Array<{ reg: string | null }>)[0]?.reg);
+      if (hadTable) {
+        // A pre-follow-up document with a legacy line snapshot must survive.
+        await db.execute(sql`
+          insert into invoices (kind, number, customer_name, issue_date)
+          values ('Invoice', ${`DBTEST-UPGRADE-${run}`}, 'DBTEST upgrade', '2026-01-01')
+        `);
+        const seeded = await db.execute(sql`
+          insert into invoice_lines (invoice_id, description, quantity, unit_price_cents, line_total_cents)
+          select id, 'Legacy snapshot survives', 1, 100, 100 from invoices where number = ${`DBTEST-UPGRADE-${run}`}
+          returning id, invoice_id
+        `);
+        upgradeInvoiceId = (seeded.rows[0] as { invoice_id: number }).invoice_id;
+        await db.execute(sql`alter table invoice_lines drop column if exists inventory_item_id`);
+      }
+      await ensureInvoicingSchema();
+      const column = await db.execute(sql`
+        select is_nullable, data_type from information_schema.columns
+        where table_schema = 'public' and table_name = 'invoice_lines' and column_name = 'inventory_item_id'
+      `);
+      assertEq(column.rows.length, 1, "the inventory link column exists after the lazy setup");
+      const columnInfo = column.rows[0] as { is_nullable: string; data_type: string };
+      assertEq(columnInfo.is_nullable, "YES", "the link is nullable so historical lines stay valid");
+      assertEq(columnInfo.data_type, "integer", "the link is an integer id");
+      const index = await db.execute(sql`
+        select indexname from pg_indexes
+        where schemaname = 'public' and tablename = 'invoice_lines' and indexname = 'invoice_lines_inventory_item_idx'
+      `);
+      assertEq(index.rows.length, 1, "the link index exists");
+      const fk = await db.execute(sql`
+        select confdeltype from pg_constraint
+        where conrelid = 'invoice_lines'::regclass and contype = 'f'
+          and conkey = array[(select attnum from pg_attribute where attrelid = 'invoice_lines'::regclass and attname = 'inventory_item_id')]
+      `);
+      assertEq(fk.rows.length, 1, "the link has one foreign key");
+      assertEq((fk.rows[0] as { confdeltype: string }).confdeltype, "n", "deleting the stock item SET NULLs the link");
+      if (upgradeInvoiceId > 0) {
+        const legacy = await db.execute(sql`
+          select description, inventory_item_id from invoice_lines where invoice_id = ${upgradeInvoiceId}
+        `);
+        assertEq(legacy.rows.length, 1, "the pre-follow-up line is still there");
+        const legacyLine = legacy.rows[0] as { description: string; inventory_item_id: number | null };
+        assertEq(legacyLine.description, "Legacy snapshot survives", "the legacy description snapshot is untouched");
+        assertEq(legacyLine.inventory_item_id, null, "historical lines start unlinked");
+      }
+    });
+
     await check("lazy DDL creates the four tables with the columns Drizzle maps", async () => {
       await ensureInvoicingSchema();
       const result = await db.execute(sql`
@@ -120,7 +183,7 @@ async function main(): Promise<void> {
       for (const ref of [
         "invoices.kind", "invoices.number", "invoices.customer_name", "invoices.issue_date",
         "invoices.vat_rate", "invoices.subtotal_cents", "invoices.total_cents", "invoices.converted_from_id",
-        "invoice_lines.description", "invoice_lines.quantity", "invoice_lines.unit_price_cents",
+        "invoice_lines.inventory_item_id", "invoice_lines.description", "invoice_lines.quantity", "invoice_lines.unit_price_cents",
         "payments.amount_cents", "payments.paid_at", "payments.method",
         "document_counters.series", "document_counters.year", "document_counters.last_number",
       ]) {
@@ -226,6 +289,81 @@ async function main(): Promise<void> {
       assertEq(cancelled.status, "Cancelled", "open quote cancels");
       await expectFailure(() => convertQuote(quote.id, {}, createdById), { status: 409, message: /converted or cancelled/i });
       await expectFailure(() => cancelDocument(quote.id), { status: 409, message: /already cancelled or converted/i });
+    });
+
+    // ---- line stock picker (follow-up) ----
+    const stockRows = await db.insert(inventoryItems).values([
+      { sku: `DBTEST-OAK-${run}`, name: `DBTEST Oak Board ${run}`, category: "Wood & MDF Panels", unit: "sheets", stockQuantity: 42, unitCost: "55.00", reorderLevel: 10, location: "Rack 3-B" },
+      { sku: `DBTEST-EDGE-${run}`, name: `DBTEST Edge Band ${run}`, category: "Edge Banding", unit: "meters", stockQuantity: 900, unitCost: "0.35", reorderLevel: 20, location: "Rack 1-A" },
+      { sku: `DBTEST-HINGE-${run}`, name: `DBTEST Soft Hinge ${run}`, category: "Hardware & Fittings", unit: "pcs", stockQuantity: 500, unitCost: "1.20", reorderLevel: 50, location: "Bin 7" },
+    ]).returning({ id: inventoryItems.id, sku: inventoryItems.sku, name: inventoryItems.name });
+    const [oak, edge, hinge] = stockRows;
+    stockItemIds.push(...stockRows.map((row) => row.id));
+
+    await check("the picker list exposes stock identity only, never costs or quantities", async () => {
+      const list = await listStockIdentity();
+      const mine = list.filter((item) => stockItemIds.includes(item.id));
+      assertEq(mine.length, 3, "every DBTEST stock item is listed");
+      for (const item of mine) {
+        assertEq(Object.keys(item).sort().join(","), "category,id,name,sku,unit", "identity keys only");
+      }
+      const serialized = JSON.stringify(mine);
+      assert(!/unitCost|stockQuantity|reorderLevel|location|55\.00|0\.35/.test(serialized), "no cost or quantity field/value reaches the picker payload");
+      assertEq(mine.find((item) => item.id === oak.id)?.sku, oak.sku, "the SKU is exposed so typing can filter on it");
+    });
+
+    await check("picking a stock item saves its link and a name/SKU snapshot without touching price or stock", async () => {
+      const created = await createDocument("Invoice", docPayload({
+        lines: [
+          { inventoryItemId: oak.id, description: "", quantity: "3", unitPrice: "0.00" },
+          { description: "Design & installation fee", quantity: "1", unitPrice: "150.00" },
+        ],
+      }), createdById);
+      usedCounters.push({ series: "INV", year: 2026 });
+      const detail = await documentDetail(created.id);
+      const pickedLine = detail.lines.find((line) => line.inventoryItemId !== null);
+      const customLine = detail.lines.find((line) => line.inventoryItemId === null);
+      assert(pickedLine, "the picked line carries the inventory link");
+      assertEq(pickedLine?.inventoryItemId, oak.id, "the link points at the chosen item");
+      assertEq(pickedLine?.description, stockLineDescription(oak), "the server writes the name (SKU) snapshot");
+      assertEq(pickedLine?.unitPriceCents, 0, "the sales price is NOT auto-filled from cost");
+      assertEq(customLine?.description, "Design & installation fee", "a custom service/fee description stays unlinked");
+      assertEq(customLine?.inventoryItemId, null, "custom lines stay unlinked");
+      const after = await db.select({ stockQuantity: inventoryItems.stockQuantity, unitCost: inventoryItems.unitCost })
+        .from(inventoryItems).where(eq(inventoryItems.id, oak.id));
+      assertEq(after[0].stockQuantity, 42, "the invoice does not move stock");
+      assertEq(after[0].unitCost, "55.00", "the unit cost is untouched");
+      await expectFailure(
+        () => createDocument("Invoice", docPayload({
+          lines: [{ inventoryItemId: 999_999_999, description: "ghost item", quantity: "1", unitPrice: "1.00" }],
+        }), createdById),
+        { status: 409, message: /no longer exists/i },
+      );
+    });
+
+    await check("quotation conversion preserves the stock link and the snapshot", async () => {
+      const quote = await createDocument("Quote", docPayload({
+        lines: [{ inventoryItemId: edge.id, description: "", quantity: "12", unitPrice: "3.50" }],
+      }), createdById);
+      usedCounters.push({ series: "QUO", year: 2026 });
+      const invoice = await convertQuote(quote.id, {}, createdById);
+      usedCounters.push({ series: "INV", year: Number(invoice.number.split("-")[1]) });
+      const quoteLine = (await documentDetail(quote.id)).lines[0];
+      const invoiceLine = (await documentDetail(invoice.id)).lines[0];
+      assertEq(quoteLine.inventoryItemId, edge.id, "the quote line is linked");
+      assertEq(invoiceLine.inventoryItemId, edge.id, "the converted invoice keeps the link");
+      assertEq(invoiceLine.description, stockLineDescription(edge), "the snapshot converts with it");
+    });
+
+    await check("deleting a stock item clears only the link, never the description snapshot", async () => {
+      const created = await createDocument("Invoice", docPayload({
+        lines: [{ inventoryItemId: hinge.id, description: "", quantity: "4", unitPrice: "2.00" }],
+      }), createdById);
+      usedCounters.push({ series: "INV", year: 2026 });
+      await db.delete(inventoryItems).where(eq(inventoryItems.id, hinge.id));
+      const detail = await documentDetail(created.id);
+      assertEq(detail.lines[0].inventoryItemId, null, "the FK sets the deleted link to null");
+      assertEq(detail.lines[0].description, stockLineDescription(hinge), "the description snapshot survives the deletion");
     });
 
     // ---- payments ----
@@ -359,6 +497,13 @@ async function main(): Promise<void> {
           await db.delete(invoices).where(inArray(invoices.id, invoiceIdList));
         }
         await db.delete(customers).where(inArray(customers.id, customerIds));
+      }
+      if (upgradeInvoiceId > 0) {
+        await db.delete(invoiceLines).where(eq(invoiceLines.invoiceId, upgradeInvoiceId));
+        await db.delete(invoices).where(eq(invoices.id, upgradeInvoiceId));
+      }
+      if (stockItemIds.length > 0) {
+        await db.delete(inventoryItems).where(inArray(inventoryItems.id, stockItemIds));
       }
       await db.delete(users).where(eq(users.email, `dbtest-inv-${run}@example.test`));
       for (const entry of usedCounters) {

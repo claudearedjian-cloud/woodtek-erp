@@ -73,6 +73,7 @@ compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 compile("src/components/SupplierBillsView.tsx", "components/SupplierBillsView.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
 compile("src/components/MachineDowntimeLoginAlert.tsx", "components/MachineDowntimeLoginAlert.js");
+compile("src/components/InvoicingView.tsx", "components/InvoicingView.js");
 
 const React = require("react");
 const { renderToString } = require("react-dom/server");
@@ -2362,6 +2363,25 @@ check(
   "invoicing: A/R aging buckets split at 0/30/60/90 days past due",
 );
 check(inv.addDaysIso("2026-03-01", 30) === "2026-03-31" && inv.addDaysIso("2026-12-28", 5) === "2027-01-02", "invoicing: 30-day payment terms cross month and year ends correctly");
+
+// ---- line stock picker (follow-up: searchable description field) ----
+const stockRows = [
+  { id: 1, sku: "BOARD-MDF-18-OAK", name: "MDF Oak Board 18mm", category: "Wood & MDF Panels", unit: "sheets" },
+  { id: 2, sku: "EB-WHT-22", name: "White Edge Banding 22mm", category: "Edge Banding", unit: "meters" },
+  { id: 3, sku: "HNG-35", name: "Soft-close Hinge 35mm", category: "Hardware & Fittings", unit: "pcs" },
+];
+check(inv.stockLineDescription(stockRows[0]) === "MDF Oak Board 18mm (BOARD-MDF-18-OAK)", "stock picker: the description snapshot is Name (SKU)");
+check(inv.stockLineDescription({ name: "Design fee", sku: "" }) === "Design fee" && inv.stockLineDescription({ name: "x".repeat(400), sku: "S" }).length === inv.MAX_LINE_DESCRIPTION, "stock picker: a missing SKU falls back to the name and the snapshot respects the 200-character line limit");
+check(inv.filterStockItems(stockRows, "").length === 3 && inv.filterStockItems(stockRows, "oak board").length === 1 && inv.filterStockItems(stockRows, "eb-wht").length === 1 && inv.filterStockItems(stockRows, "edge band").length === 1 && inv.filterStockItems(stockRows, "meters").length === 1 && inv.filterStockItems(stockRows, "nothing here").length === 0, "stock picker: typing filters by item name, SKU, category or unit");
+check(inv.filterStockItems(stockRows, "  HINGE  ").length === 1 && inv.filterStockItems(stockRows, "", 2).length === 2 && inv.MAX_STOCK_PICKER_RESULTS === 50, "stock picker: the query is trimmed/case-insensitive and results are capped");
+const strippedIdentity = inv.stockIdentity({ ...stockRows[0], unitCost: "55.00", stockQuantity: 900, reorderLevel: 10, location: "Rack 3-B" });
+check(Object.keys(strippedIdentity).sort().join(",") === "category,id,name,sku,unit" && strippedIdentity.unitCost === undefined && strippedIdentity.stockQuantity === undefined && inv.STOCK_IDENTITY_KEYS.length === 5, "stock picker: identity helpers strip costs and quantities (never exposed to the picker)");
+check(inv.stockPickerQuery("MDF Oak Board 18mm (BOARD-MDF-18-OAK)", stockRows[0]) === "" && inv.stockPickerQuery("MDF Oak", stockRows[0]) === "MDF Oak" && inv.stockPickerQuery("", null) === "", "stock picker: clicking an untouched snapshot browses the whole list while any other text filters it");
+const pickedParse = inv.parseDocument("Invoice", { ...docInput, lines: [{ inventoryItemId: 7, description: "", quantity: "2", unitPrice: "10.00" }] });
+check(pickedParse.lines[0].inventoryItemId === 7 && pickedParse.lines[0].description === "" && pickedParse.subtotalCents === 2000, "stock picker: a picked link parses even before the server fills the snapshot text");
+check(inv.parseDocument("Invoice", docInput).lines[0].inventoryItemId === null && inv.optionalInventoryItemId(undefined) === null && inv.optionalInventoryItemId("") === null && inv.optionalInventoryItemId("12") === 12, "stock picker: custom service/fee lines stay unlinked and optional ids normalize to null");
+check(rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ inventoryItemId: 0, description: "x", quantity: "1", unitPrice: "0" }] })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ inventoryItemId: "abc", description: "x", quantity: "1", unitPrice: "0" }] })) && rejectsInvoice(() => inv.parseDocument("Invoice", { ...docInput, lines: [{ inventoryItemId: null, description: "", quantity: "1", unitPrice: "0" }] })), "stock picker: non-positive ids, junk ids and blank custom descriptions are rejected");
+check(inv.MAX_DOC_LINES === 50 && inv.parseDocument("Invoice", docInput).lines[0].lineTotalCents === 180000, "stock picker: the link never changes how a line total is computed");
 check(i18n.tt("ar", "Invoicing & A/R") === "الفواتير والذمم" && i18n.tt("fr", "Invoicing & A/R") === "Facturation & créances", "invoicing: Arabic and French sidebar labels ship with the screen");
 
 check(mgr.includes("Invoicing &amp; A/R"), "invoicing: Manager always sees the Invoicing & A/R screen");
@@ -2376,6 +2396,7 @@ const invoicingRoutePaths = [
   "src/app/api/invoicing/route.ts", "src/app/api/invoicing/[id]/route.ts",
   "src/app/api/invoicing/[id]/convert/route.ts", "src/app/api/invoicing/[id]/cancel/route.ts",
   "src/app/api/invoicing/[id]/payments/route.ts", "src/app/api/invoicing/payments/[id]/route.ts",
+  "src/app/api/invoicing/stock-items/route.ts",
 ];
 check(invoicingRoutePaths.every((p) => fs.readFileSync(p, "utf8").includes('authorizeModule("invoicing")')), "invoicing: EVERY quote/invoice/payment route enforces the optional module on the server");
 const invApiSource = fs.readFileSync("src/lib/invoicing.server.ts", "utf8");
@@ -2393,6 +2414,40 @@ check(ledgerServerSource.includes('source: "document"') && ledgerServerSource.in
 check(ledgerServerSource.includes("currentBalance: String(summary.balance)"), "invoicing: client balance re-syncs so credit checks see document totals");
 check(invUiSource.includes("/api/invoicing") && invUiSource.includes("jsPDF") && invUiSource.includes("Convert to invoice") && invUiSource.includes("Record payment") && invUiSource.includes("A/R aging"), "invoicing: UI issues quotes, invoices, payments, aging and printable PDFs");
 check(pageSource.includes("<InvoicingView") && pageSource.includes('subjectHasModule("invoicing", currentUser, optionalConfig)'), "invoicing: screen mounts behind the per-person grant");
+
+// ---- line stock picker wiring (follow-up) ----
+const invStockRouteSource = fs.readFileSync("src/app/api/invoicing/stock-items/route.ts", "utf8");
+const stockListSource = invApiSource.match(/export async function listStockIdentity[\s\S]*?\n}/)?.[0] ?? "";
+check(invStockRouteSource.includes('authorizeModule("invoicing")') && invStockRouteSource.includes("INVOICING_NO_STORE") && invStockRouteSource.includes("listStockIdentity"), "stock picker: the stock list route stays behind the Invoicing & Money grant");
+check(stockListSource.length > 0 && /map\(stockIdentity\)/.test(stockListSource) && !/unitCost|stockQuantity|reorderLevel|location/.test(stockListSource), "stock picker: the server list selects identity fields only — costs and quantities are never read");
+const invCreateSource = invApiSource.match(/export async function createDocument[\s\S]*?\n}/)?.[0] ?? "";
+check(invCreateSource.includes("stockIdentityById") && invCreateSource.includes("stockLineDescription") && invCreateSource.includes("InvoicingError(STOCK_GONE"), "stock picker: the server validates every picked id and snapshots the description itself");
+const invConvertSource = invApiSource.match(/export async function convertQuote[\s\S]*?\n}/)?.[0] ?? "";
+check(/inventoryItemId/.test(invConvertSource) && invConvertSource.includes("description: line.description"), "stock picker: quote conversion copies the stock link with the description snapshot");
+check(invSchemaSource.includes("inventory_item_id integer references inventory_items(id) on delete set null") && invSchemaSource.includes("alter table invoice_lines add column if not exists inventory_item_id") && invSchemaSource.includes("create index if not exists invoice_lines_inventory_item_idx"), "stock picker: lazy DDL adds the nullable link and its index additively for existing installations");
+check(dbxSchemaSource.includes('inventoryItemId: integer("inventory_item_id").references(() => inventoryItems.id, { onDelete: "set null" })') && dbxSchemaSource.includes('index("invoice_lines_inventory_item_idx").on(t.inventoryItemId)'), "stock picker: schema.ts keeps the link and its index in sync with the lazy DDL");
+check(invUiSource.includes("/api/invoicing/stock-items") && invUiSource.includes("filterStockItems") && invUiSource.includes("stockLineDescription") && invUiSource.includes("stockPickerQuery") && invUiSource.includes('role="combobox"') && invUiSource.includes('role="listbox"'), "stock picker: every draft line is a searchable stock combobox fed by the granted identity list");
+const pickHandlerSource = invUiSource.match(/const pick = \(item: StockItem\) => \{[\s\S]*?\n  \};/)?.[0] ?? "";
+check(pickHandlerSource.includes("inventoryItemId: item.id") && pickHandlerSource.includes("description: stockLineDescription(item)") && !/unitPrice|quantity/.test(pickHandlerSource), "stock picker: choosing an item stores the link + snapshot and never touches price or quantity");
+check(invUiSource.includes("Unlink (keep as custom text)") && invUiSource.includes("Custom service/fee line") && invUiSource.includes("keepLink"), "stock picker: custom service/fee descriptions stay available and editing text unlinks");
+check(!/unitCost|stockQuantity|reorderLevel/.test(invUiSource), "stock picker: the invoicing screen never handles costs or quantities");
+check(invUiSource.includes("inventoryItemId !== null && (") && invUiSource.includes("Linked to stock"), "stock picker: saved documents mark their stock-linked lines");
+const InvoicingViewModule = require("./compiled/components/InvoicingView.js");
+const linkedLineHtml = renderToString(React.createElement(InvoicingViewModule.StockPicker, {
+  line: { inventoryItemId: stockRows[0].id, description: inv.stockLineDescription(stockRows[0]), quantity: "1", unitPrice: "0.00" },
+  index: 0, items: stockRows, status: "ready", onChange: () => {},
+}));
+const customLineHtml = renderToString(React.createElement(InvoicingViewModule.StockPicker, {
+  line: { inventoryItemId: null, description: "Design & installation fee", quantity: "1", unitPrice: "150.00" },
+  index: 1, items: stockRows, status: "ready", onChange: () => {},
+}));
+check(linkedLineHtml.includes('role="combobox"') && linkedLineHtml.includes("MDF Oak Board 18mm (BOARD-MDF-18-OAK)") && linkedLineHtml.includes("Linked to stock") && linkedLineHtml.includes("BOARD-MDF-18-OAK") && linkedLineHtml.includes("Unlink (keep as custom text)") && linkedLineHtml.includes('maxLength="200"'), "stock picker: a picked line renders the combobox with its snapshot and a visible unlink");
+check(customLineHtml.includes("Design &amp; installation fee") && customLineHtml.includes("Custom service/fee line") && !customLineHtml.includes("Linked to stock"), "stock picker: a custom service/fee line renders without a stock link");
+const loadingHtml = renderToString(React.createElement(InvoicingViewModule.StockPicker, {
+  line: { inventoryItemId: null, description: "", quantity: "1", unitPrice: "0.00" },
+  index: 0, items: [], status: "error", onChange: () => {},
+}));
+check(!loadingHtml.includes("unitCost") && !loadingHtml.includes("stockQuantity"), "stock picker: the rendered picker never prints cost or quantity fields");
 
 // =====================================================================
 // Job costing & profitability (Phase B item 3)

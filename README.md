@@ -81,6 +81,34 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   indexes additively, alongside the purchasing tables' ritual. PR #10 merged
   2026-10-01 — run the usual factory PC update ritual to deploy.
 
+### Line stock picker (follow-up — PR #15 open, in review, not yet deployed)
+- Every quotation/invoice line description is now a **searchable stock picker**:
+  click the field to open the stock list, or type to filter it by item name,
+  SKU, category or unit. Picking an item saves the line's **stock link** and a
+  stable **"Name (SKU)" description snapshot**, so the printed document still
+  reads correctly after the item is renamed.
+- Custom service/fee lines still work: type anything instead of picking, or
+  press **Unlink (keep as custom text)** to keep the typed text as a custom
+  description. Editing the text after picking unlinks the line.
+- Picking an item changes nothing else — **no stock movement and no price**. The
+  sales price is never copied from the item's cost and stock quantities are
+  untouched; the picker only ever sees stock identity (name, SKU, category,
+  unit), never costs or quantities.
+- Quotations keep their links, and **Convert to invoice** carries the links and
+  the description snapshots onto the invoice. Deleting a stock item later only
+  clears its link — the saved line keeps its snapshot text.
+- Database: one nullable `invoice_lines.inventory_item_id` column (FK to the
+  stock item, `ON DELETE SET NULL`) plus its index, added **additively** by the
+  same lazy first-visit setup. Existing lines keep their snapshots and simply
+  start unlinked — no migration step, same update ritual.
+- **Status: prepared for review, not yet deployed to the factory PC.** Owner
+  smoke test after the branch is reviewed and merged: create an invoice → click
+  a line's description and watch the stock list open → type a SKU fragment to
+  filter → pick an item, confirm the field fills with "Name (SKU)" and the
+  green *Linked to stock* tag appears → type a service fee on the next line and
+  confirm it stays a custom description → save, then convert a quotation with a
+  picked line and confirm the invoice shows the same link.
+
 ## Job Costing & Profit (Phase B item 3, PR #12 — merged 2026-10-01)
 - New **Job Costing & Profit** screen answers "which jobs and clients actually make
   money?". It is behind the same **Invoicing & Money** switch as Invoicing & A/R

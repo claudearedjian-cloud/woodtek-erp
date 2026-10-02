@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowRight, Banknote, FileDown, FileText, Plus, Receipt, RefreshCw,
@@ -9,12 +9,15 @@ import {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
-  AGING_BUCKETS, AGING_LABELS, LEBANON_VAT_RATE, PAYMENT_METHODS,
-  type AgingBucket, type DocumentKind,
+  AGING_BUCKETS, AGING_LABELS, LEBANON_VAT_RATE, MAX_LINE_DESCRIPTION,
+  MAX_STOCK_PICKER_RESULTS, PAYMENT_METHODS, filterStockItems, stockLineDescription,
+  stockPickerQuery,
+  type AgingBucket, type DocumentKind, type StockIdentity,
 } from "@/lib/invoicing";
 
+type StockItem = StockIdentity;
 type DocLine = {
-  id: number; invoiceId: number; description: string; quantity: string;
+  id: number; invoiceId: number; inventoryItemId: number | null; description: string; quantity: string;
   unitPriceCents: number; lineTotalCents: number;
 };
 type Payment = {
@@ -38,15 +41,18 @@ type AgingRow = {
 };
 type Board = { documents: Doc[]; customers: Client[]; aging: AgingRow[]; today: string };
 
-type DraftLine = { description: string; quantity: string; unitPrice: string };
+type DraftLine = { inventoryItemId: number | null; description: string; quantity: string; unitPrice: string };
 type DocDraft = {
   kind: DocumentKind; customerId: string; issueDate: string; dueDate: string;
   vatRate: string; notes: string; lines: DraftLine[];
 };
+type StockStatus = "idle" | "loading" | "ready" | "error";
 
 const money = (cents: number) =>
   `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateLabel = (date: string | null) => (date ? date.slice(0, 10) : "—");
+
+const emptyLine = (): DraftLine => ({ inventoryItemId: null, description: "", quantity: "1", unitPrice: "0.00" });
 
 const emptyDraft = (kind: DocumentKind, today: string): DocDraft => ({
   kind,
@@ -55,7 +61,7 @@ const emptyDraft = (kind: DocumentKind, today: string): DocDraft => ({
   dueDate: "",
   vatRate: LEBANON_VAT_RATE,
   notes: "",
-  lines: [{ description: "", quantity: "1", unitPrice: "0.00" }],
+  lines: [emptyLine()],
 });
 
 async function send(url: string, method: string, body?: unknown) {
@@ -194,6 +200,125 @@ function exportPdf(doc: Doc) {
   pdf.save(`${doc.number}.pdf`);
 }
 
+/**
+ * Searchable stock picker for one draft line's description. Clicking opens the
+ * stock list; typing filters it by item name, SKU, category or unit. Choosing
+ * an item stores the inventory link plus the name/SKU description snapshot and
+ * never touches the quantity or the unit price. Typing instead of choosing is
+ * a custom service/fee line; editing or unlinking clears the stock link.
+ */
+export function StockPicker({
+  line, index, items, status, onChange,
+}: {
+  line: DraftLine; index: number; items: StockItem[]; status: StockStatus;
+  onChange: (patch: Partial<DraftLine>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const linked = line.inventoryItemId === null
+    ? null
+    : items.find((item) => item.id === line.inventoryItemId) ?? null;
+  const query = stockPickerQuery(line.description, linked);
+  const matches = useMemo(() => filterStockItems(items, query), [items, query]);
+  const active = Math.min(highlight, Math.max(0, matches.length - 1));
+  const listId = `stock-list-${index}`;
+
+  const pick = (item: StockItem) => {
+    onChange({ inventoryItemId: item.id, description: stockLineDescription(item) });
+    setOpen(false);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setHighlight(Math.min(active + 1, matches.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setOpen(true);
+      setHighlight(Math.max(active - 1, 0));
+    } else if (event.key === "Enter" && open && matches[active]) {
+      event.preventDefault(); // never submit the whole document from the picker
+      pick(matches[active]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div
+      className="relative min-w-0 flex-[3]"
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }}
+    >
+      <span className={labelClass}>
+        Description * <span className="normal-case tracking-normal text-slate-500">— search stock or type a service/fee</span>
+      </span>
+      <input
+        required
+        className={inputClass}
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        autoComplete="off"
+        maxLength={MAX_LINE_DESCRIPTION}
+        value={line.description}
+        placeholder="Search by name, SKU, category or unit…"
+        onFocus={() => { setOpen(true); setHighlight(0); }}
+        onChange={(event) => {
+          const description = event.target.value;
+          const keepLink = linked !== null && description.trim() === stockLineDescription(linked);
+          onChange({ description, inventoryItemId: keepLink ? line.inventoryItemId : null });
+          setOpen(true);
+          setHighlight(0);
+        }}
+        onKeyDown={onKeyDown}
+      />
+      {open && (
+        <div id={listId} role="listbox" aria-label="Stock items" className="absolute left-0 right-0 z-[95] mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">
+          {status === "loading" && <div className="px-3 py-2 text-[11px] text-slate-400">Loading the stock list…</div>}
+          {status === "error" && <div className="px-3 py-2 text-[11px] text-amber-300">Stock list unavailable — type a custom description instead.</div>}
+          {status === "ready" && matches.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-slate-500">No stock item matches — keep typing to use this as a custom description.</div>
+          )}
+          {matches.map((item, position) => (
+            <button
+              key={item.id}
+              type="button"
+              role="option"
+              aria-selected={item.id === line.inventoryItemId}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setHighlight(position)}
+              onClick={() => pick(item)}
+              className={`block w-full px-3 py-1.5 text-left text-xs transition ${position === active ? "bg-amber-500/15" : ""}`}
+            >
+              <span className="font-bold text-white">{item.name}</span>
+              <span className="ml-1.5 font-mono text-[10px] text-amber-300">{item.sku}</span>
+              <span className="block text-[10px] text-slate-500">{item.category} · {item.unit}</span>
+            </button>
+          ))}
+          {status === "ready" && matches.length === MAX_STOCK_PICKER_RESULTS && (
+            <div className="border-t border-slate-800 px-3 py-1.5 text-[10px] text-slate-600">Showing the first {MAX_STOCK_PICKER_RESULTS} matches — keep typing to narrow it down.</div>
+          )}
+        </div>
+      )}
+      {line.inventoryItemId !== null ? (
+        <span className="mt-1 flex flex-wrap items-center gap-2 text-[10px]">
+          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-black text-emerald-300">
+            Linked to stock{linked ? ` · ${linked.sku}` : ""}
+          </span>
+          <button type="button" className="text-slate-500 underline hover:text-rose-300"
+            onClick={() => onChange({ inventoryItemId: null })}>
+            Unlink (keep as custom text)
+          </button>
+        </span>
+      ) : (
+        <span className="mt-1 block text-[10px] text-slate-500">Custom service/fee line — or pick a stock item above.</span>
+      )}
+    </div>
+  );
+}
+
 export default function InvoicingView() {
   const [board, setBoard] = useState<Board | null>(null);
   const [loading, setLoading] = useState(true);
@@ -209,6 +334,28 @@ export default function InvoicingView() {
   const [payForm, setPayForm] = useState({ amount: "", paidAt: "", method: "Cash", reference: "", notes: "" });
   const [convertFor, setConvertFor] = useState<Doc | null>(null);
   const [convertDue, setConvertDue] = useState("");
+  const [stockItems, setStockItems] = useState<StockItem[]>([]);
+  const [stockStatus, setStockStatus] = useState<StockStatus>("idle");
+  const stockLoading = useRef(false);
+
+  // Identity-only stock list for the line pickers (the route behind the same
+  // Invoicing & Money grant never returns costs or quantities). Reloaded each
+  // time a draft opens so renamed items stay current; a failure just leaves
+  // the picker to plain custom descriptions.
+  const loadStockItems = async () => {
+    if (stockLoading.current) return;
+    stockLoading.current = true;
+    setStockStatus("loading");
+    try {
+      const data = await send("/api/invoicing/stock-items", "GET");
+      setStockItems(Array.isArray(data?.items) ? (data.items as StockItem[]) : []);
+      setStockStatus("ready");
+    } catch {
+      setStockStatus("error");
+    } finally {
+      stockLoading.current = false;
+    }
+  };
 
   const refresh = async () => {
     try {
@@ -279,6 +426,7 @@ export default function InvoicingView() {
         vatRate: draft.vatRate,
         notes: draft.notes,
         lines: draft.lines.map((line) => ({
+          inventoryItemId: line.inventoryItemId,
           description: line.description,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
@@ -341,9 +489,15 @@ export default function InvoicingView() {
     });
   };
 
+  const updateDraftLine = (index: number, patch: Partial<DraftLine>) => {
+    if (!draft) return;
+    setDraft({ ...draft, lines: draft.lines.map((line, i) => (i === index ? { ...line, ...patch } : line)) });
+  };
+
   const openDraft = (kind: DocumentKind) => {
     setNotice("");
     setDraft(emptyDraft(kind, board?.today ?? new Date().toISOString().slice(0, 10)));
+    void loadStockItems();
   };
 
   const draftTotals = useMemo(() => {
@@ -546,7 +700,12 @@ export default function InvoicingView() {
                 <tbody>
                   {selected.lines.map((line) => (
                     <tr key={line.id} className="border-t border-slate-800">
-                      <td className="py-1.5 pr-2 text-slate-200">{line.description}</td>
+                      <td className="py-1.5 pr-2 text-slate-200">
+                        {line.description}
+                        {line.inventoryItemId !== null && (
+                          <span className="ml-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[9px] font-black text-emerald-300" title="Linked to a stock item">stock</span>
+                        )}
+                      </td>
                       <td className="py-1.5 text-right font-mono text-slate-300">{line.quantity}</td>
                       <td className="py-1.5 text-right font-mono text-slate-300">{money(line.unitPriceCents)}</td>
                       <td className="py-1.5 text-right font-mono font-bold text-white">{money(line.lineTotalCents)}</td>
@@ -634,29 +793,30 @@ export default function InvoicingView() {
               <div className="flex items-center justify-between">
                 <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-400">Lines</h3>
                 <button type="button" className={secondaryClass} disabled={draft.lines.length >= 50}
-                  onClick={() => setDraft({ ...draft, lines: [...draft.lines, { description: "", quantity: "1", unitPrice: "0.00" }] })}>
+                  onClick={() => setDraft({ ...draft, lines: [...draft.lines, emptyLine()] })}>
                   <Plus className="inline h-3.5 w-3.5" /> Add line
                 </button>
               </div>
               {draft.lines.map((line, index) => (
-                <div key={index} className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-2">
-                  <label className="min-w-0 flex-[3]">
-                    <span className={labelClass}>Description *</span>
-                    <input required className={inputClass} value={line.description}
-                      onChange={(e) => setDraft({ ...draft, lines: draft.lines.map((l, i) => i === index ? { ...l, description: e.target.value } : l) })}
-                      placeholder="e.g. Custom oak kitchen — 50% deposit" />
-                  </label>
+                <div key={index} className="flex flex-wrap items-start gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-2">
+                  <StockPicker
+                    line={line}
+                    index={index}
+                    items={stockItems}
+                    status={stockStatus}
+                    onChange={(patch) => updateDraftLine(index, patch)}
+                  />
                   <label className="w-24">
                     <span className={labelClass}>Qty *</span>
                     <input required type="number" step="0.01" min="0.01" className={inputClass} value={line.quantity}
-                      onChange={(e) => setDraft({ ...draft, lines: draft.lines.map((l, i) => i === index ? { ...l, quantity: e.target.value } : l) })} />
+                      onChange={(e) => updateDraftLine(index, { quantity: e.target.value })} />
                   </label>
                   <label className="w-32">
                     <span className={labelClass}>Unit price ($) *</span>
                     <input required type="number" step="0.01" min="0" className={inputClass} value={line.unitPrice}
-                      onChange={(e) => setDraft({ ...draft, lines: draft.lines.map((l, i) => i === index ? { ...l, unitPrice: e.target.value } : l) })} />
+                      onChange={(e) => updateDraftLine(index, { unitPrice: e.target.value })} />
                   </label>
-                  <button type="button" className="rounded-lg p-2 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400 disabled:opacity-30"
+                  <button type="button" className="mt-[18px] rounded-lg p-2 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400 disabled:opacity-30"
                     disabled={draft.lines.length <= 1}
                     onClick={() => setDraft({ ...draft, lines: draft.lines.filter((_, i) => i !== index) })}>
                     <Trash2 className="h-3.5 w-3.5" />
