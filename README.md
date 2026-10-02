@@ -81,7 +81,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   indexes additively, alongside the purchasing tables' ritual. PR #10 merged
   2026-10-01 — run the usual factory PC update ritual to deploy.
 
-### Line stock picker (follow-up — in review, not yet deployed)
+### Line stock picker (follow-up — PR #15 open, in review, not yet deployed)
 - Every quotation/invoice line description is now a **searchable stock picker**:
   click the field to open the stock list, or type to filter it by item name,
   SKU, category or unit. Picking an item saves the line's **stock link** and a
