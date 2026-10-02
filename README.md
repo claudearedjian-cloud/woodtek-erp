@@ -81,7 +81,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   indexes additively, alongside the purchasing tables' ritual. PR #10 merged
   2026-10-01 — run the usual factory PC update ritual to deploy.
 
-### Line stock picker (follow-up — PR #15 open, in review, not yet deployed)
+### Line stock picker (follow-up — PR #15 merged 2026-10-02)
 - Every quotation/invoice line description is now a **searchable stock picker**:
   click the field to open the stock list, or type to filter it by item name,
   SKU, category or unit. Picking an item saves the line's **stock link** and a
@@ -101,8 +101,9 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   stock item, `ON DELETE SET NULL`) plus its index, added **additively** by the
   same lazy first-visit setup. Existing lines keep their snapshots and simply
   start unlinked — no migration step, same update ritual.
-- **Status: prepared for review, not yet deployed to the factory PC.** Owner
-  smoke test after the branch is reviewed and merged: create an invoice → click
+- **Status: merged to `main` (PR #15, 2026-10-02) — deploy with the usual factory
+  PC update ritual (`update-woodtek.bat`).** Owner smoke test after deploying:
+  create an invoice → click
   a line's description and watch the stock list open → type a SKU fragment to
   filter → pick an item, confirm the field fills with "Name (SKU)" and the
   green *Linked to stock* tag appears → type a service fee on the next line and
