@@ -64,6 +64,11 @@ The installed PC does **not** need git, Node.js, or an internet connection.
 build-update.bat
 ```
 
+The build has to stop the WoodTek server to rebuild the standalone folder —
+`build-update.bat` **starts it again** afterwards and tells you the build number
+that came back up. (If Windows blocks that, it says so and tells you the one
+command to run yourself.)
+
 Output:
 
 ```
