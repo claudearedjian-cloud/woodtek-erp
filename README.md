@@ -165,10 +165,17 @@ build-installer.bat
 - Matrix lives in `src/lib/moduleAccess.ts`; enforced by sidebar + page guard.
 
 ## Update flow
-Changes are committed and pushed to this repo. On the factory PC:
-```
-git pull
-node scripts\build-prod.cjs
-(restart the server)
-```
-`.env`, `node_modules/`, `.next/`, `logs/`, `backups/` are NOT tracked.
+Two different jobs. The full procedure — including rollback and a troubleshooting
+table — lives in **[UPDATING.md](UPDATING.md)**.
+
+- **Build PC** (the one with `src\` and git): once the change is pushed,
+  double-click `update-woodtek.bat` — it pulls, installs, stops the server,
+  rebuilds and restarts it.
+- **Installed PC** (`C:\WoodTek-ERP`, no git, installed from
+  `WoodTek-ERP-Setup.exe`): run `build-update.bat` on the build PC to produce
+  `dist-update\WoodTek-ERP-Update-<version>.zip`, copy the `.zip` **and** its
+  `.sha256` file to the target PC, then double-click
+  `installer\apply-update.bat` there.
+
+`.env`, `node_modules/`, `.next/`, `logs/`, `backups/` and `data/` are NOT
+tracked, and an update never overwrites them on the target machine.
