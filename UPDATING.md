@@ -115,7 +115,9 @@ Click **Yes** on the administrator prompt. You will see it work through 8 steps:
 7. **Syncing the database schema** — re-applies `installer\schema.sql`, which
    **adds** new tables and columns and never drops or clears existing data.
 8. **Starting the server and verifying health** — waits up to 90 seconds for
-   `/api/health` to answer `200 OK`.
+   `/api/health` to answer `200 OK`, then prints the build number the server
+   actually reports and warns you if it does not match the pack. (A mismatch is
+   almost always a browser tab showing a cached page — press **Ctrl+F5**.)
 
 Finish:
 
@@ -148,11 +150,26 @@ are installed**. To change that, re-run `WoodTek-ERP-Setup.exe` or use
 
 ## Which version am I running?
 
-- **In the app:** Settings → the build stamp shows the git commit the running
-  build came from (`scripts\build-prod.cjs` stamps it at build time).
+- **After an update:** `apply-update.bat` prints `Running build: <sha>` and warns
+  you if it does not match the pack. That is the one to trust — it is read back
+  from the server, not from your browser.
+- **In the app:** Settings → the build stamp, bottom of the page. Same number.
+- **From anywhere on the network:** <http://localhost:3000/api/health> returns
+  `{"ok":true,"build":"0b83546"}`. Handy for checking a PC without walking to it.
 - **On disk (installed PC):** `C:\WoodTek-ERP\update-applied.json` — the manifest
   of the pack that was applied last.
 - **Inside a pack:** `update.json` at the root of the `.zip`.
+
+The number is the **git commit** the build was made from, stamped in by
+`scripts\build-prod.cjs`. So:
+
+- it only changes when you **rebuild** after new code arrives — `git pull` alone
+  does not move it;
+- if it shows `dev`, the bundle was built with `npx next build` directly instead
+  of `node scripts\build-prod.cjs`, and no stamp was applied;
+- **`Build: 0b83546` after an update is not a failure** — it means `git pull`
+  found nothing newer than commit `0b83546`. Check whether the change you are
+  waiting for has actually been merged into the branch you pull from.
 
 ---
 
