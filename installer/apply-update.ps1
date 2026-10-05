@@ -16,7 +16,9 @@
 #   4. Moves the current .next\standalone aside — that is the rollback copy
 #   5. Unpacks the new application files over the installation
 #   6. Re-applies installer\schema.sql (adds new tables, keeps all data)
-#   7. Restarts the server and waits for /api/health -> 200 OK
+#   7. Restarts the server and waits for /api/health -> 200 OK, then reads the
+#      build number the server reports and checks it against the pack — the
+#      update is VERIFIED, not assumed (no opening Settings to read it by eye)
 #   8. If health never comes up, automatically rolls back to step 4's copy
 #
 # NEVER TOUCHED on this PC (that is the whole point):
@@ -159,6 +161,35 @@ function Wait-ForHealth([int]$TimeoutSeconds) {
         } catch {}
     }
     return $false
+}
+
+# The build number the RUNNING server reports (src\app\api\health\route.ts).
+# Null when the server is older than this feature, or was built without
+# scripts\build-prod.cjs.
+function Get-HealthBuild {
+    try {
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        if ($resp.StatusCode -eq 200) {
+            $payload = $resp.Content | ConvertFrom-Json
+            if ($payload -and $payload.build) { return [string]$payload.build }
+        }
+    } catch {}
+    return $null
+}
+
+# Compare what is running against what the pack was built from. Never fatal —
+# a mismatch is usually just a browser tab showing a cached page.
+function Show-RunningBuild([string]$ExpectedSha) {
+    $running = Get-HealthBuild
+    if (-not $running) {
+        Write-Warn "The server did not report a build number — read it in Settings (bottom of the page)."
+        return
+    }
+    Write-Host "  Running build: $running" -ForegroundColor Green
+    if ($ExpectedSha -and ($ExpectedSha -ne "nogit") -and ($running -ne $ExpectedSha)) {
+        Write-Warn "This pack was built from $ExpectedSha, but the server reports $running."
+        Write-Warn "The files were applied — most likely the browser is showing a cached page. Press Ctrl+F5."
+    }
 }
 
 # ----------------------------------------------------------------------------
@@ -424,6 +455,9 @@ Start-WoodTekServer
 if (Wait-ForHealth 90) {
     Write-Banner "UPDATE COMPLETE"
     Write-Host "  WoodTek ERP $packVersion is running and healthy at http://localhost:$Port" -ForegroundColor Green
+    $expectedSha = ""
+    if ($manifest -and $manifest.gitSha) { $expectedSha = [string]$manifest.gitSha }
+    Show-RunningBuild $expectedSha
 } else {
     # ---- automatic rollback -------------------------------------------------
     Write-Host "`n  The server did not answer /api/health within 90 seconds." -ForegroundColor Red
@@ -437,6 +471,7 @@ if (Wait-ForHealth 90) {
         Start-WoodTekServer
         if (Wait-ForHealth 90) {
             Write-Host "  Rolled back successfully — the previous version is running again." -ForegroundColor Green
+            Show-RunningBuild ""
         } else {
             Write-Host "  Rollback done, but the server still is not answering. See $InstallDir\logs\woodtek.log" -ForegroundColor Red
         }
