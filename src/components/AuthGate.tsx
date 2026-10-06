@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
+import { currentAppearance } from "@/lib/appearance";
 
 interface AuthGateProps {
   users: any[];
@@ -25,6 +26,11 @@ interface AuthGateProps {
 }
 
 export default function AuthGate({ users, initialUser, required, onAuthenticated, onCancel, demoMode = false, lang = "en" }: AuthGateProps) {
+  // Factory branding on the door of the app (Settings → Appearance). The label
+  // is hoisted out of JSX on purpose: reading it inline would change the
+  // inferred dependencies of the manual useCallback below.
+  const brand = currentAppearance();
+  const factoryLabel = brand.factoryName?.trim() || "";
   const [selectedId, setSelectedId] = useState<number | null>(initialUser?.id || null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -154,7 +160,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
         <div className="my-auto w-full max-w-xl overflow-hidden rounded-3xl border border-slate-700/80 bg-slate-900 shadow-2xl shadow-black/60">
           <div className="border-b border-slate-800 bg-slate-950/80 px-6 py-5">
             <div className="flex items-center gap-3">
-              <BrandMark size={44} />
+              <BrandMark size={44} logo={brand.logoDataUrl || undefined} />
               <div>
                 <h2 className="text-lg font-black text-white">Create Factory Owner</h2>
                 <p className="text-xs text-slate-400">First-run setup · creates the only initial Manager account</p>
@@ -268,6 +274,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
             <BrandMark size={44} />
             <div>
               <h2 className="text-lg font-black text-white">{required ? tt(lang, "WoodTek ERP Sign In") : tt(lang, "Authorize Role Switch")}</h2>
+              {factoryLabel && <p className="text-xs font-bold text-amber-400">{factoryLabel}</p>}
               <p className="text-xs text-slate-400">
                 {demoMode ? tt(lang, "Choose a demo mode or sign in with your employee PIN.") : tt(lang, "Select your profile and enter your personal shop PIN.")}
               </p>

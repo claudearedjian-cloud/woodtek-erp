@@ -1,14 +1,31 @@
 /**
  * BrandMark — the WoodTek "WT" monogram, used across the sidebar, sign-in
  * screen and header. A single source of truth for the brand tile.
+ *
+ * When the factory has uploaded a logo (Settings → Appearance), that logo is
+ * shown instead of the monogram — the same tile, their identity.
  */
 export default function BrandMark({
   size = 40,
   className = "",
+  logo,
 }: {
   size?: number;
   className?: string;
+  logo?: string;
 }) {
+  if (logo) {
+    return (
+      <span
+        className={`relative inline-flex shrink-0 select-none items-center justify-center overflow-hidden rounded-xl bg-slate-950 shadow-lg ring-1 ring-inset ring-amber-500/30 ${className}`}
+        style={{ width: size, height: size }}
+        aria-hidden="true"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logo} alt="" className="h-full w-full object-contain p-0.5" />
+      </span>
+    );
+  }
   return (
     <span
       className={`relative inline-flex shrink-0 select-none items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-700 font-black text-slate-950 shadow-lg shadow-amber-950/50 ring-1 ring-inset ring-white/25 ${className}`}

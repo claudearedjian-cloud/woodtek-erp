@@ -8,6 +8,13 @@
 // to a combined Materials + shared Operations view.
 // ============================================================================
 
+import {
+  brandShort,
+  brandTagline,
+  currentAppearance,
+  documentBrandLine,
+} from "@/lib/appearance";
+
 export const JOB_TICKET_VERSION = 1;
 
 function esc(value: unknown): string {
@@ -72,6 +79,7 @@ export function buildJobTicketHtml(order: any, opts: JobTicketBuildOptions = {})
   const inventoryItems: any[] = Array.isArray(opts.inventoryItems) ? opts.inventoryItems : [];
   const machines: any[] = Array.isArray(opts.machines) ? opts.machines : [];
   const qrDataUrl = opts.qrDataUrl || null;
+  const brand = currentAppearance();
   const generatedAt = opts.generatedAt ? new Date(String(opts.generatedAt)) : new Date();
   const genStamp = Number.isNaN(generatedAt.getTime()) ? new Date().toLocaleString() : generatedAt.toLocaleString();
 
@@ -361,8 +369,13 @@ export function buildJobTicketHtml(order: any, opts: JobTicketBuildOptions = {})
     <div style="background:#0f172a;border-radius:14px;overflow:hidden;border:1px solid #1e293b">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px 14px">
         <div>
-          <div style="color:#f59e0b;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">WOODTEK</div>
-          <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">Furniture Service Center</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${brand.logoDataUrl ? `<img src="${brand.logoDataUrl}" alt="" style="height:34px;max-width:120px;object-fit:contain" />` : ""}
+            <div>
+              <div style="color:#f59e0b;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">${esc(brandShort(brand).toUpperCase())}</div>
+              <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">${esc(brandTagline(brand))}</div>
+            </div>
+          </div>
           <div style="margin-top:10px;display:inline-flex;align-items:center;gap:8px;background:#f59e0b;color:#0f172a;font-weight:900;font-size:11px;letter-spacing:0.1em;padding:5px 10px;border-radius:999px;text-transform:uppercase">Job Ticket</div>
         </div>
         <div style="text-align:right;min-width:180px">
@@ -458,7 +471,7 @@ export function buildJobTicketHtml(order: any, opts: JobTicketBuildOptions = {})
     </div>
 
     <div style="margin-top:18px;text-align:center;font-size:9px;color:#94a3b8">
-      WoodTek ERP — Furniture Service Center · Job ticket travels with the job · Generated ${esc(genStamp)} · ${esc(orderNumber)}
+      ${esc(documentBrandLine(brand))} · Job ticket travels with the job · Generated ${esc(genStamp)} · ${esc(orderNumber)}
     </div>
 
     <div class="cut no-print" style="margin-top:16px"><span>✂ cut here — keep with the batch</span></div>

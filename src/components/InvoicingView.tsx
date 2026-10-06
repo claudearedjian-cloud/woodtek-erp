@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { currentAppearance } from "@/lib/appearance";
+import { drawBrandBand, drawContactFooter } from "@/lib/brandPdf";
 import {
   AGING_BUCKETS, AGING_LABELS, LEBANON_VAT_RATE, MAX_LINE_DESCRIPTION,
   MAX_STOCK_PICKER_RESULTS, PAYMENT_METHODS, filterStockItems, stockLineDescription,
@@ -112,21 +114,11 @@ function stateBadge(doc: Doc) {
 /** House-style printable PDF (same palette as the client statement). */
 function exportPdf(doc: Doc) {
   const pdf = new jsPDF();
-  pdf.setFillColor(15, 23, 42);
-  pdf.rect(0, 0, 210, 26, "F");
-  pdf.setFillColor(245, 158, 11);
-  pdf.rect(0, 26, 210, 1.2, "F");
-  pdf.setTextColor(245, 158, 11);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(16);
-  pdf.text("WOODTEK", 14, 12);
-  pdf.setTextColor(255, 255, 255);
-  pdf.setFontSize(11);
-  pdf.text(doc.kind === "Quote" ? "QUOTATION" : "VAT INVOICE", 14, 20);
-  pdf.setFontSize(9);
-  pdf.setTextColor(200, 210, 230);
-  pdf.text(doc.number, 196, 12, { align: "right" });
-  pdf.text("Furniture Service Center", 196, 20, { align: "right" });
+  const brand = currentAppearance();
+  drawBrandBand(pdf, brand, {
+    docType: doc.kind === "Quote" ? "QUOTATION" : "VAT INVOICE",
+    rightTop: doc.number,
+  });
 
   pdf.setTextColor(15, 23, 42);
   pdf.setFontSize(15);
@@ -191,12 +183,13 @@ function exportPdf(doc: Doc) {
     });
   }
 
+  drawContactFooter(pdf, brand, 279);
   pdf.setFontSize(8);
   pdf.setTextColor(100, 116, 139);
   const footer = doc.kind === "Quote"
     ? `Quotation ${doc.number} — prices valid until ${dateLabel(doc.dueDate) || "further notice"}.`
     : `VAT invoice ${doc.number} — VAT rate ${doc.vatRate}% (snapshot at issue). Thank you for your business.`;
-  pdf.text(footer, 14, 287);
+  pdf.text(footer, 14, 289);
   pdf.save(`${doc.number}.pdf`);
 }
 

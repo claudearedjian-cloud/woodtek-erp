@@ -7,6 +7,8 @@
 // sends them through the SMTP account configured in Settings.
 // ============================================================================
 
+import { brandName, brandShort, currentAppearance } from "@/lib/appearance";
+
 export const EMAIL_DISPATCH_VERSION = 1;
 
 import { isValidEmail } from "@/lib/emailConfig";
@@ -100,6 +102,7 @@ function formatStamp(value?: string | Date): string {
  * message are HTML-escaped — they come from a form field, not the DB.
  */
 export function buildEmailHtmlBody(parts: EmailBodyParts): string {
+  const brand = currentAppearance();
   const attachments = Array.isArray(parts.attachments)
     ? parts.attachments.map((a) => String(a)).filter(Boolean).slice(0, 10)
     : [];
@@ -112,7 +115,10 @@ export function buildEmailHtmlBody(parts: EmailBodyParts): string {
 <body style="margin:0;padding:24px;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
   <div style="max-width:640px;margin:0 auto">
     <div style="background:#0f172a;border-radius:10px 10px 0 0;padding:16px 20px">
-      <div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#f8fafc">WOODTEK</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        ${brand.logoDataUrl ? `<img src="${brand.logoDataUrl}" alt="" style="height:26px;max-width:110px;object-fit:contain" />` : ""}
+        <div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#f8fafc">${esc(brandShort(brand).toUpperCase())}</div>
+      </div>
       <div style="font-size:10px;font-weight:bold;letter-spacing:1px;color:#38bdf8;text-transform:uppercase">Production order documents</div>
     </div>
     <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 10px 10px;padding:20px">
@@ -124,7 +130,7 @@ export function buildEmailHtmlBody(parts: EmailBodyParts): string {
       ${attList}
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0 10px" />
       <div style="font-size:10px;color:#94a3b8">
-        Sent${parts.senderName ? ` by ${esc(parts.senderName)}` : ""} from WoodTek ERP on ${esc(formatStamp(parts.generatedAt))}.
+        Sent${parts.senderName ? ` by ${esc(parts.senderName)}` : ""} from ${esc(brandName(brand))} on ${esc(formatStamp(parts.generatedAt))}.
       </div>
     </div>
   </div>
@@ -152,7 +158,8 @@ export function buildEmailTextBody(parts: EmailBodyParts): string {
     ? parts.attachments.map((a) => String(a)).filter(Boolean).slice(0, 10)
     : [];
   const lines: string[] = [];
-  lines.push("WOODTEK — Production order documents");
+  const brand = currentAppearance();
+  lines.push(`${brandShort(brand).toUpperCase()} — Production order documents`);
   lines.push("=".repeat(44));
   if (parts.orderNumber) lines.push(parts.orderNumber);
   lines.push(parts.title);
@@ -166,6 +173,6 @@ export function buildEmailTextBody(parts: EmailBodyParts): string {
     lines.push("  (none)");
   }
   lines.push("");
-  lines.push(`Sent${parts.senderName ? ` by ${parts.senderName}` : ""} from WoodTek ERP on ${formatStamp(parts.generatedAt)}.`);
+  lines.push(`Sent${parts.senderName ? ` by ${parts.senderName}` : ""} from ${brandName(brand)} on ${formatStamp(parts.generatedAt)}.`);
   return lines.join("\n");
 }

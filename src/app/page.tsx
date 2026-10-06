@@ -10,6 +10,7 @@ import { canAccessModule, listModulesForRole, type ModuleId } from "@/lib/module
 import { getLandingTab, type MenuConfig } from "@/lib/menuConfig";
 import { loadSavedLang, saveLang, type Lang } from "@/lib/i18n";
 import { LangProvider } from "@/lib/langContext";
+import { AppearanceProvider } from "@/lib/appearanceContext";
 import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 import { canSeeMoney, sanitizeOptionalModules, screenAllowedForSubject, subjectHasModule, type OptionalModulesConfig } from "@/lib/optionalModules";
@@ -634,6 +635,7 @@ export default function WoodTekERP() {
   }, [currentUser, activeTab, menuConfig, optionalConfig]);
 
   return (
+    <AppearanceProvider>
     <LangProvider lang={lang}>
     <div className="app-bg flex h-screen text-slate-100 font-sans overflow-hidden antialiased">
       {idleWarnSec != null && (
@@ -769,5 +771,6 @@ export default function WoodTekERP() {
       )}
       </div>
     </LangProvider>
+    </AppearanceProvider>
   );
 }

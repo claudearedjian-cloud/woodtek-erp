@@ -5,6 +5,13 @@
 // One pack per production order.
 // ============================================================================
 
+import {
+  brandShort,
+  brandTagline,
+  currentAppearance,
+  documentBrandLine,
+} from "@/lib/appearance";
+
 export const DISPATCH_PACK_VERSION = 1;
 
 function esc(value: unknown): string {
@@ -71,6 +78,7 @@ export function buildDispatchPackHtml(order: any, opts: DispatchPackBuildOptions
   const inventoryItems: any[] = Array.isArray(opts.inventoryItems) ? opts.inventoryItems : [];
   const machines: any[] = Array.isArray(opts.machines) ? opts.machines : [];
   const qrDataUrl = opts.qrDataUrl || null;
+  const brand = currentAppearance();
   const packingTemplate: string[] = Array.isArray(opts.packingTemplate) ? opts.packingTemplate : [];
   const packingChecks: boolean[] = Array.isArray(opts.packingChecks) ? opts.packingChecks : [];
   const batchPackingChecks = opts.batchPackingChecks && typeof opts.batchPackingChecks === "object" ? opts.batchPackingChecks : {};
@@ -431,8 +439,13 @@ export function buildDispatchPackHtml(order: any, opts: DispatchPackBuildOptions
     <div style="background:#0f172a;border-radius:14px;overflow:hidden;border:1px solid #1e293b">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px 14px">
         <div>
-          <div style="color:#818cf8;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">WOODTEK</div>
-          <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">Furniture Service Center</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${brand.logoDataUrl ? `<img src="${brand.logoDataUrl}" alt="" style="height:34px;max-width:120px;object-fit:contain" />` : ""}
+            <div>
+              <div style="color:#818cf8;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">${esc(brandShort(brand).toUpperCase())}</div>
+              <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">${esc(brandTagline(brand))}</div>
+            </div>
+          </div>
           <div style="margin-top:10px;display:inline-flex;align-items:center;gap:8px;background:#6366f1;color:#fff;font-weight:900;font-size:11px;letter-spacing:0.1em;padding:5px 10px;border-radius:999px;text-transform:uppercase">Dispatch Pack</div>
         </div>
         <div style="text-align:right;min-width:180px">
@@ -600,7 +613,7 @@ export function buildDispatchPackHtml(order: any, opts: DispatchPackBuildOptions
     </div>
 
     <div style="margin-top:18px;text-align:center;font-size:9px;color:#94a3b8">
-      WoodTek ERP — Furniture Service Center · Dispatch Pack travels with the goods · Generated ${esc(genStamp)} · ${esc(orderNumber)} · QC ${qcDone}/${qcTotal || 0} · Photos ${photosCount}
+      ${esc(documentBrandLine(brand))} · Dispatch Pack travels with the goods · Generated ${esc(genStamp)} · ${esc(orderNumber)} · QC ${qcDone}/${qcTotal || 0} · Photos ${photosCount}
     </div>
 
     <div class="cut no-print" style="margin-top:16px"><span>✂ cut here — client copy / WoodTek copy</span></div>
