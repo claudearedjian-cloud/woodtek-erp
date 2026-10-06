@@ -9,6 +9,13 @@
 // delivery instructions and 4-signature footer.
 // ============================================================================
 
+import {
+  brandShort,
+  brandTagline,
+  currentAppearance,
+  documentBrandLine,
+} from "@/lib/appearance";
+
 export const DELIVERY_NOTE_VERSION = 1;
 
 function esc(value: unknown): string {
@@ -58,6 +65,7 @@ export interface DeliveryNoteBuildOptions {
  * Designed for window.open() + print() and "Save as PDF".
  */
 export function buildDeliveryNoteHtml(order: any, opts: DeliveryNoteBuildOptions = {}): string {
+  const brand = currentAppearance();
   const inventoryItems: any[] = Array.isArray(opts.inventoryItems) ? opts.inventoryItems : [];
   const qrDataUrl = opts.qrDataUrl || null;
   const generatedAt = opts.generatedAt ? new Date(String(opts.generatedAt)) : new Date();
@@ -225,8 +233,13 @@ export function buildDeliveryNoteHtml(order: any, opts: DeliveryNoteBuildOptions
     <div style="background:#0f172a;border-radius:14px;overflow:hidden;border:1px solid #1e293b">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px 14px">
         <div>
-          <div style="color:#2dd4bf;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">WOODTEK</div>
-          <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">Furniture Service Center</div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${brand.logoDataUrl ? `<img src="${brand.logoDataUrl}" alt="" style="height:34px;max-width:120px;object-fit:contain" />` : ""}
+            <div>
+              <div style="color:#2dd4bf;font-weight:900;letter-spacing:0.14em;font-size:18px;line-height:1">${esc(brandShort(brand).toUpperCase())}</div>
+              <div style="color:#cbd5e1;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:3px">${esc(brandTagline(brand))}</div>
+            </div>
+          </div>
           <div style="margin-top:10px;display:inline-flex;align-items:center;gap:8px;background:#2dd4bf;color:#0f172a;font-weight:900;font-size:11px;letter-spacing:0.1em;padding:5px 10px;border-radius:999px;text-transform:uppercase">Delivery Note</div>
         </div>
         <div style="text-align:right;min-width:180px">
@@ -300,7 +313,7 @@ export function buildDeliveryNoteHtml(order: any, opts: DeliveryNoteBuildOptions
     <!-- Signatures 4 -->
     <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px">
       <div>
-        <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:#64748b;text-transform:uppercase">Prepared by (WoodTek)</div>
+        <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:#64748b;text-transform:uppercase">Prepared by (${esc(brandShort(brand))})</div>
         <div style="margin-top:18px;border-bottom:1.5px solid #0f172a;height:18px"></div>
         <div style="font-size:9px;color:#64748b;margin-top:4px">Name / signature · Date & time</div>
       </div>
@@ -324,7 +337,7 @@ export function buildDeliveryNoteHtml(order: any, opts: DeliveryNoteBuildOptions
     </div>
 
     <div style="margin-top:18px;text-align:center;font-size:9px;color:#94a3b8">
-      WoodTek ERP — Furniture Service Center · Delivery Note travels with the goods · Generated ${esc(genStamp)} · ${esc(orderNumber)}
+      ${esc(documentBrandLine(brand))} · Delivery Note travels with the goods · Generated ${esc(genStamp)} · ${esc(orderNumber)}
     </div>
 
     <div class="cut no-print" style="margin-top:16px"><span>✂ cut here — client copy / WoodTek copy</span></div>

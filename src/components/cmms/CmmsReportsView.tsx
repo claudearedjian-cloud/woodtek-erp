@@ -317,7 +317,7 @@ export default function CmmsReportsView({ assets = [], locations = [], currentUs
             No report compiled yet. Select options above and click &quot;Compile Preview&quot;.
           </p>
         ) : (
-          <div className="mt-5 rounded-xl bg-white p-6 text-slate-900 print:mt-0 print:rounded-none print:p-0">
+          <div className="paper mt-5 rounded-xl p-6 print:mt-0 print:rounded-none print:p-0">
             <div className="mb-5 border-b-2 border-emerald-500 pb-4">
               <h2 className="text-xl font-black">{preview.title}</h2>
               <p className="mt-0.5 text-xs text-slate-600">{preview.subtitle}</p>

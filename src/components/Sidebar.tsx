@@ -69,6 +69,7 @@ import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuC
 import { screenAllowedForSubject, type OptionalModulesConfig } from "@/lib/optionalModules";
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
+import { currentAppearance } from "@/lib/appearance";
 
 const ICONS: Record<string, any> = {
   dashboard: LayoutDashboard,
@@ -164,6 +165,9 @@ export default function Sidebar({
   onClose,
   lang = "en",
 }: SidebarProps) {
+  // Factory branding (Settings → Appearance). Read from the module cache the
+  // AppearanceProvider fills at start-up — defaults until it loads.
+  const brand = currentAppearance();
   // Custom roles: menu overrides are keyed by the custom name, and the base
   // role decides module access — resolveMenu handles both.
   const rawMenu = resolveMenu(currentUser?.displayRole || currentUser?.role, menuConfig);
@@ -280,7 +284,7 @@ export default function Sidebar({
       {/* Brand & Factory Header */}
       <div className="relative border-b border-slate-800 p-5">
         <div className="flex items-center gap-3">
-          <BrandMark size={44} />
+          <BrandMark size={44} logo={brand.logoDataUrl || undefined} />
           <div>
             <div className="flex items-center gap-1.5">
               <h1 className="text-lg font-extrabold tracking-tight text-white">WoodTek ERP</h1>
@@ -289,7 +293,7 @@ export default function Sidebar({
               </span>
             </div>
             <p className="flex items-center gap-1 text-xs font-medium text-slate-400">
-              <Layers className="h-3 w-3 text-amber-500" /> Furniture Service Center
+              <Layers className="h-3 w-3 text-amber-500" /> {brand.factoryName?.trim() || brand.tagline?.trim() || "Furniture Service Center"}
             </p>
           </div>
         </div>

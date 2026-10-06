@@ -151,6 +151,35 @@ Because the module list lives in `data\`, **updating never changes which modules
 are installed**. To change that, re-run `WoodTek-ERP-Setup.exe` or use
 `installer\configure-edition.ps1 -Addons "invoicing,cmms"`.
 
+Your **appearance and branding** live in `data\appearance.json`, so they survive
+every update too — set them once (see below) and they stay.
+
+---
+
+## Look & factory branding (Settings → Appearance & Branding)
+
+One screen, two jobs:
+
+- **App look** — **Dark** (the look the app has always had) or **Light**. Applies
+  to every screen on every PC in the factory. Printed documents keep their own
+  house style either way, so a light theme never turns an invoice into a black
+  page.
+- **Factory identity** — your factory's name, tagline, logo and contact details
+  (address, phone, email, website, commercial register number). These replace
+  the generic "WOODTEK / Furniture Service Center" block on **invoices, quotes,
+  delivery notes, job tickets, dispatch packs, client statements, reports and
+  outbound emails**, and appear next to the app name in the sidebar and on the
+  sign-in screen.
+
+The logo is resized to 256 px and stored inside `data\appearance.json` — PNG
+with transparency looks best on the dark document header. Leave any field empty
+and it simply does not print; with nothing set at all, documents look exactly
+as they did before.
+
+Changes need **Save appearance** and take effect immediately on the PC that made
+them (the file in `data\` is shared, so other PCs pick it up on their next
+restart).
+
 ---
 
 ## Which version am I running?

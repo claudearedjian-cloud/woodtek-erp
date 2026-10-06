@@ -20,6 +20,8 @@ import {
   FileDown,
 } from "lucide-react";
 import jsPDF from "jspdf";
+import { currentAppearance } from "@/lib/appearance";
+import { drawBrandBand, drawContactFooter } from "@/lib/brandPdf";
 import autoTable from "jspdf-autotable";
 import { buildStatement } from "@/lib/clientStatement";
 
@@ -123,21 +125,11 @@ export default function CustomersView({
     if (!detail) return;
     const st = buildStatement(ledger?.entries ?? []);
     const doc = new jsPDF();
-    doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, 210, 26, "F");
-    doc.setFillColor(245, 158, 11);
-    doc.rect(0, 26, 210, 1.2, "F");
-    doc.setTextColor(245, 158, 11);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("WOODTEK", 14, 12);
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(11);
-    doc.text("CLIENT STATEMENT", 14, 20);
-    doc.setFontSize(9);
-    doc.setTextColor(200, 210, 230);
-    doc.text(`As of ${new Date().toLocaleString()}`, 196, 12, { align: "right" });
-    doc.text("Furniture Service Center", 196, 20, { align: "right" });
+    const brand = currentAppearance();
+    drawBrandBand(doc, brand, {
+      docType: "CLIENT STATEMENT",
+      rightTop: `As of ${new Date().toLocaleString()}`,
+    });
 
     doc.setTextColor(15, 23, 42);
     doc.setFontSize(16);
@@ -183,6 +175,7 @@ export default function CustomersView({
       alternateRowStyles: { fillColor: [245, 247, 251] },
       columnStyles: { 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" } },
     });
+    drawContactFooter(doc, brand, 279);
     doc.save(`Statement-${String(detail.company || detail.name || "client").replace(/[^a-z0-9]+/gi, "-")}.pdf`);
   };
 

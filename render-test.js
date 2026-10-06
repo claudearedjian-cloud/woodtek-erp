@@ -61,6 +61,8 @@ compile("src/lib/dispatchPack.ts", "lib/dispatchPack.js");
 compile("src/lib/emailConfig.ts", "lib/emailConfig.js");
 compile("src/lib/emailDispatch.ts", "lib/emailDispatch.js");
 compile("src/lib/projectTypes.ts", "lib/projectTypes.js");
+compile("src/lib/appearance.ts", "lib/appearance.js");
+compile("src/lib/brandPdf.ts", "lib/brandPdf.js");
 compile("src/lib/installedEdition.ts", "lib/installedEdition.js");
 compile("src/lib/installedEdition.server.ts", "lib/installedEdition.server.js");
 compile("src/lib/optionalModules.ts", "lib/optionalModules.js");
@@ -672,6 +674,7 @@ const ATOMIC_STORES = [
   "src/lib/materialRoutes.server.ts",
   "src/lib/operationMachineCandidates.server.ts",
   "src/lib/installedEdition.server.ts",
+  "src/lib/appearance.server.ts",
   "src/lib/optionalModules.server.ts",
   "src/lib/orderCleanup.server.ts",
   "src/lib/packingQc.server.ts",

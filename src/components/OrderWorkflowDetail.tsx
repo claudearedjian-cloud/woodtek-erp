@@ -1761,7 +1761,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="rounded-2xl bg-white p-4 inline-block">
+            <div className="paper rounded-2xl p-4 inline-block">
               {qrUrl && <img src={qrUrl} alt="Order QR code" className="h-56 w-56" />}
             </div>
             <div className="mt-3 font-mono text-xl font-black text-amber-400">{order.orderNumber}</div>

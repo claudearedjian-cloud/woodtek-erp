@@ -9,8 +9,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
+        {/* Paint the saved theme before first paint — otherwise a light-theme
+            factory sees a dark flash on every page load. The app config in
+            data/appearance.json is the source of truth; localStorage is the
+            instant cache (same pattern as the error banner below). */}
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("woodtek-theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t);}}catch(e){}})();`,
+          }}
+        />
         {/* Inline (survives chunk-404 deploys): surfaces JS errors as a red
             banner so a broken page tells you why instead of freezing silently. */}
         <script

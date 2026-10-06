@@ -114,3 +114,158 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ==========================================================================
+   LIGHT THEME — <html data-theme="light">, set from Settings → Appearance
+   (stored in data/appearance.json, applied pre-paint by an inline script in
+   layout.tsx so there is no flash of the wrong theme).
+
+   How this works without touching 41 component files: every utility in this
+   app (bg-slate-900, text-amber-400, border-slate-800 …) compiles to
+   `var(--color-slate-900)` & friends. The app was designed dark-first with
+   slate as its only neutral, so re-pointing that one ramp inverts the whole
+   UI: surface shades lighten (950→100), text shades darken (100→950), and
+   the accent families step one shade darker so coloured text keeps its
+   contrast on white.
+
+   Scoped to @media screen on purpose: everything that PRINTS already carries
+   its own paper colours (print:bg-white, .paper), and a printed page must
+   never come out with an ink-black background.
+   ========================================================================== */
+@media screen {
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    /* ---- neutral ramp, inverted ------------------------------------- */
+    --color-slate-50: #020617;
+    --color-slate-100: #0f172a; /* primary text            */
+    --color-slate-200: #1e293b; /* headings                */
+    --color-slate-300: #334155; /* secondary text          */
+    --color-slate-400: #475569; /* tertiary text           */
+    --color-slate-500: #64748b; /* muted text (4.7:1)      */
+    --color-slate-600: #94a3b8; /* dimmest text tier       */
+    --color-slate-700: #cbd5e1; /* strong borders, hover   */
+    --color-slate-800: #e2e8f0; /* default borders, raised */
+    --color-slate-900: #ffffff; /* cards                   */
+    --color-slate-950: #f8fafc; /* page                    */
+
+    /* text-white is "text on a dark surface" everywhere in this app
+       (639 uses) — on a light page it has to become ink. */
+    --color-white: #0f172a;
+
+    /* ---- accents: one step darker so text stays readable on white ---- */
+    --color-amber-200: #b45309;
+    --color-amber-300: #b45309;
+    --color-amber-400: #b45309;
+    --color-amber-500: #d97706;
+    --color-amber-600: #b45309;
+    --color-amber-700: #92400e;
+    --color-rose-200: #be123c;
+    --color-rose-300: #be123c;
+    --color-rose-400: #be123c;
+    --color-rose-500: #e11d48;
+    --color-rose-600: #be123c;
+    --color-rose-700: #9f1239;
+    --color-emerald-200: #047857;
+    --color-emerald-300: #047857;
+    --color-emerald-400: #047857;
+    --color-emerald-500: #059669;
+    --color-emerald-600: #047857;
+    --color-emerald-700: #065f46;
+    --color-sky-300: #0369a1;
+    --color-sky-400: #0369a1;
+    --color-sky-500: #0284c7;
+    --color-sky-600: #075985;
+    --color-blue-300: #1d4ed8;
+    --color-blue-400: #1d4ed8;
+    --color-blue-500: #2563eb;
+    --color-blue-600: #1e40af;
+    --color-teal-300: #0f766e;
+    --color-teal-400: #0f766e;
+    --color-teal-500: #0d9488;
+    --color-teal-600: #115e59;
+    --color-orange-300: #c2410c;
+    --color-orange-400: #c2410c;
+    --color-orange-500: #ea580c;
+    --color-orange-600: #c2410c;
+    --color-violet-300: #6d28d9;
+    --color-violet-400: #6d28d9;
+    --color-violet-500: #7c3aed;
+    --color-purple-400: #7e22ce;
+    --color-purple-500: #9333ea;
+    --color-indigo-400: #4338ca;
+    --color-indigo-500: #4f46e5;
+    --color-red-400: #b91c1c;
+    --color-red-500: #dc2626;
+
+    /* ---- app-shell surfaces ----------------------------------------- */
+    body {
+      background-color: #f1f5f9;
+    }
+    /* Native dropdowns / date pickers follow the light scheme. */
+    select option {
+      background-color: #ffffff;
+      color: #0f172a;
+    }
+    input[type="date"],
+    input[type="time"],
+    input[type="datetime-local"] {
+      color-scheme: light;
+    }
+  }
+
+  /* Ambient depth: the same amber/blue glow, on paper instead of near-black. */
+  :root[data-theme="light"] .app-bg {
+    background-color: #f1f5f9;
+    background-image:
+      radial-gradient(1100px 700px at 12% -8%, rgba(245, 158, 11, 0.1) 0%, transparent 55%),
+      radial-gradient(900px 650px at 105% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+      radial-gradient(1000px 800px at 50% 120%, rgba(245, 158, 11, 0.07) 0%, transparent 55%);
+  }
+  /* Frosted panel → frosted white. */
+  :root[data-theme="light"] .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.94));
+    border: 1px solid rgba(148, 163, 184, 0.25);
+  }
+  /* Raised card surface → white with a hairline. */
+  :root[data-theme="light"] .card-surface {
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+  }
+  /* Sign-in / modal backdrop → light scrim with the brand glow kept. */
+  :root[data-theme="light"] .modal-backdrop {
+    background:
+      radial-gradient(1100px 700px at 50% -12%, rgba(245, 158, 11, 0.12), transparent 60%),
+      rgba(241, 245, 249, 0.9);
+  }
+  :root[data-theme="light"] .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+  }
+  :root[data-theme="light"] * {
+    scrollbar-color: #cbd5e1 transparent;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   .paper — a sheet of printed output living inside the app (report and CMMS
+   report previews, QR codes). It is NOT an app surface: it must stay white
+   with dark ink in both themes, so it re-pins the neutral ramp to the paper
+   values regardless of data-theme. (Without this, a light theme would turn
+   the "paper" black and the QR codes unreadable.)
+   -------------------------------------------------------------------------- */
+.paper {
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+  --color-white: #ffffff;
+  background-color: #ffffff;
+  color: #0f172a;
+}

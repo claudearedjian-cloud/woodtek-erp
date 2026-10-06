@@ -20,11 +20,13 @@ import {
   Phone,
   MapPin,
   History,
-  Download
+  Download,
+  Palette
 } from "lucide-react";
 import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
 import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
+import AppearanceSettings from "@/components/AppearanceSettings";
 import { Timer } from "lucide-react";
 import { ListChecks } from "lucide-react";
 import { Blocks } from "lucide-react";
@@ -48,7 +50,7 @@ interface SettingsViewProps {
 const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-purple-600", "bg-slate-600", "bg-indigo-600", "bg-teal-600"];
 
 export default function SettingsView({ currentUser }: SettingsViewProps) {
-  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "appearance">("users");
   const [entities, setEntities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -943,10 +945,25 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
               <span className="capitalize">{tab === "users" ? "All Users" : tab}</span>
             </button>
           ))}
+          <button
+            onClick={() => setActiveTab("appearance")}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+              activeTab === "appearance"
+                ? "bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30"
+                : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
+            }`}
+          >
+            <Palette className="w-4 h-4" />
+            <span>Appearance &amp; Branding</span>
+          </button>
         </div>
       </div>
 
+      {/* Appearance & Branding — its own screen, no entity list */}
+      {activeTab === "appearance" && <AppearanceSettings />}
+
       {/* Search & Add */}
+      {activeTab !== "appearance" && (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -984,6 +1001,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           <span>Add {activeTab === "clients" ? "Client" : activeTab === "technicians" ? "Technician" : activeTab === "operators" ? "Operator" : "User"}</span>
         </button>
       </div>
+      )}
 
       {activeTab === "users" && isManager && showModuleMgr && !showModal && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{optionalModulesPanel}</div>
@@ -994,7 +1012,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       )}
 
       {/* Entity List */}
-      {loading ? (
+      {activeTab !== "appearance" && (loading ? (
         <div className="p-12 text-center text-slate-400 animate-pulse">Loading...</div>
       ) : filteredEntities.length === 0 ? (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-16 text-center">
@@ -1060,7 +1078,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             </div>
           ))}
         </div>
-      )}
+      ))}
 
       {/* Modal Form */}
       {/* Auto-lock this device */}

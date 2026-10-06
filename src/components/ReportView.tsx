@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import jsPDF from "jspdf";
+import { brandName, currentAppearance } from "@/lib/appearance";
+import { drawContactFooter } from "@/lib/brandPdf";
 import autoTable from "jspdf-autotable";
 import { 
   FileText, 
@@ -182,20 +184,36 @@ export default function ReportView({ currentUser }: ReportViewProps) {
     const doc = new jsPDF();
     const data = generatedReport.data;
     const reportType = generatedReport.type;
+    const brand = currentAppearance();
 
-    // Header
-    doc.setFontSize(18);
+    // Header — the factory's own name (and logo when set) above the report identity.
+    let headerX = 14;
+    if (brand.logoDataUrl) {
+      try {
+        const props = doc.getImageProperties(brand.logoDataUrl);
+        const h = 12;
+        const w = Math.min(40, (props.width / props.height) * h);
+        doc.addImage(brand.logoDataUrl, 14, 7, w, h);
+        headerX = 14 + w + 6;
+      } catch {
+        // A logo the PDF engine cannot read must never block a report.
+      }
+    }
+    doc.setFontSize(16);
     doc.setTextColor(40);
-    doc.text("WoodTek ERP - System Report", 14, 20);
-    
+    doc.text(brandName(brand), headerX, 17);
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text("System Report", headerX, 24);
+
     doc.setFontSize(11);
     doc.setTextColor(100);
-    doc.text(`Report: ${generatedReport.name}`, 14, 30);
-    doc.text(`Type: ${reportType}`, 14, 36);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 42);
-    doc.text(`Period: ${new Date(generatedReport.dateFrom).toLocaleDateString()} - ${new Date(generatedReport.dateTo).toLocaleDateString()}`, 14, 48);
+    doc.text(`Report: ${generatedReport.name}`, 14, 34);
+    doc.text(`Type: ${reportType}`, 14, 40);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 46);
+    doc.text(`Period: ${new Date(generatedReport.dateFrom).toLocaleDateString()} - ${new Date(generatedReport.dateTo).toLocaleDateString()}`, 14, 52);
 
-    let startY = 58;
+    let startY = 62;
 
     if (reportType === "Production Summary") {
       doc.setFontSize(14);
@@ -444,6 +462,8 @@ export default function ReportView({ currentUser }: ReportViewProps) {
       });
     }
 
+    const finalY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY;
+    drawContactFooter(doc, brand, Math.min((finalY ?? 270) + 12, 286));
     doc.save(`${generatedReport.name.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.pdf`);
   };
 
@@ -695,7 +715,7 @@ export default function ReportView({ currentUser }: ReportViewProps) {
 
       {/* Report Preview */}
       {generatedReport && (
-        <div className="bg-white text-slate-900 rounded-2xl p-8 shadow-xl print:shadow-none print:rounded-none">
+        <div className="paper rounded-2xl p-8 shadow-xl print:shadow-none print:rounded-none">
           {/* Report Header */}
           <div className="border-b-2 border-amber-500 pb-6 mb-6 print:border-slate-300">
             <div className="flex items-center justify-between">
