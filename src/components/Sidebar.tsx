@@ -84,6 +84,7 @@ const ICONS: Record<string, any> = {
   downtime: Zap,
   quality: AlertTriangle,
   workforce: CalendarClock,
+  hr: Banknote,
   station: Tablet,
   customers: Users,
   inventory: Package,

@@ -27,6 +27,7 @@ export type ModuleId =
   | "reports"
   | "settings"
   | "workforce"
+  | "hr"
   | "wip"
   | "quality"
   | "downtime"
@@ -59,6 +60,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "reports",
     "settings",
     "workforce",
+    "hr",
     "wip",
     "quality",
     "downtime",
@@ -151,6 +153,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   reports: "System Reports",
   settings: "General Settings",
   workforce: "Workforce & Shifts",
+  hr: "HR & Payroll",
   wip: "Live WIP Board",
   quality: "Scrap & Rework",
   downtime: "Downtime Log",
@@ -170,11 +173,11 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
 export function canAccessModule(role: Role | string | null | undefined, module: ModuleId): boolean {
   if (!role) return false;
   const custom = getCustomRoles().find((r) => r.name === role);
-  // Optional screens (purchasing, invoicing & A/R) are independent of the
-  // legacy screen matrix. The sidebar/page must ALSO check
+  // Optional screens (purchasing, invoicing & A/R, HR/payroll) are independent
+  // of the legacy screen matrix. The sidebar/page must ALSO check
   // screenAllowedForSubject(user, config), including a personal grant — a
   // bare role cannot resolve that by itself.
-  if (module === "purchasing" || module === "invoicing" || module === "jobcosting") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
+  if (module === "purchasing" || module === "invoicing" || module === "jobcosting" || module === "hr") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
   if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
   // Manager-saved screen override for this exact role name wins over defaults.
   const overrides = getModuleOverrides();

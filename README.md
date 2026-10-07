@@ -137,6 +137,38 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   (it also gained an Overhead column, no longer charges released stock, and is
   limited to the signed-in user's own orders).
 
+## HR & Payroll
+- The **HR & Payroll** screen is part of the Workforce installer add-on. Manager
+  always has access when that add-on is installed; for anyone else, switch on
+  **HR & Payroll** in Settings → System Settings → Optional modules and grant it
+  to a role or one person. All three HR APIs enforce this grant, and responses
+  containing private pay or leave data are marked `no-store`.
+- The employee directory is built from existing user accounts; it does not create
+  a second login. Set each employee's private job title, hire date and monthly
+  base salary (USD). Salary is stored in a dedicated HR table, not in the shared
+  `/api/users` response. Only employees with an HR profile are added to payroll.
+- **Leave & Absence** records Annual, Sick, Unpaid or Other leave by inclusive
+  calendar dates, with an optional short administrative note. Pending/approved
+  date ranges cannot overlap for the same employee. HR users can approve or
+  decline pending records; employee name/role snapshots preserve the history if
+  an account is later removed. Avoid entering diagnoses or other sensitive
+  medical details in notes.
+- **Payroll & Payslips** creates at most one draft per month from the active
+  employees' current salary profiles. Each draft snapshots names, roles and base
+  salary, then accepts manually entered earnings and deductions; net pay is
+  recalculated server-side in integer cents. Draft runs may be adjusted or
+  deleted. **Posting locks the run and payslips**; the printable payslip clearly
+  says DRAFT until posted.
+- This is a controlled payroll worksheet, **not a local-law payroll engine**:
+  it does not calculate statutory tax/social contributions, overtime, leave
+  accrual or automatic leave deductions. Leave records do not change pay by
+  themselves. Confirm amounts and local policy before posting; manual earning/
+  deduction lines are the HR user's responsibility.
+- Four HR tables and indexes are created additively on first granted access (and
+  are also included in a fresh installer's schema). Existing PCs use the normal
+  update ritual; no separate migration command is needed, but the database role
+  must be allowed to create tables.
+
 ## Turnkey Windows `.exe` Installer (`WoodTek-ERP-Setup.exe`)
 To package WoodTek ERP as a single-file Windows installer (`dist-installer\WoodTek-ERP-Setup.exe`) that you can take to any new Windows 10/11 computer:
 ```
@@ -145,7 +177,7 @@ build-installer.bat
 - **What `build-installer.bat` packs into `WoodTek-ERP-Setup.exe`:**
   1. The production Next.js standalone server (`.next\standalone` + static assets).
   2. A portable Node.js runtime (`runtime\node\node.exe` copied from your build PC so the target PC works immediately).
-  3. Complete idempotent database schema (`installer\schema.sql` — all 31 tables and indexes) + database bootstrapper (`installer\bootstrap-db.cjs`).
+  3. Complete idempotent database schema (`installer\schema.sql` — all 35 tables and indexes) + database bootstrapper (`installer\bootstrap-db.cjs`).
   4. Turnkey setup engine (`installer\install-engine.ps1`) that auto-installs PostgreSQL 16 in unattended mode if PostgreSQL is not yet installed, creates the `woodtek_erp` database, writes `.env` with a fresh cryptographic `AUTH_SECRET`, opens Windows Firewall port 3000, registers `\WoodTek ERP` and `WoodTek Nightly Backup` scheduled tasks, and creates Desktop/Start Menu shortcuts. (Pass `-BundlePostgres` to `installer\build-installer.ps1` to embed the PostgreSQL installer inside the `.exe` for 100% offline setup.)
 - **Selectable Module Packs during `.exe` Installation (Hard-Locked Edition):**
   - **Core Production & Stock** is always installed as the base (Orders & Routing, Shop Floor Monitor, Operator Station, Live WIP, Material Reception, Warehouse (with the warehouse register), Inventory (wood, edge & panel stock), Dispatch Schedule, Gantt Chart, Production Report, Clients & Architects, Scrap & Rework, Downtime Log, Routing Recipes, PIMS Import, Plant Performance, System Reports, Menu Designer, Settings).

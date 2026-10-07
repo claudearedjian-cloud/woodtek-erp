@@ -623,6 +623,70 @@ export const attendanceRelations = relations(attendance, ({ one }) => ({
   shift: one(shifts, { fields: [attendance.shiftId], references: [shifts.id] }),
 }));
 
+// HR & payroll. Sensitive compensation is kept in these tables rather than
+// users, whose public/bootstrap shapes are consumed by the rest of the app.
+export const hrEmployeeProfiles = pgTable("hr_employee_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+  jobTitle: text("job_title").notNull().default(""),
+  hireDate: date("hire_date", { mode: "string" }),
+  baseSalaryCents: integer("base_salary_cents").notNull().default(0),
+  updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const hrLeaveRequests = pgTable("hr_leave_requests", {
+  id: serial("id").primaryKey(),
+  // Retain the leave record if an account is removed; the employee identity is
+  // snapshotted below for HR history and audit review.
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  employeeName: text("employee_name").notNull(),
+  roleSnapshot: text("role_snapshot").notNull().default(""),
+  leaveType: text("leave_type").notNull(),
+  startDate: date("start_date", { mode: "string" }).notNull(),
+  endDate: date("end_date", { mode: "string" }).notNull(),
+  days: integer("days").notNull(),
+  reason: text("reason").notNull().default(""),
+  status: text("status").notNull().default("Pending"),
+  reviewedById: integer("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
+  reviewNote: text("review_note").notNull().default(""),
+  reviewedAt: timestamp("reviewed_at"),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("hr_leave_requests_user_dates_idx").on(t.userId, t.startDate, t.endDate),
+  index("hr_leave_requests_status_idx").on(t.status),
+]);
+
+export const hrPayrollRuns = pgTable("hr_payroll_runs", {
+  id: serial("id").primaryKey(),
+  periodYear: integer("period_year").notNull(),
+  periodMonth: integer("period_month").notNull(),
+  status: text("status").notNull().default("Draft"),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  postedById: integer("posted_by_id").references(() => users.id, { onDelete: "set null" }),
+  postedAt: timestamp("posted_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("hr_payroll_runs_period_unique_idx").on(t.periodYear, t.periodMonth),
+]);
+
+export const hrPayrollItems = pgTable("hr_payroll_items", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => hrPayrollRuns.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  employeeName: text("employee_name").notNull(),
+  roleSnapshot: text("role_snapshot").notNull().default(""),
+  baseSalaryCents: integer("base_salary_cents").notNull(),
+  additionsJson: json("additions_json").notNull().default([]),
+  deductionsJson: json("deductions_json").notNull().default([]),
+  netPayCents: integer("net_pay_cents").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("hr_payroll_items_run_user_unique_idx").on(t.runId, t.userId),
+  index("hr_payroll_items_run_idx").on(t.runId),
+]);
+
 // ----------------------------------------------------------------------------
 // Quality: scrap & rework tracking.
 // Every defect is logged as an event. The Operator Station creates these

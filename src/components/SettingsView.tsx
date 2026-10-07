@@ -328,7 +328,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     }
   };
 
-  // ---- optional modules (money today, HR later) ---------------------------
+  // ---- optional modules (money + HR/payroll) ------------------------------
   // A module is OFF for everybody until a Manager switches it on and grants it
   // to a role and/or to one person. Manager always keeps access, so a Manager
   // can never lock themselves out of the factory's own books.

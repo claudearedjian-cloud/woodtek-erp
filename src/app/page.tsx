@@ -42,6 +42,7 @@ const ProductionReportView = dynamic(() => import("@/components/ProductionReport
 const CmmsView = dynamic(() => import("@/components/CmmsView"), { loading: ScreenLoading });
 const ReportView = dynamic(() => import("@/components/ReportView"), { loading: ScreenLoading });
 const WorkforceView = dynamic(() => import("@/components/WorkforceView"), { loading: ScreenLoading });
+const HrPayrollView = dynamic(() => import("@/components/HrPayrollView"), { loading: ScreenLoading });
 const SettingsView = dynamic(() => import("@/components/SettingsView"), { loading: ScreenLoading });
 const WipBoardView = dynamic(() => import("@/components/WipBoardView"), { loading: ScreenLoading });
 const QualityView = dynamic(() => import("@/components/QualityView"), { loading: ScreenLoading });
@@ -602,7 +603,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "hr", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -744,6 +745,7 @@ export default function WoodTekERP() {
           )}
           {activeTab === "reports" && <ReportView currentUser={currentUser} searchQuery={searchQuery} />}
           {activeTab === "workforce" && canWorkforce && <WorkforceView currentUser={currentUser} machines={machines} />}
+          {activeTab === "hr" && screenAllowedForSubject("hr", currentUser, optionalConfig) && <HrPayrollView currentUser={currentUser} />}
           {activeTab === "wip" && <WipBoardView onSelectOrder={handleSelectOrder} onNavigate={setActiveTab} />}
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}
