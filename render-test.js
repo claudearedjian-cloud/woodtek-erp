@@ -352,7 +352,7 @@ const hiddenForOperator = [
   "Live WIP Board",
   "Orders &amp; Routing",
   "Downtime Log",
-  "Wood &amp; Edge Stock",
+  "Inventory",
   "Active Role Persona",
   "Menu Designer",
 ];
@@ -362,7 +362,7 @@ hiddenForOperator.forEach((l) => check(!op.includes(l), `operator hides "${l}"`)
   check(op.includes(l), `operator keeps "${l}"`),
 );
 
-["Executive Dashboard", "Live WIP Board", "Orders &amp; Routing", "Downtime Log", "Wood &amp; Edge Stock", "Active Role Persona", "Switch profile (PIN required)", "Menu Designer"].forEach((l) =>
+["Executive Dashboard", "Live WIP Board", "Orders &amp; Routing", "Downtime Log", "Inventory", "Active Role Persona", "Switch profile (PIN required)", "Menu Designer"].forEach((l) =>
   check(mgr.includes(l), `manager still sees "${l}"`),
 );
 
@@ -408,10 +408,10 @@ check(opCfg.includes("QA Corner"), "config: operator gets group-promoted moved i
 
 // ---- Warehouse & BOM module ----
 const qa = renderToString(React.createElement(Sidebar, props("QA & Dispatch")));
-check(mgr.includes("Warehouse &amp; BOM"), "manager sees Warehouse & BOM");
-check(qa.includes("Warehouse &amp; BOM"), "QA & Dispatch sees Warehouse & BOM");
-check(!op.includes("Warehouse &amp; BOM"), "operator does not see Warehouse & BOM");
-check(!tech.includes("Warehouse &amp; BOM"), "technician does not see Warehouse & BOM");
+check(mgr.includes(">Warehouse<"), "manager sees Warehouse");
+check(qa.includes(">Warehouse<"), "QA & Dispatch sees Warehouse");
+check(!op.includes(">Warehouse<"), "operator does not see Warehouse");
+check(!tech.includes(">Warehouse<"), "technician does not see Warehouse");
 
 // ---- custom roles (named aliases of built-in roles) ----
 const perms = require("./compiled/lib/permissions.js");
@@ -1545,8 +1545,8 @@ check(
   "delete-all stock: Manager-only button with type-to-confirm dialog",
 );
 check(
-  invViewEditSource.includes("Reorder Level") && invViewEditSource.includes("Shop Location"),
-  "item form: reorder level and shop location are visible fields on create and edit (Bundle 40b)",
+  invViewEditSource.includes("Reorder Level") && invViewEditSource.includes(">Warehouse<"),
+  "item form: reorder level and warehouse are visible fields on create and edit (Bundle 40b)",
 );
 const layoutSource = fs.readFileSync("src/app/layout.tsx", "utf8");
 check(
@@ -1654,7 +1654,7 @@ perms.registerCustomRoles([
 ]);
 check(perms.getCustomRoles().find((r) => r.name === "WH Super").modules.length === 1, "role allowlist survives sanitising");
 const whr = renderToString(React.createElement(Sidebar, props("WH Super")));
-check(whr.includes("Warehouse &amp; BOM"), "restricted role sees its allowlisted screen");
+check(whr.includes(">Warehouse<"), "restricted role sees its allowlisted screen");
 check(!whr.includes("Scrap &amp; Rework"), "restricted role loses base screens (quality)");
 check(!whr.includes("Live WIP Board"), "restricted role loses WIP");
 check(!whr.includes("Executive Dashboard"), "restricted role loses dashboard");
@@ -2744,6 +2744,211 @@ check(
     fs.existsSync("build-installer.bat"),
   "installer builder: build-installer.ps1, install-engine.ps1 and build-installer.bat are present and wired",
 );
+
+
+// ---- bundle 41: INVENTORY / WAREHOUSE rename, warehouse register CRUD, view toggles ----
+// (2026-10-07) Owner request: "change the name of wood and edge stock to INVENTORY,
+// change warehouse & bom to WARHOUSE [Warehouse] and add there the possibility to add,
+// edit or delete warehouses. add everywhere where it is possible a filter, a list and
+// tab view."
+{
+  const menuCfgSrc41 = fs.readFileSync("src/lib/menuConfig.ts", "utf8");
+  const moduleAccessSrc41 = fs.readFileSync("src/lib/moduleAccess.ts", "utf8");
+  check(
+    menuCfgSrc41.includes('label: "Inventory"') && menuCfgSrc41.includes('label: "Warehouse"'),
+    "rename: sidebar module labels read Inventory and Warehouse",
+  );
+  check(
+    !menuCfgSrc41.includes("Wood & Edge Stock") && !menuCfgSrc41.includes("Warehouse & BOM"),
+    "rename: the old Wood & Edge Stock / Warehouse & BOM labels are gone from the menu config",
+  );
+  check(
+    moduleAccessSrc41.includes('inventory: "Inventory"') && moduleAccessSrc41.includes('warehouse: "Warehouse"'),
+    "rename: MODULE_LABELS (roles matrix, settings, audit) follow the new names",
+  );
+  check(
+    mgr.includes(">Inventory<") && mgr.includes(">Warehouse<"),
+    "rename: the rendered Manager sidebar shows Inventory and Warehouse",
+  );
+
+  // i18n: the two module names must translate in Arabic and French.
+  const i18n41 = require("./compiled/lib/i18n.js");
+  check(
+    i18n41.tt("ar", "Inventory") === "المخزون" && i18n41.tt("fr", "Warehouse") === "Magasin",
+    "i18n: tt() resolves the renamed module labels in Arabic and French",
+  );
+  const i18nSrc41 = fs.readFileSync("src/lib/i18n.ts", "utf8");
+  check(
+    i18nSrc41.includes('"Inventory": "المخزون"') && i18nSrc41.includes('"Warehouse": "المستودع"') &&
+      i18nSrc41.includes('"Inventory": "Stock"') && i18nSrc41.includes('"Warehouse": "Magasin"'),
+    "rename: Inventory/Warehouse have Arabic and French entries in i18n.ts",
+  );
+
+  // ---- warehouse register library (client-safe maths) ----
+  compile("src/lib/warehouses.ts", "lib/warehouses.js");
+  const wh41 = require("./compiled/lib/warehouses.js");
+  check(
+    wh41.DEFAULT_WAREHOUSES.length === 1 && wh41.DEFAULT_WAREHOUSES[0].id === "main" && wh41.DEFAULT_WAREHOUSES[0].name === "Main Warehouse",
+    "warehouse register: falls back to a single Main Warehouse when nothing is configured",
+  );
+  check(
+    wh41.effectiveWarehouses([]).length === 1 && wh41.effectiveWarehouses([{ name: "Bay 2" }])[0].name === "Bay 2",
+    "warehouse register: an empty stored list falls back to Main Warehouse, a stored list wins",
+  );
+  check(
+    wh41.slugifyWarehouseId("Bay 2 — Timber") === "bay-2-timber" &&
+      wh41.slugifyWarehouseId("  Chips  ") === "chips",
+    "warehouse register: ids are slugified predictably",
+  );
+  const bay41 = wh41.sanitizeWarehouse({ name: "  Bay 2  ", address: "Block C" }, "bay-2");
+  check(
+    bay41 && bay41.id === "bay-2" && bay41.name === "Bay 2" && bay41.address === "Block C" && bay41.active === true,
+    "warehouse register: a stored row is sanitized (trimmed name, kept id, active by default)",
+  );
+  check(
+    wh41.sanitizeWarehouse({ name: "" }) === null &&
+      wh41.sanitizeWarehouse({ name: "x".repeat(80) }).name.length === wh41.WAREHOUSE_NAME_MAX &&
+      wh41.sanitizeWarehouse({ name: "Bay 2", code: "y".repeat(20) }).code.length === wh41.WAREHOUSE_CODE_MAX &&
+      wh41.sanitizeWarehouse({ name: "Bay 2", address: "z".repeat(400) }).address.length === wh41.WAREHOUSE_ADDRESS_MAX,
+    "warehouse register: empty names are dropped and long name/code/address are clamped to the limits",
+  );
+  check(
+    JSON.stringify(wh41.warehouseNames([{ name: "Main Warehouse" }, { name: "Bay 2" }])) === JSON.stringify(["Main Warehouse", "Bay 2"]),
+    "warehouse register: warehouseNames() feeds the pickers and filters",
+  );
+  check(
+    wh41.findWarehouseByName([{ id: "main", name: "Main Warehouse" }], "main warehouse")?.id === "main" &&
+      wh41.findWarehouseByName([{ id: "main", name: "Main Warehouse" }], "Bay 9") === null,
+    "warehouse register: name lookup is case-insensitive and returns null otherwise",
+  );
+  const list41 = [
+    { id: "main", name: "Main Warehouse", code: "MAIN", address: "", active: true, createdAt: "" },
+    { id: "bay-2", name: "Bay 2", code: "B2", address: "", active: true, createdAt: "" },
+  ];
+  const renamePlan41 = wh41.warehouseRename(list41[1], { ...list41[1], name: "Timber Bay" });
+  check(renamePlan41 && renamePlan41.from === "Bay 2" && renamePlan41.to === "Timber Bay",
+    "warehouse register: renaming reports from/to so the stock rows can be migrated");
+  check(
+    wh41.warehouseRename(list41[1], list41[1]) === null && wh41.warehouseRename(null, list41[1]) === null,
+    "warehouse register: an unchanged name (or a brand-new row) needs no migration",
+  );
+  check(
+    wh41.validateWarehouseInput(list41[1], list41, { editingId: "bay-2" }) === null &&
+      wh41.validateWarehouseInput({ name: "Bay 2" }, list41) !== null &&
+      wh41.validateWarehouseInput({ name: "" }, list41) !== null,
+    "warehouse register: duplicate names are rejected while editing the same row stays valid",
+  );
+  check(
+    wh41.warehouseDeleteBlocked(3) === true && wh41.warehouseDeleteBlocked(0) === false,
+    "warehouse register: deleting a warehouse that still holds stock is blocked unless forced",
+  );
+
+  // ---- /api/warehouses CRUD route ----
+  const whRouteSrc41 = fs.readFileSync("src/app/api/warehouses/route.ts", "utf8");
+  check(
+    whRouteSrc41.includes("export async function GET") &&
+      whRouteSrc41.includes("export async function POST") &&
+      whRouteSrc41.includes("export async function PUT") &&
+      whRouteSrc41.includes("export async function DELETE"),
+    "/api/warehouses: exposes GET, POST, PUT and DELETE",
+  );
+  check(
+    whRouteSrc41.includes('"inventory:read"') && whRouteSrc41.includes('"inventory:write"') && whRouteSrc41.includes('"users:manage"'),
+    "/api/warehouses: reads need inventory:read, writes inventory:write, deletes users:manage (Manager only)",
+  );
+  check(
+    whRouteSrc41.includes("list.length <= 1") && whRouteSrc41.includes("Keep at least one warehouse"),
+    "/api/warehouses: the last remaining warehouse cannot be deleted (400)",
+  );
+  check(
+    whRouteSrc41.includes("renameWarehouseItems") && whRouteSrc41.includes("warehouseUsage"),
+    "/api/warehouses: renaming migrates stock rows and usage counts come from inventoryItems.location",
+  );
+  check(
+    whRouteSrc41.includes("warehouse.delete") && whRouteSrc41.includes("logAudit"),
+    "/api/warehouses: add/edit/delete are written to the audit log",
+  );
+  const whServerSrc41 = fs.readFileSync("src/lib/warehouses.server.ts", "utf8");
+  check(
+    whServerSrc41.includes("data/warehouses.json") && whServerSrc41.includes("writeJsonAtomic"),
+    "warehouse register: rows persist to data/warehouses.json with the project's atomic writer",
+  );
+  check(
+    whServerSrc41.includes("warehouseItemCount") && whServerSrc41.includes("inventoryItems.location"),
+    "warehouse register: usage is derived from the free-text location column of inventory_items",
+  );
+
+  // ---- WarehouseView register UI ----
+  const whViewSrc41 = fs.readFileSync("src/components/WarehouseView.tsx", "utf8");
+  check(
+    whViewSrc41.includes('fetch("/api/warehouses"') &&
+      whViewSrc41.includes('method: whEditingId ? "PUT" : "POST"'),
+    "Warehouse screen: the register panel adds and edits warehouses through /api/warehouses",
+  );
+  check(
+    whViewSrc41.includes('method: "DELETE"') && whViewSrc41.includes("force=1"),
+    "Warehouse screen: delete asks for confirmation and can force past the in-use 409",
+  );
+  check(
+    whViewSrc41.includes('canManageWarehouses = can(currentUser?.role, "inventory:write")') &&
+      whViewSrc41.includes('isManager = can(currentUser?.role, "users:manage")'),
+    "Warehouse screen: add/edit is gated on inventory:write, delete on users:manage (Manager only)",
+  );
+  check(
+    whViewSrc41.includes("Warehouses ({warehouses.length})") &&
+      whViewSrc41.includes('"Add warehouse"') &&
+      whViewSrc41.includes("Edit / rename this warehouse"),
+    "Warehouse screen: header button opens the register with add / rename / delete controls",
+  );
+  check(
+    whViewSrc41.includes("itemCount") && whViewSrc41.includes("unitCount"),
+    "Warehouse screen: each register row shows how many stock lines and units sit in that warehouse",
+  );
+  check(
+    whViewSrc41.includes("ViewToggle") && whViewSrc41.includes('labels={{ cards: "Board", list: "List", table: "Table" }}'),
+    "Warehouse screen: Board / List / Table view switch",
+  );
+  check(
+    whViewSrc41.includes("statusFilter") && whViewSrc41.includes("Clear filters"),
+    "Warehouse screen: material lines can be filtered by delivery status with a one-click reset",
+  );
+
+  // ---- view toggles + filters across the app ----
+  const viewToggleSrc41 = fs.readFileSync("src/components/ViewToggle.tsx", "utf8");
+  check(
+    viewToggleSrc41.includes("woodtek-view-") && viewToggleSrc41.includes("useViewMode"),
+    "view switch: the chosen Cards/List/Table mode is remembered per device",
+  );
+  const toggleViews41 = [
+    ["src/components/CustomersView.tsx", "clients"],
+    ["src/components/InventoryView.tsx", "inventory"],
+    ["src/components/WarehouseView.tsx", "warehouse"],
+    ["src/components/OrdersView.tsx", "orders"],
+    ["src/components/MachinesView.tsx", "machines"],
+    ["src/components/QualityView.tsx", "quality"],
+    ["src/components/DowntimeView.tsx", "downtime-history"],
+    ["src/components/WorkforceView.tsx", "workforce-attendance"],
+    ["src/components/CmmsView.tsx", "cmms-assets"],
+    ["src/components/SettingsView.tsx", "settings-entities"],
+  ];
+  toggleViews41.forEach(([file, key]) => {
+    const src = fs.readFileSync(file, "utf8");
+    check(
+      src.includes("ViewToggle") && src.includes(`useViewMode("${key}"`),
+      `view switch: ${file.split("/").pop()} offers Cards/List/Table under the stored key "${key}"`,
+    );
+  });
+  const ordersViewSrc41 = fs.readFileSync("src/components/OrdersView.tsx", "utf8");
+  check(
+    ordersViewSrc41.includes('labels={{ cards: "Kanban"') && ordersViewSrc41.includes("kanbanColumns"),
+    "view switch: Orders keeps its Kanban board (shown as the Cards mode) and adds a table mode",
+  );
+  const clientsViewSrc41 = fs.readFileSync("src/components/CustomersView.tsx", "utf8");
+  check(
+    clientsViewSrc41.includes("projectsFilter") && clientsViewSrc41.includes("sortBy"),
+    "filters: Clients & Architects gained project-type filter and sort on top of search",
+  );
+}
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;

@@ -229,7 +229,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         notes: "Order marked Completed",
       });
       if (consumeResult.auditError) {
-        completionWarning = `Order completed and stock consumed, but the consumption audit could not be recorded: ${consumeResult.auditError}. Fix it with Wood & Edge Stock -> Schema Check -> Add Missing Columns.`;
+        completionWarning = `Order completed and stock consumed, but the consumption audit could not be recorded: ${consumeResult.auditError}. Fix it with Inventory -> Schema Check -> Add Missing Columns.`;
       }
     }
 

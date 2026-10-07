@@ -1,5 +1,5 @@
 // ============================================================================
-// Stock category list (Wood & Edge Stock). JSON file in <data> dir.
+// Stock category list (Inventory). JSON file in <data> dir.
 // GET is open to inventory:read (metadata). PUT requires Manager
 // (users:manage) and refuses to remove categories still used by items.
 // Renames migrate the item rows first, then the list is replaced — same

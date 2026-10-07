@@ -28,6 +28,7 @@ import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permi
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
 import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
 import AppearanceSettings from "@/components/AppearanceSettings";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 import { Timer } from "lucide-react";
 import { ListChecks } from "lucide-react";
 import { Blocks } from "lucide-react";
@@ -64,6 +65,9 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   const [showModal, setShowModal] = useState(false);
   const [editingEntity, setEditingEntity] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  // Cards / list / table for the people & client registers (per device).
+  const [listView, setListView] = useViewMode("settings-entities", "cards");
+  const [activeOnly, setActiveOnly] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -892,6 +896,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   };
 
   const filteredEntities = entities.filter((e) => {
+    if (activeOnly && e.active === false) return false;
     const query = searchQuery.toLowerCase();
     if (activeTab === "clients") {
       return e.company?.toLowerCase().includes(query) || e.name?.toLowerCase().includes(query) || e.email?.toLowerCase().includes(query);
@@ -1045,6 +1050,17 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
+        <select
+          value={activeOnly ? "active" : "all"}
+          onChange={(e) => setActiveOnly(e.target.value === "active")}
+          title="Filter by account state"
+          className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+        >
+          <option value="all">All accounts</option>
+          <option value="active">Active only</option>
+        </select>
+        <ViewToggle mode={listView} onChange={setListView} title="Cards, list or table view of this register" />
+        <ResultCount shown={filteredEntities.length} total={entities.length} noun={activeTab === "clients" ? "client" : "account"} filtered={Boolean(searchQuery.trim()) || activeOnly} />
         {activeTab === "users" && (
           <button
             type="button"
@@ -1076,6 +1092,90 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           <TabIcon className="w-16 h-16 text-slate-600 mx-auto mb-4 stroke-[1.5]" />
           <h3 className="text-lg font-bold text-white mb-1">No {getTabLabel().toLowerCase()}</h3>
           <p className="text-sm text-slate-400">Click &quot;Add&quot; to create a new record.</p>
+        </div>
+      ) : listView === "list" ? (
+        <div className="space-y-2">
+          {filteredEntities.map((entity) => (
+            <div key={entity.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${entity.avatarColor || "bg-slate-600"} text-sm font-black text-white`}>
+                {entity.name?.charAt(0) || entity.company?.charAt(0) || "?"}
+              </span>
+              <span className="min-w-[180px] flex-1">
+                <span className="block truncate text-sm font-bold text-white">{entity.name || entity.company}</span>
+                <span className="block truncate text-[11px] text-slate-400">{entity.email || entity.role}</span>
+              </span>
+              <span className="min-w-[140px] text-[11px] text-slate-300">{entity.phone || "—"}</span>
+              {entity.role && <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-300">{entity.role}</span>}
+              {entity.creditLimit && <span className="font-mono text-[11px] font-bold text-emerald-400">${Number(entity.creditLimit).toLocaleString()}</span>}
+              {entity.active !== undefined && (
+                <span className={`rounded px-2 py-1 text-[10px] font-bold ${entity.active ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
+                  {entity.active ? "ACTIVE" : "INACTIVE"}
+                </span>
+              )}
+              <span className="flex items-center gap-1">
+                <button onClick={() => openModal(entity)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white" title="Edit">
+                  <Edit className="w-4 h-4" />
+                </button>
+                <button onClick={() => deleteEntity(entity)} className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : listView === "table" ? (
+        <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/90">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  <th className="px-4 py-3">#</th>
+                  <th className="px-4 py-3">{activeTab === "clients" ? "Company" : "Name"}</th>
+                  {activeTab === "clients" && <th className="px-4 py-3">Contact</th>}
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Phone</th>
+                  {activeTab === "clients" ? <th className="px-4 py-3">Address</th> : <th className="px-4 py-3">Role</th>}
+                  {activeTab === "clients" && <th className="px-4 py-3 text-right">Credit</th>}
+                  <th className="px-4 py-3 text-center">State</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 text-xs text-slate-200">
+                {filteredEntities.map((entity) => (
+                  <tr key={entity.id} className="transition hover:bg-slate-800/50">
+                    <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{entity.id}</td>
+                    <td className="px-4 py-2.5 font-bold text-white">{entity.company || entity.name}</td>
+                    {activeTab === "clients" && <td className="px-4 py-2.5 text-slate-300">{entity.name || "—"}</td>}
+                    <td className="px-4 py-2.5 truncate text-slate-300">{entity.email || "—"}</td>
+                    <td className="px-4 py-2.5 text-slate-300">{entity.phone || "—"}</td>
+                    {activeTab === "clients"
+                      ? <td className="max-w-[220px] truncate px-4 py-2.5 text-slate-400">{entity.address || "—"}</td>
+                      : <td className="px-4 py-2.5 text-slate-300">{entity.role || "—"}</td>}
+                    {activeTab === "clients" && (
+                      <td className="px-4 py-2.5 text-right font-mono font-bold text-emerald-400">
+                        {entity.creditLimit ? `$${Number(entity.creditLimit).toLocaleString()}` : "—"}
+                      </td>
+                    )}
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`rounded px-2 py-1 text-[10px] font-bold ${entity.active === false ? "bg-slate-800 text-slate-400" : "bg-emerald-500/20 text-emerald-300"}`}>
+                        {entity.active === false ? "INACTIVE" : "ACTIVE"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="inline-flex items-center gap-1">
+                        <button onClick={() => openModal(entity)} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white" title="Edit">
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => deleteEntity(entity)} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

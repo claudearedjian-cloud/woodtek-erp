@@ -24,6 +24,7 @@ import { currentAppearance } from "@/lib/appearance";
 import { drawBrandBand, drawContactFooter } from "@/lib/brandPdf";
 import autoTable from "jspdf-autotable";
 import { buildStatement } from "@/lib/clientStatement";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface CustomersViewProps {
   customers: any[];
@@ -56,17 +57,37 @@ export default function CustomersView({
   const [address, setAddress] = useState("");
   const [creditLimit] = useState("25000.00");
 
-  // ---- search -------------------------------------------------------------
+  // ---- search + filter + view mode ----------------------------------------
   const [search, setSearch] = useState("");
+  const [projectsFilter, setProjectsFilter] = useState<"all" | "open" | "none">("all");
+  const [sortBy, setSortBy] = useState<"name" | "spend" | "projects">("name");
+  const [view, setView] = useViewMode("clients", "cards");
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter(c =>
-      [c.company, c.name, c.email, c.phone, c.address]
+    const rows = customers.filter(c => {
+      const open = Number(c.activeOrdersCount) || 0;
+      if (projectsFilter === "open" && open === 0) return false;
+      if (projectsFilter === "none" && open > 0) return false;
+      if (!q) return true;
+      return [c.company, c.name, c.email, c.phone, c.address]
         .filter(Boolean)
-        .some(v => String(v).toLowerCase().includes(q)),
-    );
-  }, [customers, search]);
+        .some(v => String(v).toLowerCase().includes(q));
+    });
+    const spendOf = (c: { totalSpend?: number | string | null }) => (c.totalSpend == null ? -1 : Number(c.totalSpend));
+    const sorted = [...rows];
+    if (sortBy === "spend") sorted.sort((a, b) => spendOf(b) - spendOf(a));
+    else if (sortBy === "projects") sorted.sort((a, b) => (Number(b.activeOrdersCount) || 0) - (Number(a.activeOrdersCount) || 0));
+    else sorted.sort((a, b) => String(a.company ?? "").localeCompare(String(b.company ?? "")));
+    return sorted;
+  }, [customers, search, projectsFilter, sortBy]);
+
+  const filtersActive = Boolean(search.trim()) || projectsFilter !== "all";
+  const clearFilters = () => {
+    setSearch("");
+    setProjectsFilter("all");
+    setSortBy("name");
+  };
 
   // ---- client detail modal -------------------------------------------------
   const [detail, setDetail] = useState<any>(null);
@@ -337,6 +358,28 @@ export default function CustomersView({
               </button>
             )}
           </div>
+          {/* Project filter + sort */}
+          <select
+            value={projectsFilter}
+            onChange={e => setProjectsFilter(e.target.value as "all" | "open" | "none")}
+            title="Filter by open projects"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+          >
+            <option value="all">All clients</option>
+            <option value="open">With open projects</option>
+            <option value="none">No open projects</option>
+          </select>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as "name" | "spend" | "projects")}
+            title="Sort the list"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+          >
+            <option value="name">Sort: Name</option>
+            <option value="spend">Sort: Total spend</option>
+            <option value="projects">Sort: Open projects</option>
+          </select>
+          <ViewToggle mode={view} onChange={setView} title="Cards, list or table view of the client book" />
           <button
             onClick={() => setShowModal(true)}
             className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs px-4 py-2 rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 whitespace-nowrap"
@@ -346,20 +389,25 @@ export default function CustomersView({
         </div>
       </div>
 
-      {search && (
-        <p className="text-[11px] font-bold text-slate-400">
-          Showing {filtered.length} of {customers.length} client{customers.length === 1 ? "" : "s"}
-        </p>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <ResultCount shown={filtered.length} total={customers.length} noun="client" filtered={filtersActive} />
+        {filtersActive && (
+          <button onClick={clearFilters} className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300">
+            <X className="h-3 w-3" /> Clear filters
+          </button>
+        )}
+      </div>
 
-      {/* Grid */}
+      {/* Clients: cards, compact list or dense table */}
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/60 p-16 text-center">
           <Search className="mx-auto mb-3 h-10 w-10 text-slate-600" />
-          <p className="text-sm font-bold text-slate-300">No clients match “{search}”</p>
-          <button onClick={() => setSearch("")} className="mt-2 text-xs font-bold text-amber-400 hover:text-amber-300">Clear search</button>
+          <p className="text-sm font-bold text-slate-300">
+            {filtersActive ? "No clients match these filters" : "No client accounts yet"}
+          </p>
+          <button onClick={clearFilters} className="mt-2 text-xs font-bold text-amber-400 hover:text-amber-300">Clear filters</button>
         </div>
-      ) : (
+      ) : view === "cards" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
           {filtered.map(c => (
             <div
@@ -416,6 +464,90 @@ export default function CustomersView({
               </div>
             </div>
           ))}
+        </div>
+      ) : view === "list" ? (
+        <div className="space-y-2">
+          {filtered.map(c => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => openDetail(c)}
+              className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-left transition hover:border-amber-500/40 hover:bg-slate-900"
+              title="Open client file"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-sm font-black text-amber-300">
+                {String(c.company || c.name || "?").charAt(0).toUpperCase()}
+              </span>
+              <span className="min-w-[190px] flex-1">
+                <span className="block truncate text-sm font-black text-white">{c.company}</span>
+                <span className="block truncate text-[11px] text-slate-400">{c.name} · #{c.id}</span>
+              </span>
+              <span className="min-w-[170px] flex-1 text-[11px] text-slate-300">
+                <span className="block truncate">{c.email || "—"}</span>
+                <span className="block truncate text-slate-500">{c.phone || "—"}</span>
+              </span>
+              <span className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-slate-300">
+                {c.activeOrdersCount || 0} open / {c.orderCount} total
+              </span>
+              <span className="w-24 text-right font-mono text-xs font-black text-emerald-400">
+                {c.totalSpend != null ? `$${Number(c.totalSpend).toLocaleString()}` : <span className="text-slate-600 italic text-[10px]">restricted</span>}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] font-bold text-amber-400">
+                Open <ChevronRight className="h-3.5 w-3.5" />
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/90">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  <th className="px-4 py-3">#</th>
+                  <th className="px-4 py-3">Client</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Phone</th>
+                  <th className="px-4 py-3">Address</th>
+                  <th className="px-4 py-3 text-center">Open / Total</th>
+                  <th className="px-4 py-3 text-right">Total spend</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 text-xs text-slate-200">
+                {filtered.map(c => (
+                  <tr key={c.id} className="cursor-pointer transition hover:bg-slate-800/50" onClick={() => openDetail(c)} title="Open client file">
+                    <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{c.id}</td>
+                    <td className="px-4 py-2.5 font-extrabold text-white">{c.company}</td>
+                    <td className="px-4 py-2.5 text-slate-300">{c.name}</td>
+                    <td className="px-4 py-2.5 truncate text-slate-300">{c.email || "—"}</td>
+                    <td className="px-4 py-2.5 text-slate-300">{c.phone || "—"}</td>
+                    <td className="px-4 py-2.5 max-w-[220px] truncate text-slate-400">{c.address || "—"}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 font-bold text-slate-300">{c.activeOrdersCount || 0}</span>
+                      <span className="ml-1 text-slate-500">/ {c.orderCount}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono font-black text-emerald-400">
+                      {c.totalSpend != null ? `$${Number(c.totalSpend).toLocaleString()}` : <span className="text-slate-600 italic text-[10px]">restricted</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="rounded-lg px-2 py-1 text-[11px] font-bold text-amber-400 hover:bg-amber-500/10">Open</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(c.id, c.company); }}
+                          className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400"
+                          title="Remove Client"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// Schema check & repair for the Wood & Edge Stock tables (Manager only).
+// Schema check & repair for the Inventory tables (Manager only).
 // GET  → compare live tables with the columns the app expects.
 // POST → add missing columns (ADD COLUMN IF NOT EXISTS; never drops anything).
 // ============================================================================
