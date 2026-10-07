@@ -5,22 +5,35 @@ import {
   BadgeCheck,
   BriefcaseBusiness,
   CalendarDays,
+  Camera,
   Check,
   CircleDollarSign,
+  Download,
   FileText,
+  IdCard,
+  ListChecks,
+  Paperclip,
   Plus,
   Printer,
   RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
+  Upload,
   UserRound,
   Users,
   X,
   XCircle,
 } from "lucide-react";
 import {
+  COMMON_NATIONALITIES,
+  HR_DEPARTMENTS,
+  HR_DOCUMENT_TYPES,
+  HR_EMPLOYMENT_STATUSES,
+  HR_GENDERS,
+  HR_MARITAL_STATUSES,
   inclusiveDays,
+  type HrDocumentType,
   type LeaveType,
   type PayAdjustment,
 } from "@/lib/hrPayroll";
@@ -37,6 +50,37 @@ interface HrEmployee {
   hireDate: string | null;
   baseSalaryCents: number | null;
   profileComplete: boolean;
+  employeeCode: string | null;
+  department: string | null;
+  employmentStatus: string | null;
+  nationality: string | null;
+  dateOfBirth: string | null;
+  gender: string | null;
+  maritalStatus: string | null;
+  phone: string | null;
+  address: string | null;
+  idNumber: string | null;
+  passportNumber: string | null;
+  visaNumber: string | null;
+  residencyNumber: string | null;
+  residencyExpiry: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  notes: string | null;
+  photoFile: string | null;
+}
+
+interface HrDocument {
+  id: number;
+  userId: number;
+  docType: string;
+  title: string;
+  fileName: string;
+  originalName: string;
+  mime: string;
+  size: number;
+  expiryDate: string | null;
+  createdAt: string;
 }
 
 interface HrLeaveRecord {
@@ -111,6 +155,23 @@ function money(cents: number | null | undefined): string {
   return `$${(Number.isFinite(safe) ? safe / 100 : 0).toFixed(2)}`;
 }
 
+function fileSize(bytes: number | null | undefined): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function textOr(value: string | null | undefined, fallback = "—"): string {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function photoUrl(userId: number, stamp: number): string {
+  return `/api/hr/photo?userId=${userId}&v=${stamp}`;
+}
+
 function jsonLines(value: unknown): PayAdjustment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -159,7 +220,44 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const payrollRequestRef = useRef(0);
 
   const [editingEmployee, setEditingEmployee] = useState<HrEmployee | null>(null);
-  const [profileForm, setProfileForm] = useState({ jobTitle: "", hireDate: "", monthlySalary: "" });
+  const [profileForm, setProfileForm] = useState({
+    jobTitle: "",
+    hireDate: "",
+    monthlySalary: "",
+    employeeCode: "",
+    department: "",
+    employmentStatus: "Active",
+    nationality: "",
+    dateOfBirth: "",
+    gender: "",
+    maritalStatus: "",
+    phone: "",
+    address: "",
+    idNumber: "",
+    passportNumber: "",
+    visaNumber: "",
+    residencyNumber: "",
+    residencyExpiry: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+    notes: "",
+  });
+  // --- Employee card: system roles, editable job titles, photo & documents ---
+  const [systemRoles, setSystemRoles] = useState<string[]>([]);
+  const [jobTitles, setJobTitles] = useState<string[]>([]);
+  const [cardEmployee, setCardEmployee] = useState<HrEmployee | null>(null);
+  const [cardDocs, setCardDocs] = useState<HrDocument[]>([]);
+  const [cardDocsLoading, setCardDocsLoading] = useState(false);
+  const [photoStamp, setPhotoStamp] = useState(() => Date.now());
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const photoTargetRef = useRef<HrEmployee | null>(null);
+  const [docForm, setDocForm] = useState({ docType: "Identity Card" as HrDocumentType | string, title: "", expiryDate: "" });
+  const [docBusy, setDocBusy] = useState(false);
+  const docInputRef = useRef<HTMLInputElement | null>(null);
+  const [titlesOpen, setTitlesOpen] = useState(false);
+  const [titlesDraft, setTitlesDraft] = useState("");
+  const [titlesBusy, setTitlesBusy] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ userId: "", leaveType: "Annual" as LeaveType, startDate: localYmd(), endDate: localYmd(), reason: "" });
   const [editingItem, setEditingItem] = useState<PayrollItem | null>(null);
   const [additionDrafts, setAdditionDrafts] = useState<Array<{ label: string; amount: string }>>([]);
@@ -188,10 +286,51 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
       setEmployees(employeeRows);
       setLeaveRows(leaves);
       setLeaveForm((current) => ({ ...current, userId: current.userId || String(employeeRows.find((row) => row.active)?.id ?? "") }));
+      setCardEmployee((current) => (current ? employeeRows.find((row) => row.id === current.id) ?? current : current));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load HR records.");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // System roles (built-in + Manager-defined) feed the job-title picker so the
+  // HR job description stays connected to the access role; the editable job
+  // titles are the fallback for staff whose role does not describe their job.
+  const loadRoleLookups = useCallback(async () => {
+    try {
+      const rolesResponse = await fetch("/api/roles", { cache: "no-store" });
+      if (rolesResponse.ok) {
+        const body = (await rolesResponse.json().catch(() => ({}))) as { roles?: Array<{ name?: string }> };
+        const customs = Array.isArray(body.roles) ? body.roles.map((r) => String(r?.name ?? "").trim()).filter(Boolean) : [];
+        const { ROLES } = await import("@/lib/permissions");
+        setSystemRoles([...ROLES, ...customs]);
+      }
+    } catch {
+      /* job-title picker still works with the editable list alone */
+    }
+    try {
+      const titlesResponse = await fetch("/api/hr/job-titles", { cache: "no-store" });
+      if (titlesResponse.ok) {
+        const body = (await titlesResponse.json().catch(() => ({}))) as { titles?: unknown };
+        setJobTitles(Array.isArray(body.titles) ? body.titles.map((t) => String(t ?? "").trim()).filter(Boolean) : []);
+      }
+    } catch {
+      /* same — free text stays allowed */
+    }
+  }, []);
+
+  const loadCardDocs = useCallback(async (userId: number) => {
+    setCardDocsLoading(true);
+    try {
+      const response = await fetch(`/api/hr/documents?userId=${userId}`, { cache: "no-store" });
+      const docs = await payloadOf<HrDocument[]>(response, "Failed to load employee documents.");
+      setCardDocs(docs);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load employee documents.");
+      setCardDocs([]);
+    } finally {
+      setCardDocsLoading(false);
     }
   }, []);
 
@@ -212,9 +351,9 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { void loadDirectory(); }, 0);
+    const timer = window.setTimeout(() => { void loadDirectory(); void loadRoleLookups(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadDirectory]);
+  }, [loadDirectory, loadRoleLookups]);
   useEffect(() => {
     if (tab !== "payroll") return;
     const timer = window.setTimeout(() => { void loadPayroll(periodYear, periodMonth); }, 0);
@@ -223,9 +362,27 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
 
   const filteredEmployees = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return employees.filter((employee) => !q || [employee.name, employee.email, employee.role, employee.jobTitle]
+    return employees.filter((employee) => !q || [employee.name, employee.email, employee.role, employee.jobTitle, employee.nationality, employee.employeeCode, employee.department, employee.phone]
       .some((value) => String(value ?? "").toLowerCase().includes(q)));
   }, [employees, search]);
+
+  const jobTitleSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ value: string; group: string }> = [];
+    for (const role of systemRoles) {
+      const key = role.toLowerCase();
+      if (!role || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ value: role, group: "System role" });
+    }
+    for (const title of jobTitles) {
+      const key = title.toLowerCase();
+      if (!title || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ value: title, group: "Job titles list" });
+    }
+    return out;
+  }, [systemRoles, jobTitles]);
 
   const filteredLeave = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -245,11 +402,31 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const openEmployeeEditor = (employee: HrEmployee) => {
     setEditingEmployee(employee);
     setProfileForm({
-      jobTitle: employee.jobTitle ?? "",
+      // Linked to the system role until HR picks something else: a blank job
+      // title opens prefilled with the employee's access role.
+      jobTitle: employee.jobTitle || employee.role || "",
       hireDate: employee.hireDate ?? "",
       monthlySalary: employee.baseSalaryCents == null ? "" : (employee.baseSalaryCents / 100).toFixed(2),
+      employeeCode: employee.employeeCode ?? "",
+      department: employee.department ?? "",
+      employmentStatus: employee.employmentStatus || "Active",
+      nationality: employee.nationality ?? "",
+      dateOfBirth: employee.dateOfBirth ?? "",
+      gender: employee.gender ?? "",
+      maritalStatus: employee.maritalStatus ?? "",
+      phone: employee.phone ?? "",
+      address: employee.address ?? "",
+      idNumber: employee.idNumber ?? "",
+      passportNumber: employee.passportNumber ?? "",
+      visaNumber: employee.visaNumber ?? "",
+      residencyNumber: employee.residencyNumber ?? "",
+      residencyExpiry: employee.residencyExpiry ?? "",
+      emergencyContactName: employee.emergencyContactName ?? "",
+      emergencyContactPhone: employee.emergencyContactPhone ?? "",
+      notes: employee.notes ?? "",
     });
     setError("");
+    void loadCardDocs(employee.id);
   };
 
   const saveEmployeeProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -271,17 +448,158 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
           jobTitle: profileForm.jobTitle,
           hireDate: profileForm.hireDate || null,
           baseSalaryCents: Math.round(amount * 100),
+          employeeCode: profileForm.employeeCode,
+          department: profileForm.department,
+          employmentStatus: profileForm.employmentStatus,
+          nationality: profileForm.nationality,
+          dateOfBirth: profileForm.dateOfBirth || null,
+          gender: profileForm.gender,
+          maritalStatus: profileForm.maritalStatus,
+          phone: profileForm.phone,
+          address: profileForm.address,
+          idNumber: profileForm.idNumber,
+          passportNumber: profileForm.passportNumber,
+          visaNumber: profileForm.visaNumber,
+          residencyNumber: profileForm.residencyNumber,
+          residencyExpiry: profileForm.residencyExpiry || null,
+          emergencyContactName: profileForm.emergencyContactName,
+          emergencyContactPhone: profileForm.emergencyContactPhone,
+          notes: profileForm.notes,
         }),
       });
       await payloadOf(response, "Failed to save employee profile.");
       setEditingEmployee(null);
-      flashMsg(`HR profile saved for ${editingEmployee.name}.`);
+      flashMsg(`Employee card saved for ${editingEmployee.name}.`);
       await loadDirectory();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the employee profile.");
     } finally {
       setSaving(false);
     }
+  };
+
+  const openEmployeeCard = (employee: HrEmployee) => {
+    setCardEmployee(employee);
+    setCardDocs([]);
+    setError("");
+    void loadCardDocs(employee.id);
+  };
+
+  // --- Personal photo ------------------------------------------------------
+  const pickPhoto = (employee: HrEmployee) => {
+    photoTargetRef.current = employee;
+    photoInputRef.current?.click();
+  };
+
+  const uploadPhotoFile = async (file: File | null) => {
+    const target = photoTargetRef.current;
+    if (!file || !target) return;
+    setPhotoBusy(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("userId", String(target.id));
+      form.append("photo", file);
+      const response = await fetch("/api/hr/photo", { method: "POST", body: form });
+      await payloadOf(response, "Failed to upload the photo.");
+      setPhotoStamp(Date.now());
+      flashMsg(`Personal photo saved for ${target.name}.`);
+      await loadDirectory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not upload the photo.");
+    } finally {
+      setPhotoBusy(false);
+      if (photoInputRef.current) photoInputRef.current.value = "";
+    }
+  };
+
+  const removePhoto = async (employee: HrEmployee) => {
+    if (!window.confirm(`Remove the personal photo of ${employee.name}?`)) return;
+    setPhotoBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/hr/photo?userId=${employee.id}`, { method: "DELETE" });
+      await payloadOf(response, "Failed to remove the photo.");
+      setPhotoStamp(Date.now());
+      flashMsg("Personal photo removed.");
+      await loadDirectory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not remove the photo.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  // --- Card documents --------------------------------------------------------
+  const uploadDocumentFile = async (file: File | null, employee: HrEmployee | null) => {
+    if (!file || !employee) return;
+    setDocBusy(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("userId", String(employee.id));
+      form.append("docType", docForm.docType);
+      form.append("title", docForm.title);
+      form.append("expiryDate", docForm.expiryDate);
+      form.append("file", file);
+      const response = await fetch("/api/hr/documents", { method: "POST", body: form });
+      await payloadOf<HrDocument>(response, "Failed to upload the document.");
+      flashMsg(`${docForm.docType} attached to ${employee.name}.`);
+      setDocForm((current) => ({ ...current, title: "", expiryDate: "" }));
+      await loadCardDocs(employee.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not upload the document.");
+    } finally {
+      setDocBusy(false);
+      if (docInputRef.current) docInputRef.current.value = "";
+    }
+  };
+
+  const deleteDocument = async (doc: HrDocument, employee: HrEmployee | null) => {
+    if (!employee || !window.confirm(`Delete “${doc.docType}” (${doc.originalName || doc.fileName})?`)) return;
+    setDocBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/hr/documents?id=${doc.id}`, { method: "DELETE" });
+      await payloadOf(response, "Failed to delete the document.");
+      flashMsg("Document deleted.");
+      await loadCardDocs(employee.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the document.");
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
+  // --- Editable job-description list ------------------------------------------
+  const saveJobTitles = async (next: string[]) => {
+    setTitlesBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/hr/job-titles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titles: next }),
+      });
+      const body = await payloadOf<{ titles: string[] }>(response, "Failed to save job titles.");
+      setJobTitles(Array.isArray(body.titles) ? body.titles : next);
+      flashMsg("Job titles updated.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save job titles.");
+    } finally {
+      setTitlesBusy(false);
+    }
+  };
+
+  const addJobTitle = () => {
+    const title = titlesDraft.trim().replace(/\s+/g, " ");
+    if (!title) return;
+    if (jobTitles.some((t) => t.toLowerCase() === title.toLowerCase())) {
+      setError("This job title is already on the list.");
+      return;
+    }
+    setTitlesDraft("");
+    void saveJobTitles([...jobTitles, title]);
   };
 
   const submitLeave = async (event: FormEvent<HTMLFormElement>) => {
@@ -490,21 +808,25 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
           </div>
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-              <div><h2 className="text-sm font-black text-white">Employee pay profiles</h2><p className="mt-1 text-[11px] font-semibold text-slate-500">Accounts are managed in Settings. Set the private job title, hire date and monthly base salary here.</p></div>
-              <span className="text-[10px] font-bold text-slate-500">{filteredEmployees.length} of {employees.length}</span>
+              <div><h2 className="text-sm font-black text-white">Employee cards</h2><p className="mt-1 text-[11px] font-semibold text-slate-500">Accounts are managed in Settings. The card holds the job description (linked to the system role), personal details, photo, residency papers and pay profile.</p></div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-500">{filteredEmployees.length} of {employees.length}</span>
+                <button type="button" onClick={() => { setTitlesOpen(true); setError(""); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 transition hover:border-amber-500/60 hover:text-amber-200"><ListChecks className="h-3.5 w-3.5" />Job titles</button>
+              </div>
             </div>
             {loading ? <div className="p-10 text-center text-sm font-bold text-slate-500">Loading HR records…</div> : filteredEmployees.length === 0 ? <div className="p-10 text-center text-sm font-bold text-slate-500">No employees match this search.</div> : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-left text-xs">
-                  <thead><tr className="border-b border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Employee</th><th className="px-3 py-3">Role / Job title</th><th className="px-3 py-3">Hire date</th><th className="px-3 py-3 text-right">Monthly salary</th><th className="px-5 py-3 text-right">HR profile</th></tr></thead>
+                <table className="w-full min-w-[880px] text-left text-xs">
+                  <thead><tr className="border-b border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Employee</th><th className="px-3 py-3">Role / Job title</th><th className="px-3 py-3">Nationality</th><th className="px-3 py-3">Hire date</th><th className="px-3 py-3 text-right">Monthly salary</th><th className="px-5 py-3 text-right">Card</th></tr></thead>
                   <tbody className="divide-y divide-slate-800/70">
                     {filteredEmployees.map((employee) => (
                       <tr key={employee.id} className={`text-slate-300 ${employee.active ? "" : "opacity-55"}`}>
-                        <td className="px-5 py-3.5"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${employee.avatarColor || "bg-slate-700"} text-xs font-black text-white`}>{employee.name.slice(0, 1).toUpperCase()}</span><span><span className="block font-black text-white">{employee.name}{!employee.active && <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] uppercase text-slate-500">Inactive</span>}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.email}</span></span></div></td>
-                        <td className="px-3 py-3.5"><span className="block font-bold text-slate-300">{employee.role}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.jobTitle || "Job title not set"}</span></td>
+                        <td className="px-5 py-3.5"><div className="flex items-center gap-3">{employee.photoFile ? <img src={photoUrl(employee.id, photoStamp)} alt="" className="h-9 w-9 rounded-xl border border-slate-700 object-cover" /> : <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${employee.avatarColor || "bg-slate-700"} text-xs font-black text-white`}>{employee.name.slice(0, 1).toUpperCase()}</span>}<span><span className="block font-black text-white">{employee.name}{!employee.active && <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] uppercase text-slate-500">Inactive</span>}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.employeeCode ? `${employee.employeeCode} · ` : ""}{employee.email}</span></span></div></td>
+                        <td className="px-3 py-3.5"><span className="block font-bold text-slate-300">{employee.jobTitle || employee.role}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">Role: {employee.role}{employee.jobTitle && employee.jobTitle !== employee.role ? " · custom job description" : " · linked"}</span></td>
+                        <td className="px-3 py-3.5 font-semibold text-slate-400">{textOr(employee.nationality)}{employee.department ? <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.department}</span> : null}</td>
                         <td className="px-3 py-3.5 font-semibold text-slate-400">{dateLabel(employee.hireDate)}</td>
                         <td className="px-3 py-3.5 text-right font-mono font-black text-white">{employee.profileComplete ? money(employee.baseSalaryCents) : <span className="font-sans text-[10px] font-bold text-amber-300">Not set</span>}</td>
-                        <td className="px-5 py-3.5 text-right"><button type="button" onClick={() => openEmployeeEditor(employee)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 transition hover:border-amber-500/60 hover:text-amber-200"><BriefcaseBusiness className="h-3.5 w-3.5" />{employee.profileComplete ? "Edit profile" : "Set up pay"}</button></td>
+                        <td className="px-5 py-3.5 text-right"><div className="inline-flex gap-1.5"><button type="button" onClick={() => openEmployeeCard(employee)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 transition hover:border-sky-500/60 hover:text-sky-200"><IdCard className="h-3.5 w-3.5" />Card</button><button type="button" onClick={() => openEmployeeEditor(employee)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 transition hover:border-amber-500/60 hover:text-amber-200"><BriefcaseBusiness className="h-3.5 w-3.5" />{employee.profileComplete ? "Edit" : "Set up"}</button></div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -512,7 +834,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
               </div>
             )}
           </div>
-          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4 text-[11px] font-semibold leading-relaxed text-sky-200/80"><ShieldCheck className="mr-1 inline h-4 w-4 align-[-3px] text-sky-300" />Salary data is stored separately from ordinary user accounts. Only this granted HR workspace returns compensation values.</div>
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4 text-[11px] font-semibold leading-relaxed text-sky-200/80"><ShieldCheck className="mr-1 inline h-4 w-4 align-[-3px] text-sky-300" />Card data and salary figures are stored separately from ordinary user accounts. Only this granted HR workspace returns them.</div>
         </section>
       )}
 
@@ -520,7 +842,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         <section className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
           <form onSubmit={submitLeave} className="h-fit space-y-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
             <div><div className="flex items-center gap-2 text-sm font-black text-white"><CalendarDays className="h-4 w-4 text-amber-400" />Record leave or absence</div><p className="mt-1 text-[11px] leading-relaxed text-slate-500">A new entry is pending until an HR user approves or declines it. Record calendar days; overlapping pending/approved entries are blocked.</p></div>
-            <label><span className={SMALL_LABEL}>Employee</span><select required value={leaveForm.userId} onChange={(event) => setLeaveForm((current) => ({ ...current, userId: event.target.value }))} className={INPUT}><option value="">Select employee…</option>{employees.filter((employee) => employee.active).map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.role}</option>)}</select></label>
+            <label><span className={SMALL_LABEL}>Employee</span><select required value={leaveForm.userId} onChange={(event) => setLeaveForm((current) => ({ ...current, userId: event.target.value }))} className={INPUT}><option value="">Select employee…</option>{employees.filter((employee) => employee.active).map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.jobTitle || employee.role}</option>)}</select></label>
             <label><span className={SMALL_LABEL}>Leave type</span><select value={leaveForm.leaveType} onChange={(event) => setLeaveForm((current) => ({ ...current, leaveType: event.target.value as LeaveType }))} className={INPUT}><option value="Annual">Annual leave</option><option value="Sick">Sick leave</option><option value="Unpaid">Unpaid leave / absence</option><option value="Other">Other</option></select></label>
             <div className="grid grid-cols-2 gap-3"><label><span className={SMALL_LABEL}>Start date</span><input required type="date" value={leaveForm.startDate} onChange={(event) => setLeaveForm((current) => ({ ...current, startDate: event.target.value }))} className={INPUT} /></label><label><span className={SMALL_LABEL}>End date</span><input required type="date" min={leaveForm.startDate} value={leaveForm.endDate} onChange={(event) => setLeaveForm((current) => ({ ...current, endDate: event.target.value }))} className={INPUT} /></label></div>
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] font-bold text-slate-400">Days in range: <span className="font-mono text-amber-300">{dayCount(leaveForm.startDate, leaveForm.endDate)}</span> calendar day(s)</div>
@@ -582,15 +904,199 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         </section>
       )}
 
+      <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-hidden="true" tabIndex={-1} onChange={(event) => { void uploadPhotoFile(event.target.files?.[0] ?? null); }} />
+      <input ref={docInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" aria-hidden="true" tabIndex={-1} onChange={(event) => { void uploadDocumentFile(event.target.files?.[0] ?? null, editingEmployee ?? cardEmployee); }} />
+
       {editingEmployee && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="hr-profile-title">
-          <form onSubmit={saveEmployeeProfile} className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-6">
-            <div className="flex items-start justify-between gap-3"><div><h2 id="hr-profile-title" className="text-lg font-black text-white">Employee HR profile</h2><p className="mt-1 text-xs font-semibold text-slate-400">{editingEmployee.name} · {editingEmployee.role}</p></div><button type="button" aria-label="Close" onClick={() => setEditingEmployee(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button></div>
-            <label><span className={SMALL_LABEL}>Job title</span><input maxLength={80} value={profileForm.jobTitle} onChange={(event) => setProfileForm((current) => ({ ...current, jobTitle: event.target.value }))} placeholder="e.g. CNC Operator" className={INPUT} /></label>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className={SMALL_LABEL}>Hire date</span><input type="date" value={profileForm.hireDate} onChange={(event) => setProfileForm((current) => ({ ...current, hireDate: event.target.value }))} className={INPUT} /></label><label><span className={SMALL_LABEL}>Monthly base salary (USD)</span><span className="relative block"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">$</span><input required type="number" min="0" max="999999.99" step="0.01" value={profileForm.monthlySalary} onChange={(event) => setProfileForm((current) => ({ ...current, monthlySalary: event.target.value }))} placeholder="0.00" className={`${INPUT} pl-7`} /></span></label></div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[10px] font-semibold leading-relaxed text-slate-500">Pay profiles are snapshots for new draft runs only. Editing a profile does not change an existing payroll draft or posted payslip.</div>
-            <div className="flex justify-end gap-2"><button type="button" onClick={() => setEditingEmployee(null)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white">Cancel</button><button disabled={saving} className="rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-500 disabled:opacity-50">{saving ? "Saving…" : "Save profile"}</button></div>
+          <form onSubmit={saveEmployeeProfile} className="max-h-[92vh] w-full max-w-3xl space-y-4 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {editingEmployee.photoFile
+                  ? <img src={photoUrl(editingEmployee.id, photoStamp)} alt="" className="h-14 w-14 rounded-2xl border border-slate-700 object-cover" />
+                  : <span className={`flex h-14 w-14 items-center justify-center rounded-2xl ${editingEmployee.avatarColor || "bg-slate-700"} text-lg font-black text-white`}>{editingEmployee.name.slice(0, 1).toUpperCase()}</span>}
+                <div>
+                  <h2 id="hr-profile-title" className="text-lg font-black text-white">Employee card</h2>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-400">{editingEmployee.name} · {editingEmployee.email}</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button type="button" disabled={photoBusy} onClick={() => pickPhoto(editingEmployee)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-amber-500/60 hover:text-amber-200 disabled:opacity-50"><Camera className="h-3 w-3" />{photoBusy ? "Uploading…" : editingEmployee.photoFile ? "Change photo" : "Add photo"}</button>
+                    {editingEmployee.photoFile && <button type="button" disabled={photoBusy} onClick={() => void removePhoto(editingEmployee)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-500 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-50"><Trash2 className="h-3 w-3" />Remove</button>}
+                  </div>
+                </div>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setEditingEmployee(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+
+            <fieldset className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <legend className="px-1 text-[10px] font-black uppercase tracking-wider text-amber-300">Job &amp; employment</legend>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+                <span className="text-[11px] font-bold text-slate-400">System role: <span className="font-black text-white">{editingEmployee.role}</span></span>
+                <span className="flex items-center gap-2">
+                  {profileForm.jobTitle === editingEmployee.role
+                    ? <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-300">Linked to role</span>
+                    : <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-300">Custom description</span>}
+                  <button type="button" onClick={() => setProfileForm((current) => ({ ...current, jobTitle: editingEmployee.role }))} className="text-[10px] font-black text-amber-300 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-200">Use system role</button>
+                </span>
+              </div>
+              <div>
+                <label><span className={SMALL_LABEL}>Job description</span><input maxLength={80} list="hr-job-title-options" value={profileForm.jobTitle} onChange={(event) => setProfileForm((current) => ({ ...current, jobTitle: event.target.value }))} placeholder="Pick a system role, a job title — or type freely" className={INPUT} /></label>
+                <datalist id="hr-job-title-options">
+                  {jobTitleSuggestions.map((option) => <option key={option.value} value={option.value}>{option.group}</option>)}
+                </datalist>
+                <p className="mt-1 text-[10px] font-semibold text-slate-500">Suggestions combine the access roles (built-in + custom) and <button type="button" onClick={() => setTitlesOpen(true)} className="font-black text-amber-300 underline decoration-amber-500/40 underline-offset-2">your editable job-titles list</button>. Typing a custom description never changes the employee&apos;s login role.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label><span className={SMALL_LABEL}>Employee code</span><input maxLength={30} value={profileForm.employeeCode} onChange={(event) => setProfileForm((current) => ({ ...current, employeeCode: event.target.value }))} placeholder="EMP-001" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Department</span><input maxLength={60} list="hr-department-options" value={profileForm.department} onChange={(event) => setProfileForm((current) => ({ ...current, department: event.target.value }))} placeholder="Production" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Status</span><select value={profileForm.employmentStatus} onChange={(event) => setProfileForm((current) => ({ ...current, employmentStatus: event.target.value }))} className={INPUT}>{HR_EMPLOYMENT_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+                <label><span className={SMALL_LABEL}>Hire date</span><input type="date" value={profileForm.hireDate} onChange={(event) => setProfileForm((current) => ({ ...current, hireDate: event.target.value }))} className={INPUT} /></label>
+              </div>
+              <datalist id="hr-department-options">{HR_DEPARTMENTS.map((d) => <option key={d} value={d} />)}</datalist>
+              <label><span className={SMALL_LABEL}>Monthly base salary (USD)</span><span className="relative block max-w-xs"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">$</span><input required type="number" min="0" max="999999.99" step="0.01" value={profileForm.monthlySalary} onChange={(event) => setProfileForm((current) => ({ ...current, monthlySalary: event.target.value }))} placeholder="0.00" className={`${INPUT} pl-7`} /></span></label>
+            </fieldset>
+
+            <fieldset className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <legend className="px-1 text-[10px] font-black uppercase tracking-wider text-amber-300">Personal details</legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label><span className={SMALL_LABEL}>Nationality</span><input maxLength={60} list="hr-nationality-options" value={profileForm.nationality} onChange={(event) => setProfileForm((current) => ({ ...current, nationality: event.target.value }))} placeholder="Lebanese" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Date of birth</span><input type="date" value={profileForm.dateOfBirth} onChange={(event) => setProfileForm((current) => ({ ...current, dateOfBirth: event.target.value }))} className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Gender</span><select value={profileForm.gender} onChange={(event) => setProfileForm((current) => ({ ...current, gender: event.target.value }))} className={INPUT}><option value="">—</option>{HR_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}</select></label>
+                <label><span className={SMALL_LABEL}>Marital status</span><select value={profileForm.maritalStatus} onChange={(event) => setProfileForm((current) => ({ ...current, maritalStatus: event.target.value }))} className={INPUT}><option value="">—</option>{HR_MARITAL_STATUSES.map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
+              </div>
+              <datalist id="hr-nationality-options">{COMMON_NATIONALITIES.map((n) => <option key={n} value={n} />)}</datalist>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label><span className={SMALL_LABEL}>Phone</span><input maxLength={30} value={profileForm.phone} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+961 …" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Address</span><input maxLength={200} value={profileForm.address} onChange={(event) => setProfileForm((current) => ({ ...current, address: event.target.value }))} placeholder="Street, city" className={INPUT} /></label>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label><span className={SMALL_LABEL}>Emergency contact</span><input maxLength={80} value={profileForm.emergencyContactName} onChange={(event) => setProfileForm((current) => ({ ...current, emergencyContactName: event.target.value }))} placeholder="Name + relation" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Emergency phone</span><input maxLength={30} value={profileForm.emergencyContactPhone} onChange={(event) => setProfileForm((current) => ({ ...current, emergencyContactPhone: event.target.value }))} placeholder="+961 …" className={INPUT} /></label>
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <legend className="px-1 text-[10px] font-black uppercase tracking-wider text-amber-300">Identity &amp; residency</legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <label><span className={SMALL_LABEL}>ID number</span><input maxLength={60} value={profileForm.idNumber} onChange={(event) => setProfileForm((current) => ({ ...current, idNumber: event.target.value }))} placeholder="National / civil ID" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Passport number</span><input maxLength={60} value={profileForm.passportNumber} onChange={(event) => setProfileForm((current) => ({ ...current, passportNumber: event.target.value }))} className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Visa number</span><input maxLength={60} value={profileForm.visaNumber} onChange={(event) => setProfileForm((current) => ({ ...current, visaNumber: event.target.value }))} className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Residency number</span><input maxLength={60} value={profileForm.residencyNumber} onChange={(event) => setProfileForm((current) => ({ ...current, residencyNumber: event.target.value }))} placeholder="Iqama / permit" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Residency expiry</span><input type="date" value={profileForm.residencyExpiry} onChange={(event) => setProfileForm((current) => ({ ...current, residencyExpiry: event.target.value }))} className={INPUT} /></label>
+              </div>
+            </fieldset>
+
+            <label className="block"><span className={SMALL_LABEL}>HR notes <span className="font-semibold normal-case text-slate-600">(private — only this HR workspace shows them)</span></span><textarea maxLength={1000} rows={2} value={profileForm.notes} onChange={(event) => setProfileForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Private HR remark…" className={`${INPUT} resize-y`} /></label>
+
+            <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-amber-300"><Paperclip className="h-3.5 w-3.5" />Attached documents</h3>
+                <span className="text-[10px] font-bold text-slate-500">{cardDocs.length} file(s) · JPG/PNG/WebP/PDF ≤ 10 MB</span>
+              </div>
+              {cardDocsLoading ? <p className="text-[11px] font-bold text-slate-500">Loading documents…</p> : cardDocs.length === 0 ? <p className="text-[11px] font-semibold text-slate-600">No documents attached yet — identity copy, passport, visa, residency…</p> : (
+                <ul className="divide-y divide-slate-800/70 rounded-xl border border-slate-800 bg-slate-950/60">
+                  {cardDocs.map((doc) => (
+                    <li key={doc.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                      <span className="rounded-md bg-sky-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-sky-300">{doc.docType}</span>
+                      <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold text-white">{doc.title || doc.originalName || doc.fileName}</span><span className="block text-[10px] font-semibold text-slate-500">{fileSize(doc.size)}{doc.expiryDate ? ` · expires ${dateLabel(doc.expiryDate)}` : ""}</span></span>
+                      <a href={`/api/hr/documents?id=${doc.id}&download=1`} className="rounded-lg border border-slate-700 px-2 py-1.5 text-slate-400 hover:border-sky-500/50 hover:text-white" title="Download"><Download className="h-3.5 w-3.5" /></a>
+                      <button type="button" disabled={docBusy} onClick={() => void deleteDocument(doc, editingEmployee)} className="rounded-lg border border-slate-700 px-2 py-1.5 text-slate-500 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-50" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_150px_auto]">
+                <select aria-label="Document type" value={docForm.docType} onChange={(event) => setDocForm((current) => ({ ...current, docType: event.target.value }))} className="rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-bold text-white">{HR_DOCUMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                <input value={docForm.title} onChange={(event) => setDocForm((current) => ({ ...current, title: event.target.value }))} maxLength={80} placeholder="Label (optional)" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500" />
+                <input aria-label="Expiry date" type="date" value={docForm.expiryDate} onChange={(event) => setDocForm((current) => ({ ...current, expiryDate: event.target.value }))} className="rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white" />
+                <button type="button" disabled={docBusy} onClick={() => docInputRef.current?.click()} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-black text-white hover:bg-sky-500 disabled:opacity-50"><Upload className="h-3.5 w-3.5" />{docBusy ? "…" : "Attach"}</button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[10px] font-semibold leading-relaxed text-slate-500">Pay profiles are snapshots for new draft runs only. Editing a card does not change an existing payroll draft or posted payslip.</div>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setEditingEmployee(null)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white">Cancel</button><button disabled={saving} className="rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-500 disabled:opacity-50">{saving ? "Saving…" : "Save card"}</button></div>
           </form>
+        </div>
+      )}
+
+      {cardEmployee && !editingEmployee && (
+        <div className="hr-modal fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-slate-950/85 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="hr-card-title">
+          <div className="hr-modal-panel max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+            <div className="hr-no-print flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+              <div><h2 id="hr-card-title" className="text-sm font-black text-white">Employee card · {cardEmployee.name}</h2><p className="mt-1 text-[10px] font-semibold text-slate-500">{textOr(cardEmployee.jobTitle, cardEmployee.role)}{cardEmployee.employeeCode ? ` · ${cardEmployee.employeeCode}` : ""}</p></div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setCardEmployee(null); openEmployeeEditor(cardEmployee); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 hover:border-amber-500/50 hover:text-amber-200"><BriefcaseBusiness className="h-3.5 w-3.5" />Edit card</button>
+                <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white hover:bg-amber-500"><Printer className="h-3.5 w-3.5" />Print</button>
+                <button type="button" aria-label="Close card" onClick={() => setCardEmployee(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="hr-printable m-5 rounded-xl bg-white p-6 text-slate-900 sm:m-7 sm:p-9">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-5">
+                <div className="flex items-center gap-4">
+                  {cardEmployee.photoFile
+                    ? <img src={photoUrl(cardEmployee.id, photoStamp)} alt="" className="h-20 w-20 rounded-2xl border border-slate-300 object-cover" />
+                    : <span className="flex h-20 w-20 items-center justify-center rounded-2xl bg-slate-200 text-2xl font-black text-slate-500">{cardEmployee.name.slice(0, 1).toUpperCase()}</span>}
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">WoodTek ERP · Employee card</div>
+                    <h3 className="mt-1 text-2xl font-black tracking-tight">{cardEmployee.name}</h3>
+                    <p className="mt-0.5 text-sm font-semibold text-slate-600">{textOr(cardEmployee.jobTitle, cardEmployee.role)}{cardEmployee.department ? ` · ${cardEmployee.department}` : ""}</p>
+                  </div>
+                </div>
+                <div className="text-right"><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</div><div className="mt-1 text-sm font-black">{textOr(cardEmployee.employmentStatus, cardEmployee.active ? "Active" : "Inactive")}</div>{cardEmployee.employeeCode && <div className="mt-1 font-mono text-[11px] text-slate-500">{cardEmployee.employeeCode}</div>}</div>
+              </div>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-3 border-b border-slate-200 py-5 sm:grid-cols-2 lg:grid-cols-3">
+                {[["System role", cardEmployee.role], ["Job description", textOr(cardEmployee.jobTitle, cardEmployee.role)], ["Department", textOr(cardEmployee.department)], ["Nationality", textOr(cardEmployee.nationality)], ["Date of birth", dateLabel(cardEmployee.dateOfBirth)], ["Gender", textOr(cardEmployee.gender)], ["Marital status", textOr(cardEmployee.maritalStatus)], ["Phone", textOr(cardEmployee.phone)], ["Email", cardEmployee.email], ["Address", textOr(cardEmployee.address)], ["Hire date", dateLabel(cardEmployee.hireDate)], ["Monthly salary", cardEmployee.baseSalaryCents == null ? "—" : money(cardEmployee.baseSalaryCents)]].map(([label, value]) => (
+                  <div key={label}><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-0.5 text-sm font-bold">{value}</div></div>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-3 border-b border-slate-200 py-5 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="sm:col-span-2 lg:col-span-3 text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Identity &amp; residency</div>
+                {[["ID number", textOr(cardEmployee.idNumber)], ["Passport number", textOr(cardEmployee.passportNumber)], ["Visa number", textOr(cardEmployee.visaNumber)], ["Residency number", textOr(cardEmployee.residencyNumber)], ["Residency expiry", dateLabel(cardEmployee.residencyExpiry)], ["Emergency contact", cardEmployee.emergencyContactName ? `${cardEmployee.emergencyContactName}${cardEmployee.emergencyContactPhone ? ` · ${cardEmployee.emergencyContactPhone}` : ""}` : "—"]].map(([label, value]) => (
+                  <div key={label}><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-0.5 text-sm font-bold">{value}</div></div>
+                ))}
+              </div>
+              <div className="py-5">
+                <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Attached documents ({cardDocs.length})</div>
+                {cardDocsLoading ? <p className="mt-2 text-xs font-semibold text-slate-500">Loading…</p> : cardDocs.length === 0 ? <p className="mt-2 text-xs font-semibold text-slate-500">No documents attached.</p> : (
+                  <ul className="mt-2 space-y-1.5">
+                    {cardDocs.map((doc) => (
+                      <li key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                        <span><span className="font-black">{doc.docType}</span><span className="text-slate-500"> · {doc.title || doc.originalName || doc.fileName} · {fileSize(doc.size)}{doc.expiryDate ? ` · expires ${dateLabel(doc.expiryDate)}` : ""}</span></span>
+                        <a href={`/api/hr/documents?id=${doc.id}&download=1`} className="hr-no-print font-black text-sky-700 underline underline-offset-2">Download</a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {cardEmployee.notes && <div className="rounded-lg bg-slate-100 p-3 text-[11px] leading-relaxed text-slate-600"><span className="font-black uppercase tracking-wider text-slate-500">HR notes · </span>{cardEmployee.notes}</div>}
+              <div className="mt-8 grid grid-cols-2 gap-8 text-[10px] text-slate-500"><div className="border-t border-slate-400 pt-2">Employee signature</div><div className="border-t border-slate-400 pt-2">HR signature</div></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {titlesOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="hr-titles-heading">
+          <div className="w-full max-w-md space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 id="hr-titles-heading" className="flex items-center gap-2 text-base font-black text-white"><ListChecks className="h-4 w-4 text-amber-400" />Job titles</h2><p className="mt-1 text-[11px] font-semibold leading-relaxed text-slate-500">Editable descriptions for staff whose system role does not describe their job (Worker, Cleaner, …). The picker always offers system roles first, then this list — free text stays allowed.</p></div>
+              <button type="button" aria-label="Close" onClick={() => setTitlesOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="flex gap-2">
+              <input value={titlesDraft} onChange={(event) => setTitlesDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addJobTitle(); } }} maxLength={60} placeholder="e.g. Cleaner" className={`${INPUT} py-2 text-xs`} />
+              <button type="button" disabled={titlesBusy || !titlesDraft.trim()} onClick={addJobTitle} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-black text-white hover:bg-amber-500 disabled:opacity-50"><Plus className="h-4 w-4" />Add</button>
+            </div>
+            {jobTitles.length === 0 ? <p className="text-xs font-semibold text-slate-500">The list is empty — add the first job title above.</p> : (
+              <ul className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/50 p-2">
+                {jobTitles.map((title) => (
+                  <li key={title} className="flex items-center justify-between gap-2 rounded-lg bg-slate-900/70 px-3 py-2">
+                    <span className="text-xs font-bold text-white">{title}</span>
+                    <button type="button" disabled={titlesBusy} onClick={() => void saveJobTitles(jobTitles.filter((t) => t !== title))} className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-300 disabled:opacity-50" title={`Remove ${title}`}><Trash2 className="h-3.5 w-3.5" /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end"><button type="button" onClick={() => setTitlesOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white">Done</button></div>
+          </div>
         </div>
       )}
 

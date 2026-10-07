@@ -405,9 +405,61 @@ create table if not exists hr_employee_profiles (
   job_title text not null default '',
   hire_date date,
   base_salary_cents integer not null default 0 check (base_salary_cents between 0 and 99999999),
+  employee_code text not null default '',
+  department text not null default '',
+  employment_status text not null default 'Active',
+  nationality text not null default '',
+  date_of_birth date,
+  gender text not null default '',
+  marital_status text not null default '',
+  phone text not null default '',
+  address text not null default '',
+  id_number text not null default '',
+  passport_number text not null default '',
+  visa_number text not null default '',
+  residency_number text not null default '',
+  residency_expiry date,
+  emergency_contact_name text not null default '',
+  emergency_contact_phone text not null default '',
+  notes text not null default '',
+  photo_file text not null default '',
   updated_by_id integer references users(id) on delete set null,
   updated_at timestamp not null default now()
 );
+-- PCs installed before the employee card existed: backfill the newer columns.
+alter table hr_employee_profiles add column if not exists employee_code text not null default '';
+alter table hr_employee_profiles add column if not exists department text not null default '';
+alter table hr_employee_profiles add column if not exists employment_status text not null default 'Active';
+alter table hr_employee_profiles add column if not exists nationality text not null default '';
+alter table hr_employee_profiles add column if not exists date_of_birth date;
+alter table hr_employee_profiles add column if not exists gender text not null default '';
+alter table hr_employee_profiles add column if not exists marital_status text not null default '';
+alter table hr_employee_profiles add column if not exists phone text not null default '';
+alter table hr_employee_profiles add column if not exists address text not null default '';
+alter table hr_employee_profiles add column if not exists id_number text not null default '';
+alter table hr_employee_profiles add column if not exists passport_number text not null default '';
+alter table hr_employee_profiles add column if not exists visa_number text not null default '';
+alter table hr_employee_profiles add column if not exists residency_number text not null default '';
+alter table hr_employee_profiles add column if not exists residency_expiry date;
+alter table hr_employee_profiles add column if not exists emergency_contact_name text not null default '';
+alter table hr_employee_profiles add column if not exists emergency_contact_phone text not null default '';
+alter table hr_employee_profiles add column if not exists notes text not null default '';
+alter table hr_employee_profiles add column if not exists photo_file text not null default '';
+
+create table if not exists hr_employee_documents (
+  id serial primary key,
+  user_id integer not null references users(id) on delete cascade,
+  doc_type text not null default 'Other',
+  title text not null default '',
+  file_name text not null,
+  original_name text not null default '',
+  mime text not null default '',
+  size integer not null default 0,
+  expiry_date date,
+  uploaded_by_id integer references users(id) on delete set null,
+  created_at timestamp not null default now()
+);
+create index if not exists hr_employee_documents_user_idx on hr_employee_documents (user_id);
 
 create table if not exists hr_leave_requests (
   id serial primary key,

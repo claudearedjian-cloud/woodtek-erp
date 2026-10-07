@@ -4,6 +4,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  hrEmployeeDocuments,
   hrEmployeeProfiles,
   hrLeaveRequests,
   hrPayrollItems,
@@ -52,6 +53,24 @@ export async function listHREmployees() {
     jobTitle: hrEmployeeProfiles.jobTitle,
     hireDate: hrEmployeeProfiles.hireDate,
     baseSalaryCents: hrEmployeeProfiles.baseSalaryCents,
+    employeeCode: hrEmployeeProfiles.employeeCode,
+    department: hrEmployeeProfiles.department,
+    employmentStatus: hrEmployeeProfiles.employmentStatus,
+    nationality: hrEmployeeProfiles.nationality,
+    dateOfBirth: hrEmployeeProfiles.dateOfBirth,
+    gender: hrEmployeeProfiles.gender,
+    maritalStatus: hrEmployeeProfiles.maritalStatus,
+    phone: hrEmployeeProfiles.phone,
+    address: hrEmployeeProfiles.address,
+    idNumber: hrEmployeeProfiles.idNumber,
+    passportNumber: hrEmployeeProfiles.passportNumber,
+    visaNumber: hrEmployeeProfiles.visaNumber,
+    residencyNumber: hrEmployeeProfiles.residencyNumber,
+    residencyExpiry: hrEmployeeProfiles.residencyExpiry,
+    emergencyContactName: hrEmployeeProfiles.emergencyContactName,
+    emergencyContactPhone: hrEmployeeProfiles.emergencyContactPhone,
+    notes: hrEmployeeProfiles.notes,
+    photoFile: hrEmployeeProfiles.photoFile,
     profileUpdatedAt: hrEmployeeProfiles.updatedAt,
   })
     .from(users)
@@ -70,22 +89,162 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
   const [employee] = await db.select({ id: users.id })
     .from(users).where(eq(users.id, values.userId)).limit(1);
   if (!employee) throw new HRPayrollError("Employee account not found.", 404);
-  const [saved] = await db.insert(hrEmployeeProfiles).values({
+  const profileValues = {
     userId: values.userId,
     jobTitle: values.jobTitle,
     hireDate: values.hireDate,
     baseSalaryCents: values.baseSalaryCents,
+    employeeCode: values.employeeCode,
+    department: values.department,
+    employmentStatus: values.employmentStatus || "Active",
+    nationality: values.nationality,
+    dateOfBirth: values.dateOfBirth,
+    gender: values.gender,
+    maritalStatus: values.maritalStatus,
+    phone: values.phone,
+    address: values.address,
+    idNumber: values.idNumber,
+    passportNumber: values.passportNumber,
+    visaNumber: values.visaNumber,
+    residencyNumber: values.residencyNumber,
+    residencyExpiry: values.residencyExpiry,
+    emergencyContactName: values.emergencyContactName,
+    emergencyContactPhone: values.emergencyContactPhone,
+    notes: values.notes,
+    updatedById: actorId,
+    updatedAt: new Date(),
+  };
+  const [saved] = await db.insert(hrEmployeeProfiles).values(profileValues).onConflictDoUpdate({
+    target: hrEmployeeProfiles.userId,
+    set: {
+      jobTitle: profileValues.jobTitle,
+      hireDate: profileValues.hireDate,
+      baseSalaryCents: profileValues.baseSalaryCents,
+      employeeCode: profileValues.employeeCode,
+      department: profileValues.department,
+      employmentStatus: profileValues.employmentStatus,
+      nationality: profileValues.nationality,
+      dateOfBirth: profileValues.dateOfBirth,
+      gender: profileValues.gender,
+      maritalStatus: profileValues.maritalStatus,
+      phone: profileValues.phone,
+      address: profileValues.address,
+      idNumber: profileValues.idNumber,
+      passportNumber: profileValues.passportNumber,
+      visaNumber: profileValues.visaNumber,
+      residencyNumber: profileValues.residencyNumber,
+      residencyExpiry: profileValues.residencyExpiry,
+      emergencyContactName: profileValues.emergencyContactName,
+      emergencyContactPhone: profileValues.emergencyContactPhone,
+      notes: profileValues.notes,
+      updatedById: actorId,
+      updatedAt: new Date(),
+    },
+  }).returning();
+  return saved;
+}
+
+// ------------------------------------------------- employee card attachments
+
+export interface EmployeeDocumentInput {
+  userId: number;
+  docType: string;
+  title: string;
+  fileName: string;
+  originalName: string;
+  mime: string;
+  size: number;
+  expiryDate: string | null;
+}
+
+export async function listEmployeeDocuments(userId: number) {
+  await ensureHrSchema();
+  return db.select({
+    id: hrEmployeeDocuments.id,
+    userId: hrEmployeeDocuments.userId,
+    docType: hrEmployeeDocuments.docType,
+    title: hrEmployeeDocuments.title,
+    fileName: hrEmployeeDocuments.fileName,
+    originalName: hrEmployeeDocuments.originalName,
+    mime: hrEmployeeDocuments.mime,
+    size: hrEmployeeDocuments.size,
+    expiryDate: hrEmployeeDocuments.expiryDate,
+    createdAt: hrEmployeeDocuments.createdAt,
+  })
+    .from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.userId, userId))
+    .orderBy(desc(hrEmployeeDocuments.createdAt), desc(hrEmployeeDocuments.id));
+}
+
+export async function countEmployeeDocuments(userId: number): Promise<number> {
+  await ensureHrSchema();
+  const [row] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.userId, userId));
+  return Number(row?.n ?? 0);
+}
+
+export async function createEmployeeDocument(input: EmployeeDocumentInput, actorId: number) {
+  await ensureHrSchema();
+  const [employee] = await db.select({ id: users.id })
+    .from(users).where(eq(users.id, input.userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  const [created] = await db.insert(hrEmployeeDocuments).values({
+    userId: input.userId,
+    docType: input.docType,
+    title: input.title,
+    fileName: input.fileName,
+    originalName: input.originalName,
+    mime: input.mime,
+    size: input.size,
+    expiryDate: input.expiryDate,
+    uploadedById: actorId,
+  }).returning();
+  return created;
+}
+
+export async function getEmployeeDocument(id: number) {
+  await ensureHrSchema();
+  const [row] = await db.select().from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function deleteEmployeeDocument(id: number) {
+  await ensureHrSchema();
+  const [removed] = await db.delete(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.id, id)).returning();
+  return removed ?? null;
+}
+
+/** Personal photo file name stored on the profile ("" = none). */
+export async function getEmployeePhotoFile(userId: number): Promise<string> {
+  await ensureHrSchema();
+  const [row] = await db.select({ photoFile: hrEmployeeProfiles.photoFile })
+    .from(hrEmployeeProfiles).where(eq(hrEmployeeProfiles.userId, userId)).limit(1);
+  return row?.photoFile ?? "";
+}
+
+/**
+ * Points the profile at a new personal photo, creating the shell profile row
+ * when HR has not filled the card yet (photo first, pay details later).
+ */
+export async function setEmployeePhotoFile(userId: number, fileName: string, actorId: number) {
+  await ensureHrSchema();
+  const [employee] = await db.select({ id: users.id })
+    .from(users).where(eq(users.id, userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  const [saved] = await db.insert(hrEmployeeProfiles).values({
+    userId,
+    jobTitle: "",
+    hireDate: null,
+    baseSalaryCents: 0,
+    photoFile: fileName,
     updatedById: actorId,
     updatedAt: new Date(),
   }).onConflictDoUpdate({
     target: hrEmployeeProfiles.userId,
-    set: {
-      jobTitle: values.jobTitle,
-      hireDate: values.hireDate,
-      baseSalaryCents: values.baseSalaryCents,
-      updatedById: actorId,
-      updatedAt: new Date(),
-    },
+    set: { photoFile: fileName, updatedById: actorId, updatedAt: new Date() },
   }).returning();
   return saved;
 }

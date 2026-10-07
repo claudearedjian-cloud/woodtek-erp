@@ -625,15 +625,56 @@ export const attendanceRelations = relations(attendance, ({ one }) => ({
 
 // HR & payroll. Sensitive compensation is kept in these tables rather than
 // users, whose public/bootstrap shapes are consumed by the rest of the app.
+// The profile is the full employee card: identity, residency papers,
+// emergency contact and HR notes alongside the pay profile.
 export const hrEmployeeProfiles = pgTable("hr_employee_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
   jobTitle: text("job_title").notNull().default(""),
   hireDate: date("hire_date", { mode: "string" }),
   baseSalaryCents: integer("base_salary_cents").notNull().default(0),
+  // --- Employee card ---
+  employeeCode: text("employee_code").notNull().default(""),
+  department: text("department").notNull().default(""),
+  employmentStatus: text("employment_status").notNull().default("Active"),
+  nationality: text("nationality").notNull().default(""),
+  dateOfBirth: date("date_of_birth", { mode: "string" }),
+  gender: text("gender").notNull().default(""),
+  maritalStatus: text("marital_status").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  address: text("address").notNull().default(""),
+  idNumber: text("id_number").notNull().default(""),
+  passportNumber: text("passport_number").notNull().default(""),
+  visaNumber: text("visa_number").notNull().default(""),
+  residencyNumber: text("residency_number").notNull().default(""),
+  residencyExpiry: date("residency_expiry", { mode: "string" }),
+  emergencyContactName: text("emergency_contact_name").notNull().default(""),
+  emergencyContactPhone: text("emergency_contact_phone").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  photoFile: text("photo_file").notNull().default(""),
   updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// Employee card attachments: identity copy, passport, visa, residency permit,
+// work permit, contract, certificate… Files live under
+// <data dir>/uploads/hr/docs/; this table is the HR-private metadata ledger.
+// Deleting the employee account cascades the rows; orphan files are ignored.
+export const hrEmployeeDocuments = pgTable("hr_employee_documents", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  docType: text("doc_type").notNull().default("Other"),
+  title: text("title").notNull().default(""),
+  fileName: text("file_name").notNull(),
+  originalName: text("original_name").notNull().default(""),
+  mime: text("mime").notNull().default(""),
+  size: integer("size").notNull().default(0),
+  expiryDate: date("expiry_date", { mode: "string" }),
+  uploadedById: integer("uploaded_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("hr_employee_documents_user_idx").on(t.userId),
+]);
 
 export const hrLeaveRequests = pgTable("hr_leave_requests", {
   id: serial("id").primaryKey(),

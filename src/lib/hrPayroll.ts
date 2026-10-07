@@ -6,6 +6,75 @@ export const MAX_PAY_CENTS = 99_999_999;
 export const LEAVE_TYPES = ["Annual", "Sick", "Unpaid", "Other"] as const;
 export const LEAVE_STATUSES = ["Pending", "Approved", "Declined"] as const;
 
+// --- Employee card master data -------------------------------------------
+// Genders, marital states, employment states, document kinds and the default
+// job-description list (Manager-editable via HR > Employees > Job titles).
+export const HR_GENDERS = ["Male", "Female"] as const;
+export const HR_MARITAL_STATUSES = ["Single", "Married", "Divorced", "Widowed"] as const;
+export const HR_EMPLOYMENT_STATUSES = ["Active", "Probation", "On Leave", "Inactive", "Terminated"] as const;
+export const HR_DOCUMENT_TYPES = [
+  "Identity Card",
+  "Passport",
+  "Visa",
+  "Residency Permit",
+  "Work Permit",
+  "Contract",
+  "Certificate",
+  "Other",
+] as const;
+
+export type HrGender = (typeof HR_GENDERS)[number];
+export type HrMaritalStatus = (typeof HR_MARITAL_STATUSES)[number];
+export type HrEmploymentStatus = (typeof HR_EMPLOYMENT_STATUSES)[number];
+export type HrDocumentType = (typeof HR_DOCUMENT_TYPES)[number];
+
+/** Factory-floor default job descriptions for staff without a system role. */
+export const DEFAULT_JOB_TITLES = [
+  "Worker",
+  "Cleaner",
+  "Driver",
+  "Security Guard",
+  "Carpenter",
+  "Painter",
+  "Helper",
+  "Storekeeper",
+  "Foreman",
+  "Electrician",
+] as const;
+
+export const MAX_JOB_TITLES = 60;
+export const MAX_JOB_TITLE_LEN = 60;
+
+/** Common nationalities for the HR datalist (free text is always allowed). */
+export const COMMON_NATIONALITIES = [
+  "Lebanese",
+  "Syrian",
+  "Palestinian",
+  "Egyptian",
+  "Iraqi",
+  "Jordanian",
+  "Turkish",
+  "Bangladeshi",
+  "Indian",
+  "Pakistani",
+  "Sri Lankan",
+  "Nepalese",
+  "Ethiopian",
+  "Filipino",
+] as const;
+
+/** Department suggestions for the HR datalist (free text is always allowed). */
+export const HR_DEPARTMENTS = [
+  "Production",
+  "Warehouse",
+  "Maintenance",
+  "Quality",
+  "Dispatch",
+  "Office",
+  "Sales",
+  "Management",
+] as const;
+
 export type LeaveType = (typeof LEAVE_TYPES)[number];
 export type LeaveStatus = (typeof LEAVE_STATUSES)[number];
 
@@ -59,21 +128,104 @@ export interface EmployeeProfileInput {
   jobTitle: string;
   hireDate: string | null;
   baseSalaryCents: number;
+  // --- Employee card: identity & employment ---
+  employeeCode: string;
+  department: string;
+  employmentStatus: string;
+  nationality: string;
+  dateOfBirth: string | null;
+  gender: string;
+  maritalStatus: string;
+  phone: string;
+  address: string;
+  // --- Employee card: civil / residency papers ---
+  idNumber: string;
+  passportNumber: string;
+  visaNumber: string;
+  residencyNumber: string;
+  residencyExpiry: string | null;
+  // --- Employee card: emergency & notes ---
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  notes: string;
+}
+
+function cappedText(value: unknown, max: number, field: string): string {
+  const text = String(value ?? "").trim();
+  if (text.length > max) throw new HRPayrollError(`${field} must be ${max} characters or fewer.`);
+  return text;
+}
+
+function optionalYmd(value: unknown, field: string): string | null {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (!isValidYmd(text)) throw new HRPayrollError(`${field} must be a real date in YYYY-MM-DD format.`);
+  return text;
+}
+
+function optionalEnum(value: unknown, allowed: readonly string[], field: string): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (!allowed.includes(text)) throw new HRPayrollError(`${field} is not a valid choice.`);
+  return text;
 }
 
 export function parseEmployeeProfile(input: unknown): EmployeeProfileInput {
   const raw = recordOf(input);
   if (!raw) throw new HRPayrollError("Enter the employee's HR details.");
   const userId = positiveId(raw.userId, "Employee");
-  const jobTitle = String(raw.jobTitle ?? "").trim();
-  if (jobTitle.length > 80) throw new HRPayrollError("Job title must be 80 characters or fewer.");
-  const hireDateText = String(raw.hireDate ?? "").trim();
-  if (hireDateText && !isValidYmd(hireDateText)) throw new HRPayrollError("Hire date must be a real date in YYYY-MM-DD format.");
+  const jobTitle = cappedText(raw.jobTitle, 80, "Job title");
+  const hireDate = optionalYmd(raw.hireDate, "Hire date");
   const baseSalaryCents = Number(raw.baseSalaryCents);
   if (!Number.isSafeInteger(baseSalaryCents) || baseSalaryCents < 0 || baseSalaryCents > MAX_PAY_CENTS) {
     throw new HRPayrollError("Monthly salary must be between $0.00 and $999,999.99.");
   }
-  return { userId, jobTitle, hireDate: hireDateText || null, baseSalaryCents };
+  return {
+    userId,
+    jobTitle,
+    hireDate,
+    baseSalaryCents,
+    employeeCode: cappedText(raw.employeeCode, 30, "Employee code"),
+    department: cappedText(raw.department, 60, "Department"),
+    employmentStatus: cappedText(raw.employmentStatus, 30, "Employment status"),
+    nationality: cappedText(raw.nationality, 60, "Nationality"),
+    dateOfBirth: optionalYmd(raw.dateOfBirth, "Date of birth"),
+    gender: optionalEnum(raw.gender, HR_GENDERS, "Gender"),
+    maritalStatus: optionalEnum(raw.maritalStatus, HR_MARITAL_STATUSES, "Marital status"),
+    phone: cappedText(raw.phone, 30, "Phone"),
+    address: cappedText(raw.address, 200, "Address"),
+    idNumber: cappedText(raw.idNumber, 60, "ID number"),
+    passportNumber: cappedText(raw.passportNumber, 60, "Passport number"),
+    visaNumber: cappedText(raw.visaNumber, 60, "Visa number"),
+    residencyNumber: cappedText(raw.residencyNumber, 60, "Residency number"),
+    residencyExpiry: optionalYmd(raw.residencyExpiry, "Residency expiry"),
+    emergencyContactName: cappedText(raw.emergencyContactName, 80, "Emergency contact"),
+    emergencyContactPhone: cappedText(raw.emergencyContactPhone, 30, "Emergency phone"),
+    notes: cappedText(raw.notes, 1000, "HR notes"),
+  };
+}
+
+/**
+ * Editable job-description list (HR > Employees > Job titles). Accepts the raw
+ * API body / file content and returns a clean, de-duplicated list. Free text
+ * stays allowed in the profile itself — this list is only the suggestions.
+ */
+export function parseJobTitles(input: unknown): string[] {
+  const raw = recordOf(input);
+  const list = raw ? raw.titles ?? raw.jobTitles ?? input : input;
+  if (!Array.isArray(list)) throw new HRPayrollError("Job titles must be a list.");
+  if (list.length > MAX_JOB_TITLES) throw new HRPayrollError(`At most ${MAX_JOB_TITLES} job titles can be kept.`);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of list) {
+    const title = String(entry ?? "").trim().replace(/\s+/g, " ");
+    if (!title || title.length > MAX_JOB_TITLE_LEN) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(title);
+  }
+  return out;
 }
 
 export interface LeaveRequestInput {
