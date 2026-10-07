@@ -4,19 +4,26 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEven
 import {
   BadgeCheck,
   BriefcaseBusiness,
+  CalendarClock,
   CalendarDays,
+  CalendarOff,
   Camera,
   Check,
   CircleDollarSign,
+  Clock,
   Download,
   FileText,
+  Hourglass,
   IdCard,
   ListChecks,
   Paperclip,
+  Percent,
   Plus,
   Printer,
   RefreshCw,
+  Save,
   Search,
+  Settings2,
   ShieldCheck,
   Trash2,
   Upload,
@@ -39,6 +46,34 @@ import {
   type LeaveType,
   type PayAdjustment,
 } from "@/lib/hrPayroll";
+import {
+  HOLIDAY_TYPES,
+  WEEKDAY_LABELS,
+  dayKind,
+  defaultHrCalendar,
+  derivedHourlyRateCents,
+  describeCalendar,
+  formatMinutes,
+  holidayOn,
+  makeHolidayId,
+  minutesBetweenTimes,
+  overtimeAmountCents,
+  overtimeMinutesInRange,
+  overtimeMultiplierPercent,
+  overtimeRateCentsPerHour,
+  sanitizeHrCalendar,
+  sanitizeHoliday,
+  standardDailyMinutes,
+  standardMonthlyHours,
+  workingDaysBetween,
+  workingDaysInMonth,
+  ymdLabel,
+  type DayKind,
+  type HrCalendarConfig,
+  type HolidayType,
+  type LeaveAccessPolicy,
+  type OvertimePolicy,
+} from "@/lib/hrCalendar";
 
 interface HrEmployee {
   id: number;
@@ -145,6 +180,27 @@ interface PayrollBoard {
   runs: PayrollRun[];
 }
 
+/** One row of the overtime register (amounts are integer cents). */
+interface HrOvertimeRow {
+  id: number;
+  userId: number;
+  employeeName: string;
+  workDate: string;
+  dayKind: string;
+  startTime: string;
+  endTime: string;
+  minutes: number;
+  baseRateCentsPerHour: number;
+  multiplierPercent: number;
+  rateCentsPerHour: number;
+  amountCents: number;
+  status: "Pending" | "Approved" | "Rejected";
+  notes: string;
+  payrollRunId: number | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
 interface HrPayrollViewProps {
   currentUser: { name?: string; role?: string } | null;
 }
@@ -170,6 +226,20 @@ function monthLabel(year: number, month: number): string {
 function money(cents: number | null | undefined): string {
   const safe = Number(cents);
   return `$${(Number.isFinite(safe) ? safe / 100 : 0).toFixed(2)}`;
+}
+
+/** Cents → "$12.50" for a rate input; empty when there is nothing to show. */
+function rateText(cents: number | null | undefined): string {
+  const safe = Number(cents);
+  return Number.isFinite(safe) && safe > 0 ? (safe / 100).toFixed(2) : "";
+}
+
+/** Minutes → the shortest honest hour text: 180 → "3", 150 → "2.5". */
+function hoursText(minutes: number): string {
+  const safe = Math.max(0, Math.round(Number(minutes) || 0));
+  if (safe === 0) return "";
+  const hours = safe / 60;
+  return Number.isInteger(hours) ? String(hours) : String(Number(hours.toFixed(2)));
 }
 
 function fileSize(bytes: number | null | undefined): string {
@@ -216,6 +286,16 @@ function dayCount(from: string, to: string): number {
   return inclusiveDays(from, to);
 }
 
+/** Working / Holiday / Day off — the working-calendar verdict for one date. */
+function DayKindPill({ kind }: { kind: string }) {
+  const color = kind === "Holiday"
+    ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+    : kind === "Working"
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+      : "border-slate-700 bg-slate-800/70 text-slate-400";
+  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${color}`}>{kind}</span>;
+}
+
 function StatusPill({ status }: { status: string }) {
   const color = status === "Approved" || status === "Posted"
     ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
@@ -226,7 +306,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
-  const [tab, setTab] = useState<"employees" | "leave" | "payroll">("employees");
+  const [tab, setTab] = useState<"employees" | "leave" | "overtime" | "calendar" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [leaveRows, setLeaveRows] = useState<HrLeaveRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,6 +391,41 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const [additionDrafts, setAdditionDrafts] = useState<Array<{ label: string; amount: string }>>([]);
   const [deductionDrafts, setDeductionDrafts] = useState<Array<{ label: string; amount: string }>>([]);
   const [slipItem, setSlipItem] = useState<PayrollItem | null>(null);
+
+  // --- Working calendar: work days, daily hours, holidays, overtime policy ---
+  const [calendar, setCalendar] = useState<HrCalendarConfig | null>(null);
+  const [calendarDraft, setCalendarDraft] = useState<HrCalendarConfig>(() => defaultHrCalendar());
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [holidayForm, setHolidayForm] = useState({
+    name: "",
+    type: "National" as HolidayType | string,
+    startDate: localYmd(),
+    endDate: "",
+    recurring: false,
+    paid: true,
+    notes: "",
+  });
+  // --- Overtime register ------------------------------------------------------
+  const [overtimeRows, setOvertimeRows] = useState<HrOvertimeRow[]>([]);
+  const [overtimeLoading, setOvertimeLoading] = useState(false);
+  const [otYear, setOtYear] = useState(() => new Date().getFullYear());
+  const [otMonth, setOtMonth] = useState(() => new Date().getMonth() + 1);
+  const [otEmployeeFilter, setOtEmployeeFilter] = useState("All employees");
+  const [otStatus, setOtStatus] = useState("All");
+  const [otForm, setOtForm] = useState({ userId: "", workDate: localYmd(), startTime: "", endTime: "", hours: "", rate: "", notes: "" });
+  const [otRateTouched, setOtRateTouched] = useState(false);
+  const [otBusy, setOtBusy] = useState(false);
+  const [editingOvertime, setEditingOvertime] = useState<HrOvertimeRow | null>(null);
+  // Overtime of the payroll period being looked at (the Overtime tab keeps its
+  // own period, so the two never overwrite each other).
+  const [payrollOvertime, setPayrollOvertime] = useState<HrOvertimeRow[]>([]);
+
+  // Working-calendar numbers used by several tabs (leave day counts, the
+  // overtime preview and the payroll banner) — derived, never stored.
+  const calendarOrDraft = calendarDraft ?? defaultHrCalendar();
+  const dailyMinutes = standardDailyMinutes(calendarOrDraft);
+  const monthWorkingDays = workingDaysInMonth(periodYear, periodMonth, calendarOrDraft);
+  const monthStandardHours = standardMonthlyHours(periodYear, periodMonth, calendarOrDraft);
 
   const isManager = currentUser?.role === "Manager";
 
@@ -412,15 +527,71 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
     }
   }, []);
 
+  // --- Working calendar (work days, daily hours, holidays, overtime policy) ---
+  const loadCalendar = useCallback(async () => {
+    try {
+      const response = await fetch("/api/hr/calendar", { cache: "no-store" });
+      const body = await payloadOf<{ calendar: HrCalendarConfig }>(response, "Failed to load the working calendar.");
+      setCalendar(body.calendar);
+      setCalendarDraft(body.calendar);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load the working calendar.");
+    }
+  }, []);
+
+  // --- Overtime register -----------------------------------------------------
+  const loadOvertime = useCallback(async (year: number, month: number) => {
+    setOvertimeLoading(true);
+    try {
+      const response = await fetch(`/api/hr/overtime?year=${year}&month=${month}`, { cache: "no-store" });
+      const body = await payloadOf<{ entries: HrOvertimeRow[]; calendar: HrCalendarConfig }>(response, "Failed to load overtime.");
+      setOvertimeRows(Array.isArray(body.entries) ? body.entries : []);
+      if (body.calendar) setCalendar(body.calendar);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load overtime.");
+    } finally {
+      setOvertimeLoading(false);
+    }
+  }, []);
+
+  const loadPayrollOvertime = useCallback(async (year: number, month: number) => {
+    try {
+      const response = await fetch(`/api/hr/overtime?year=${year}&month=${month}`, { cache: "no-store" });
+      const body = await payloadOf<{ entries: HrOvertimeRow[] }>(response, "Failed to load overtime.");
+      setPayrollOvertime(Array.isArray(body.entries) ? body.entries : []);
+    } catch {
+      // The payroll tab works without the overtime summary; the banner just stays hidden.
+      setPayrollOvertime([]);
+    }
+  }, []);
+
   useEffect(() => {
-    const timer = window.setTimeout(() => { void loadDirectory(); void loadRoleLookups(); }, 0);
+    const timer = window.setTimeout(() => {
+      void loadDirectory();
+      void loadRoleLookups();
+      void loadCalendar();
+      void loadOvertime(new Date().getFullYear(), new Date().getMonth() + 1);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadDirectory, loadRoleLookups]);
+  }, [loadDirectory, loadRoleLookups, loadCalendar, loadOvertime]);
+  useEffect(() => {
+    if (tab !== "overtime") return;
+    const timer = window.setTimeout(() => { void loadOvertime(otYear, otMonth); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [tab, otYear, otMonth, loadOvertime]);
+  useEffect(() => {
+    if (tab !== "calendar") return;
+    const timer = window.setTimeout(() => { void loadCalendar(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [tab, loadCalendar]);
   useEffect(() => {
     if (tab !== "payroll") return;
-    const timer = window.setTimeout(() => { void loadPayroll(periodYear, periodMonth); }, 0);
+    const timer = window.setTimeout(() => {
+      void loadPayroll(periodYear, periodMonth);
+      void loadPayrollOvertime(periodYear, periodMonth);
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [tab, periodYear, periodMonth, loadPayroll]);
+  }, [tab, periodYear, periodMonth, loadPayroll, loadPayrollOvertime]);
 
   const filteredEmployees = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -460,10 +631,43 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   }, [leaveRows, leaveStatus, leaveEmployeeId, search]);
 
   const payrollRun = payrollBoard?.selectedRun ?? null;
+  // Approved overtime this draft would pay, and the entries still waiting.
+  const payrollOvertimeUnpaid = useMemo(
+    () => payrollOvertime.filter((row) => row.status === "Approved" && !row.payrollRunId),
+    [payrollOvertime],
+  );
+  const payrollOvertimePending = useMemo(
+    () => payrollOvertime.filter((row) => row.status === "Pending"),
+    [payrollOvertime],
+  );
   const payrollItems = useMemo(() => payrollRun?.items ?? [], [payrollRun]);
   const activeWithProfile = employees.filter((employee) => employee.active && employee.profileComplete).length;
   const activeWithoutProfile = employees.filter((employee) => employee.active && !employee.profileComplete).length;
   const pendingLeaveCount = leaveRows.filter((row) => row.status === "Pending").length;
+  // Public holidays falling inside the leave range being typed: HR sees at once
+  // that a "two week" request is really nine working days.
+  const leaveRangeHolidays = useMemo(() => {
+    const from = leaveForm.startDate;
+    const to = leaveForm.endDate;
+    if (!from || !to || from > to) return "";
+    const names: string[] = [];
+    const start = Date.parse(`${from}T00:00:00.000Z`) / 86400000;
+    const end = Date.parse(`${to}T00:00:00.000Z`) / 86400000;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start > 400) return "";
+    for (let day = start; day <= end; day += 1) {
+      const value = new Date(day * 86400000).toISOString().slice(0, 10);
+      const holiday = holidayOn(value, calendarOrDraft.holidays);
+      if (holiday && !names.includes(holiday.name)) names.push(holiday.name);
+    }
+    return names.join(", ");
+  }, [leaveForm.startDate, leaveForm.endDate, calendarOrDraft]);
+  const leaveTypePhrasePreview = leaveForm.leaveType === "Annual"
+    ? "annual leave"
+    : leaveForm.leaveType === "Sick"
+      ? "sick leave"
+      : leaveForm.leaveType === "Unpaid"
+        ? "unpaid leave"
+        : "approved leave";
 
   const openEmployeeEditor = (employee: HrEmployee) => {
     setEditingEmployee(employee);
@@ -894,9 +1098,13 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ year: periodYear, month: periodMonth }),
       });
-      await payloadOf(response, "Failed to create payroll draft.");
-      flashMsg(`Draft payroll created for ${monthLabel(periodYear, periodMonth)}.`);
+      const created = await payloadOf<{ overtimeEntriesPaid?: number; overtimeMinutesPaid?: number }>(response, "Failed to create payroll draft.");
+      const paid = Number(created.overtimeEntriesPaid ?? 0);
+      flashMsg(paid > 0
+        ? `Draft payroll created for ${monthLabel(periodYear, periodMonth)} — ${paid} overtime entr${paid === 1 ? "y" : "ies"} (${formatMinutes(Number(created.overtimeMinutesPaid ?? 0))}) added as earnings.`
+        : `Draft payroll created for ${monthLabel(periodYear, periodMonth)}.`);
       await loadPayroll(periodYear, periodMonth);
+      await loadPayrollOvertime(periodYear, periodMonth);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not create the payroll draft.");
     } finally {
@@ -954,6 +1162,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
       await payloadOf(response, "Failed to post payroll.");
       flashMsg("Payroll posted and payslips locked.");
       await loadPayroll(periodYear, periodMonth);
+      await loadPayrollOvertime(periodYear, periodMonth);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not post payroll.");
     } finally {
@@ -968,8 +1177,10 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
     try {
       const response = await fetch(`/api/hr/payroll?runId=${payrollRun.id}`, { method: "DELETE" });
       await payloadOf(response, "Failed to delete the draft.");
-      flashMsg("Unposted payroll draft deleted.");
+      flashMsg("Unposted payroll draft deleted — its overtime hours are available for the next draft.");
       await loadPayroll(periodYear, periodMonth);
+      await loadPayrollOvertime(periodYear, periodMonth);
+      await loadOvertime(otYear, otMonth);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not delete the draft.");
     } finally {
@@ -989,6 +1200,200 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
     }, 0);
     return (editingItem?.baseSalaryCents ?? 0) + lineTotal(additionDrafts) - lineTotal(deductionDrafts);
   }, [editingItem, additionDrafts, deductionDrafts]);
+
+  // ================= working calendar: handlers ==============================
+
+  const patchCalendar = (patch: Partial<HrCalendarConfig>) => setCalendarDraft((current) => ({ ...current, ...patch }));
+  const patchOvertimePolicy = (patch: Partial<OvertimePolicy>) => setCalendarDraft((current) => ({ ...current, overtime: { ...current.overtime, ...patch } }));
+  const patchLeaveAccess = (patch: Partial<LeaveAccessPolicy>) => setCalendarDraft((current) => ({ ...current, leaveAccess: { ...current.leaveAccess, ...patch } }));
+
+  const toggleWorkDay = (index: number) => setCalendarDraft((current) => {
+    const has = current.workDays.includes(index);
+    const next = has ? current.workDays.filter((day) => day !== index) : [...current.workDays, index];
+    return { ...current, workDays: next.sort((a, b) => a - b) };
+  });
+
+  const addHoliday = () => {
+    setError("");
+    try {
+      const holiday = sanitizeHoliday({ ...holidayForm, endDate: holidayForm.endDate || holidayForm.startDate }, makeHolidayId());
+      if (!holiday) {
+        setError("Enter the holiday name.");
+        return;
+      }
+      setCalendarDraft((current) => ({
+        ...current,
+        holidays: [
+          ...current.holidays.filter((entry) => !(entry.name.toLowerCase() === holiday.name.toLowerCase() && entry.startDate === holiday.startDate)),
+          holiday,
+        ],
+      }));
+      setHolidayForm((current) => ({ ...current, name: "", endDate: "", notes: "" }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not add that holiday.");
+    }
+  };
+
+  const removeHoliday = (id: string) => setCalendarDraft((current) => ({
+    ...current,
+    holidays: current.holidays.filter((entry) => entry.id !== id),
+  }));
+
+  const saveCalendar = async () => {
+    setCalendarBusy(true);
+    setError("");
+    try {
+      // The same pure sanitizer the server runs, so an impossible week is
+      // refused on screen instead of after a round trip.
+      const clean = sanitizeHrCalendar(calendarDraft);
+      const response = await fetch("/api/hr/calendar", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ calendar: clean }),
+      });
+      const body = await payloadOf<{ calendar: HrCalendarConfig }>(response, "Failed to save the working calendar.");
+      setCalendar(body.calendar);
+      setCalendarDraft(body.calendar);
+      flashMsg("Working calendar saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the working calendar.");
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  // ================= overtime: derived numbers & handlers ====================
+  const otEmployee = employees.find((employee) => String(employee.id) === otForm.userId) ?? null;
+  const otDayKind: DayKind = dayKind(otForm.workDate, calendarOrDraft);
+  const otMultiplier = overtimeMultiplierPercent(otDayKind, calendarOrDraft.overtime);
+  const otMinutesFromTimes = calendar ? overtimeMinutesInRange(otForm.startTime, otForm.endTime, calendar) : minutesBetweenTimes(otForm.startTime, otForm.endTime);
+  const otTypedMinutes = Number(otForm.hours) > 0 ? Math.round(Number(otForm.hours) * 60) : 0;
+  const otMinutes = otTypedMinutes > 0 ? otTypedMinutes : otMinutesFromTimes;
+  const otBaseRate = useMemo(() => {
+    if (!calendar) return 0;
+    if (calendar.overtime.defaultRateCentsPerHour > 0) return calendar.overtime.defaultRateCentsPerHour;
+    const year = Number(otForm.workDate.slice(0, 4));
+    const month = Number(otForm.workDate.slice(5, 7));
+    return derivedHourlyRateCents(otEmployee?.baseSalaryCents ?? 0, year, month, calendar);
+  }, [calendar, otEmployee, otForm.workDate]);
+  const otSuggestedRate = overtimeRateCentsPerHour(otDayKind, otBaseRate, calendarOrDraft.overtime);
+  // The field shows the suggested rate until HR types their own; deriving it
+  // (instead of writing it back in an effect) keeps the preview and the saved
+  // value identical and avoids a render cascade.
+  const otTypedRateCents = otForm.rate.trim() ? Math.round(Number(otForm.rate) * 100) : 0;
+  const otRateCents = otRateTouched && otTypedRateCents > 0 ? otTypedRateCents : otSuggestedRate;
+  const otRateFieldValue = otRateTouched ? otForm.rate : rateText(otSuggestedRate);
+  const otAmountCents = overtimeAmountCents(otMinutes, otRateCents);
+
+
+  const applyOtTimes = (startTime: string, endTime: string) => {
+    const minutes = calendar ? overtimeMinutesInRange(startTime, endTime, calendar) : minutesBetweenTimes(startTime, endTime);
+    setOtForm((current) => ({ ...current, startTime, endTime, hours: hoursText(minutes) }));
+  };
+
+  const filteredOvertime = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return overtimeRows.filter((row) =>
+      (otStatus === "All" || row.status === otStatus)
+      && (otEmployeeFilter === "All employees" || String(row.userId) === otEmployeeFilter)
+      && (!q || [row.employeeName, row.notes, row.dayKind, row.status].some((value) => String(value ?? "").toLowerCase().includes(q))));
+  }, [overtimeRows, otStatus, otEmployeeFilter, search]);
+
+  const otTotals = useMemo(() => ({
+    minutes: filteredOvertime.reduce((sum, row) => sum + row.minutes, 0),
+    cents: filteredOvertime.reduce((sum, row) => sum + row.amountCents, 0),
+    pending: overtimeRows.filter((row) => row.status === "Pending").length,
+    approvedUnpaid: overtimeRows.filter((row) => row.status === "Approved" && !row.payrollRunId).length,
+  }), [filteredOvertime, overtimeRows]);
+
+  const submitOvertime = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!otForm.userId) { setError("Choose the employee who worked the overtime."); return; }
+    if (otMinutes < 5) { setError("Enter the overtime hours (at least 5 minutes)."); return; }
+    setOtBusy(true);
+    setError("");
+    try {
+      const payload = {
+        userId: Number(otForm.userId),
+        workDate: otForm.workDate,
+        minutes: otMinutes,
+        startTime: otForm.startTime,
+        endTime: otForm.endTime,
+        // 0 tells the server to resolve the rate from the working-calendar
+        // policy (company rate, else salary ÷ standard hours × multiplier).
+        rateCentsPerHour: otRateTouched ? Math.max(0, otTypedRateCents) : 0,
+        notes: otForm.notes,
+      };
+      const response = await fetch("/api/hr/overtime", {
+        method: editingOvertime ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingOvertime ? { id: editingOvertime.id, ...payload } : payload),
+      });
+      await payloadOf(response, "Failed to save the overtime.");
+      flashMsg(editingOvertime ? `Overtime for ${editingOvertime.employeeName} updated.` : "Overtime recorded.");
+      setEditingOvertime(null);
+      setOtForm((current) => ({ ...current, startTime: "", endTime: "", hours: "", notes: "" }));
+      setOtRateTouched(false);
+      await loadOvertime(otYear, otMonth);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the overtime.");
+    } finally {
+      setOtBusy(false);
+    }
+  };
+
+  const reviewOvertime = async (rows: HrOvertimeRow[], status: "Approved" | "Rejected") => {
+    if (rows.length === 0) return;
+    setOtBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/hr/overtime", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: rows.map((row) => row.id), status }),
+      });
+      await payloadOf(response, "Failed to review the overtime.");
+      flashMsg(`${rows.length} overtime entr${rows.length === 1 ? "y" : "ies"} ${status.toLowerCase()}.`);
+      await loadOvertime(otYear, otMonth);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not review the overtime.");
+    } finally {
+      setOtBusy(false);
+    }
+  };
+
+  const deleteOvertime = async (row: HrOvertimeRow) => {
+    if (!window.confirm(`Delete ${formatMinutes(row.minutes)} of overtime for ${row.employeeName} on ${ymdLabel(row.workDate)}?`)) return;
+    setOtBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/hr/overtime?id=${row.id}`, { method: "DELETE" });
+      await payloadOf(response, "Failed to delete the overtime.");
+      if (editingOvertime?.id === row.id) setEditingOvertime(null);
+      flashMsg("Overtime entry deleted.");
+      await loadOvertime(otYear, otMonth);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the overtime.");
+    } finally {
+      setOtBusy(false);
+    }
+  };
+
+  const openOvertimeEditor = (row: HrOvertimeRow) => {
+    setEditingOvertime(row);
+    setOtForm({
+      userId: String(row.userId),
+      workDate: row.workDate,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      hours: hoursText(row.minutes),
+      rate: rateText(row.rateCentsPerHour),
+      notes: row.notes,
+    });
+    setOtRateTouched(true);
+    setTab("overtime");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const openSlip = (item: PayrollItem) => setSlipItem(item);
 
@@ -1023,12 +1428,14 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         <div className="flex flex-wrap gap-1.5">
           <button type="button" onClick={() => { setTab("employees"); setSearch(""); }} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${tab === "employees" ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}><Users className="h-4 w-4" />Employees</button>
           <button type="button" onClick={() => { setTab("leave"); setSearch(""); }} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${tab === "leave" ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}><CalendarDays className="h-4 w-4" />Leave &amp; Absence{pendingLeaveCount > 0 && <span className="rounded-full bg-rose-500/20 px-1.5 py-0.5 text-[9px] text-rose-200">{pendingLeaveCount}</span>}</button>
+          <button type="button" onClick={() => { setTab("overtime"); setSearch(""); }} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${tab === "overtime" ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}><Hourglass className="h-4 w-4" />Overtime{otTotals.pending > 0 && <span className="rounded-full bg-rose-500/20 px-1.5 py-0.5 text-[9px] text-rose-200">{otTotals.pending}</span>}</button>
+          <button type="button" onClick={() => { setTab("calendar"); setSearch(""); }} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${tab === "calendar" ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}><CalendarClock className="h-4 w-4" />Working Calendar</button>
           <button type="button" onClick={() => { setTab("payroll"); setSearch(""); }} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black transition ${tab === "payroll" ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}><CircleDollarSign className="h-4 w-4" />Payroll &amp; Payslips</button>
         </div>
-        {(tab === "employees" || tab === "leave" || tab === "payroll") && (
+        {tab !== "calendar" && (
           <label className="relative w-full sm:w-64">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tab === "payroll" ? "Search payslips…" : tab === "leave" ? "Search leave records…" : "Search employees…"} className={`${INPUT} pl-9 py-2 text-xs`} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={tab === "payroll" ? "Search payslips…" : tab === "overtime" ? "Search overtime…" : tab === "leave" ? "Search leave records…" : "Search employees…"} className={`${INPUT} pl-9 py-2 text-xs`} />
           </label>
         )}
       </div>
@@ -1081,7 +1488,18 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
             <label><span className={SMALL_LABEL}>Employee</span><select required value={leaveForm.userId} onChange={(event) => setLeaveForm((current) => ({ ...current, userId: event.target.value }))} className={INPUT}><option value="">Select employee…</option>{employees.filter((employee) => employee.active).map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.jobTitle || employee.role}</option>)}</select></label>
             <label><span className={SMALL_LABEL}>Leave type</span><select value={leaveForm.leaveType} onChange={(event) => setLeaveForm((current) => ({ ...current, leaveType: event.target.value as LeaveType }))} className={INPUT}><option value="Annual">Annual leave</option><option value="Sick">Sick leave</option><option value="Unpaid">Unpaid leave / absence</option><option value="Other">Other</option></select></label>
             <div className="grid grid-cols-2 gap-3"><label><span className={SMALL_LABEL}>Start date</span><input required type="date" value={leaveForm.startDate} onChange={(event) => setLeaveForm((current) => ({ ...current, startDate: event.target.value }))} className={INPUT} /></label><label><span className={SMALL_LABEL}>End date</span><input required type="date" min={leaveForm.startDate} value={leaveForm.endDate} onChange={(event) => setLeaveForm((current) => ({ ...current, endDate: event.target.value }))} className={INPUT} /></label></div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] font-bold text-slate-400">Days in range: <span className="font-mono text-amber-300">{dayCount(leaveForm.startDate, leaveForm.endDate)}</span> calendar day(s)</div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] font-bold text-slate-400">
+              Days in range: <span className="font-mono text-amber-300">{dayCount(leaveForm.startDate, leaveForm.endDate)}</span> calendar day(s)
+              <span className="text-slate-600"> · </span>
+              <span className="font-mono text-emerald-300">{workingDaysBetween(leaveForm.startDate, leaveForm.endDate, calendarOrDraft)}</span> working day(s) by the saved calendar
+              {leaveRangeHolidays.length > 0 && <span className="mt-1 block text-[10px] font-semibold text-slate-500">Public holiday(s) inside the range: {leaveRangeHolidays}</span>}
+            </div>
+            {calendar?.leaveAccess.blockLogin || calendar?.leaveAccess.blockWork ? (
+              <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 px-3 py-2 text-[10px] font-semibold leading-relaxed text-sky-100/85">
+                <CalendarOff className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-sky-300" />
+                Once <strong>approved</strong>, this employee cannot sign in{calendar?.leaveAccess.blockWork ? ", be assigned a shift or a task, clock in, or have work started or completed in their name" : ""} until {ymdLabel(leaveForm.endDate)} — the app answers “{leaveTypePhrasePreview} until {ymdLabel(leaveForm.endDate)}”.
+              </div>
+            ) : null}
             <label><span className={SMALL_LABEL}>Notes <span className="normal-case font-semibold text-slate-600">(optional; avoid sensitive medical details)</span></span><textarea maxLength={500} rows={3} value={leaveForm.reason} onChange={(event) => setLeaveForm((current) => ({ ...current, reason: event.target.value }))} placeholder="Brief administrative note" className={`${INPUT} resize-y`} /></label>
             <button disabled={saving || !leaveForm.userId || employees.filter((employee) => employee.active).length === 0} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" />Save leave record</button>
           </form>
@@ -1105,14 +1523,442 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         </section>
       )}
 
+      {tab === "overtime" && (
+        <section className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Overtime hours shown</div>
+              <div className="mt-2 text-2xl font-black text-white">{formatMinutes(otTotals.minutes)}</div>
+              <div className="mt-1 text-[10px] font-semibold text-slate-500">{filteredOvertime.length} entr{filteredOvertime.length === 1 ? "y" : "ies"} · {monthLabel(otYear, otMonth)}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Overtime cost shown</div>
+              <div className="mt-2 font-mono text-2xl font-black text-emerald-300">{money(otTotals.cents)}</div>
+              <div className="mt-1 text-[10px] font-semibold text-slate-500">rate × hours, integer cents</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Waiting for approval</div>
+              <div className={`mt-2 text-2xl font-black ${otTotals.pending > 0 ? "text-amber-300" : "text-slate-500"}`}>{otTotals.pending}</div>
+              <div className="mt-1 text-[10px] font-semibold text-slate-500">{calendar?.overtime.approvalRequired ? "only approved hours reach payroll" : "auto-approved (policy)"}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Approved, not paid yet</div>
+              <div className={`mt-2 text-2xl font-black ${otTotals.approvedUnpaid > 0 ? "text-sky-300" : "text-slate-500"}`}>{otTotals.approvedUnpaid}</div>
+              <div className="mt-1 text-[10px] font-semibold text-slate-500">added to the next payroll draft</div>
+            </div>
+          </div>
+
+          <form onSubmit={submitOvertime} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-black text-white"><Hourglass className="h-4 w-4 text-amber-400" />{editingOvertime ? "Edit overtime entry" : "Record overtime hours"}</h2>
+                <p className="mt-1 max-w-3xl text-[11px] font-semibold leading-relaxed text-slate-500">
+                  The rate per hour is suggested from the working calendar
+                  {calendar?.overtime.defaultRateCentsPerHour ? " (company rate × the day multiplier)" : " (monthly salary ÷ standard hours × the day multiplier)"} —
+                  type your own rate to override it. Holidays and days off use their own multiplier.
+                </p>
+              </div>
+              {editingOvertime && (
+                <button type="button" onClick={() => { setEditingOvertime(null); setOtForm((current) => ({ ...current, startTime: "", endTime: "", hours: "", notes: "" })); setOtRateTouched(false); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 hover:text-white"><X className="h-3.5 w-3.5" />Cancel edit</button>
+              )}
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label>
+                <span className={SMALL_LABEL}>Employee</span>
+                <select required value={otForm.userId} onChange={(event) => setOtForm((current) => ({ ...current, userId: event.target.value }))} className={INPUT}>
+                  <option value="">Select employee…</option>
+                  {employees.filter((employee) => employee.active).map((employee) => (
+                    <option key={employee.id} value={employee.id}>{employee.name} · {employee.jobTitle || employee.role}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={SMALL_LABEL}>Date worked</span>
+                <input required type="date" value={otForm.workDate} onChange={(event) => setOtForm((current) => ({ ...current, workDate: event.target.value }))} className={INPUT} />
+              </label>
+              <label>
+                <span className={SMALL_LABEL}>From <span className="normal-case font-semibold text-slate-600">(optional)</span></span>
+                <input type="time" value={otForm.startTime} onChange={(event) => applyOtTimes(event.target.value, otForm.endTime)} className={INPUT} />
+              </label>
+              <label>
+                <span className={SMALL_LABEL}>Until <span className="normal-case font-semibold text-slate-600">(optional)</span></span>
+                <input type="time" value={otForm.endTime} onChange={(event) => applyOtTimes(otForm.startTime, event.target.value)} className={INPUT} />
+              </label>
+              <label>
+                <span className={SMALL_LABEL}>Overtime hours</span>
+                <input required type="number" min="0.083" max="24" step="0.25" value={otForm.hours} onChange={(event) => setOtForm((current) => ({ ...current, hours: event.target.value }))} placeholder="2.5" className={INPUT} />
+              </label>
+              <label>
+                <span className={SMALL_LABEL}>Rate per hour ($)</span>
+                <div className="flex gap-2">
+                  <input type="number" min="0" step="0.01" value={otRateFieldValue} onChange={(event) => { setOtRateTouched(true); setOtForm((current) => ({ ...current, rate: event.target.value })); }} placeholder="0.00" className={INPUT} />
+                  <button type="button" title="Use the suggested rate" onClick={() => { setOtRateTouched(false); setOtForm((current) => ({ ...current, rate: rateText(otSuggestedRate) })); }} className="shrink-0 rounded-xl border border-slate-700 bg-slate-950 px-3 text-[10px] font-black text-slate-300 hover:border-amber-500/60 hover:text-amber-200"><Percent className="h-4 w-4" /></button>
+                </div>
+              </label>
+              <label className="sm:col-span-2">
+                <span className={SMALL_LABEL}>Notes <span className="normal-case font-semibold text-slate-600">(optional)</span></span>
+                <input maxLength={300} value={otForm.notes} onChange={(event) => setOtForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Finishing the dispatch batch" className={INPUT} />
+              </label>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:grid-cols-4">
+              <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Day type</div><div className="mt-1"><DayKindPill kind={otDayKind} /></div></div>
+              <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Multiplier</div><div className="mt-1 font-mono text-sm font-black text-white">{otMultiplier}%</div></div>
+              <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Suggested rate / hour</div><div className="mt-1 font-mono text-sm font-black text-white">{otSuggestedRate > 0 ? money(otSuggestedRate) : "—"}</div></div>
+              <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Amount</div><div className="mt-1 font-mono text-sm font-black text-emerald-300">{money(otAmountCents)}</div></div>
+            </div>
+            {otEmployee && otBaseRate === 0 && calendar?.overtime.defaultRateCentsPerHour === 0 && (
+              <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-semibold text-amber-100/90">
+                No rate could be derived for {otEmployee.name}: save a monthly salary on their employee card, type a rate per hour here, or set a company overtime rate in the Working Calendar tab.
+              </div>
+            )}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button type="submit" disabled={otBusy || !otForm.userId || otMinutes < 5} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50">
+                <Save className="h-4 w-4" />{editingOvertime ? "Save changes" : "Record overtime"}
+              </button>
+              <span className="text-[11px] font-semibold text-slate-500">
+                {otMinutes > 0 ? `${formatMinutes(otMinutes)} × ${otRateCents > 0 ? money(otRateCents) : "$0.00"}/h = ${money(otAmountCents)}` : "Enter the hours (or a from/until pair) to see the amount."}
+              </span>
+              {calendar?.overtime.maxMinutesPerDay ? <span className="text-[11px] font-semibold text-slate-500">Daily cap: {formatMinutes(calendar.overtime.maxMinutesPerDay)}</span> : null}
+            </div>
+          </form>
+
+          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
+              <div>
+                <h2 className="text-sm font-black text-white">Overtime register</h2>
+                <p className="mt-1 text-[11px] font-semibold text-slate-500">Approve the hours that should be paid. Approved entries join that month&apos;s payroll draft as one earnings line and lock until the draft is deleted.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select aria-label="Overtime month" value={otMonth} onChange={(event) => setOtMonth(Number(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[10px] font-bold text-slate-300">
+                  {Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{new Date(Date.UTC(2020, index, 1)).toLocaleDateString([], { month: "long", timeZone: "UTC" })}</option>)}
+                </select>
+                <select aria-label="Overtime year" value={otYear} onChange={(event) => setOtYear(Number(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[10px] font-bold text-slate-300">
+                  {Array.from({ length: 6 }, (_, index) => new Date().getFullYear() - 3 + index).map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <select aria-label="Filter by employee" value={otEmployeeFilter} onChange={(event) => setOtEmployeeFilter(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[10px] font-bold text-slate-300">
+                  <option value="All employees">All employees</option>
+                  {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                </select>
+                <select aria-label="Filter by status" value={otStatus} onChange={(event) => setOtStatus(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[10px] font-bold text-slate-300">
+                  <option value="All">All statuses</option>
+                  <option value="Pending">Pending</option>
+                  <option value="Approved">Approved</option>
+                  <option value="Rejected">Rejected</option>
+                </select>
+                {otTotals.pending > 0 && (
+                  <button type="button" disabled={otBusy} onClick={() => void reviewOvertime(overtimeRows.filter((row) => row.status === "Pending" && (otEmployeeFilter === "All employees" || String(row.userId) === otEmployeeFilter)), "Approved")} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[10px] font-black text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"><Check className="h-3.5 w-3.5" />Approve all</button>
+                )}
+              </div>
+            </div>
+            {overtimeLoading ? <div className="p-10 text-center text-sm font-bold text-slate-500">Loading overtime…</div> : filteredOvertime.length === 0 ? (
+              <div className="p-10 text-center text-sm font-bold text-slate-500">No overtime recorded for {monthLabel(otYear, otMonth)}.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px] text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <th className="px-5 py-3">Date</th>
+                      <th className="px-3 py-3">Employee</th>
+                      <th className="px-3 py-3">Hours</th>
+                      <th className="px-3 py-3 text-right">Rate / hour</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3">Status</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {filteredOvertime.map((row) => (
+                      <tr key={row.id} className={`text-slate-300 ${editingOvertime?.id === row.id ? "bg-amber-500/5" : ""}`}>
+                        <td className="px-5 py-3.5">
+                          <span className="block font-bold text-white">{ymdLabel(row.workDate)}</span>
+                          <span className="mt-1 flex items-center gap-1.5"><DayKindPill kind={row.dayKind} />{row.startTime && row.endTime ? <span className="font-mono text-[10px] text-slate-500">{row.startTime}–{row.endTime}</span> : null}</span>
+                        </td>
+                        <td className="px-3 py-3.5">
+                          <span className="block font-black text-white">{row.employeeName}</span>
+                          {row.notes ? <span className="mt-0.5 block max-w-[220px] truncate text-[10px] font-semibold text-slate-500" title={row.notes}>{row.notes}</span> : null}
+                          {row.payrollRunId ? <span className="mt-1 inline-block rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[9px] font-black uppercase text-emerald-300">In payroll run</span> : null}
+                        </td>
+                        <td className="px-3 py-3.5 font-mono font-black text-white">{formatMinutes(row.minutes)}<span className="mt-0.5 block font-sans text-[10px] font-semibold text-slate-500">{row.multiplierPercent}% multiplier</span></td>
+                        <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-200">{money(row.rateCentsPerHour)}</td>
+                        <td className="px-3 py-3.5 text-right font-mono font-black text-emerald-300">{money(row.amountCents)}</td>
+                        <td className="px-3 py-3.5"><StatusPill status={row.status} /></td>
+                        <td className="px-5 py-3.5">
+                          <div className="inline-flex flex-wrap justify-end gap-1.5">
+                            {row.status === "Pending" && (
+                              <>
+                                <button type="button" disabled={otBusy} onClick={() => void reviewOvertime([row], "Approved")} className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] font-black text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"><Check className="h-3 w-3" />Approve</button>
+                                <button type="button" disabled={otBusy} onClick={() => void reviewOvertime([row], "Rejected")} className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-black text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"><X className="h-3 w-3" />Reject</button>
+                              </>
+                            )}
+                            {!row.payrollRunId && (
+                              <>
+                                <button type="button" onClick={() => openOvertimeEditor(row)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-amber-500/60 hover:text-amber-200">Edit</button>
+                                <button type="button" disabled={otBusy} onClick={() => void deleteOvertime(row)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-400 hover:border-rose-500/60 hover:text-rose-200 disabled:opacity-50"><Trash2 className="h-3 w-3" /></button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {tab === "calendar" && (
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 sm:p-5">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-black text-white"><CalendarClock className="h-4 w-4 text-amber-400" />Working calendar</h2>
+              <p className="mt-1 max-w-3xl text-[11px] font-semibold leading-relaxed text-slate-500">
+                One company-wide setup: which days are worked, the daily hours, the national and religious holidays, the overtime
+                multipliers and what approved leave blocks. Saved settings: <span className="font-bold text-slate-300">{calendar ? describeCalendar(calendar) : "loading…"}</span>
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {calendar && JSON.stringify(calendar) !== JSON.stringify(calendarDraft) && (
+                <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-amber-200">Unsaved changes</span>
+              )}
+              <button type="button" disabled={calendarBusy} onClick={() => void loadCalendar()} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 hover:text-white disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${calendarBusy ? "animate-spin text-amber-400" : ""}`} />Reload</button>
+              <button type="button" disabled={calendarBusy} onClick={() => void saveCalendar()} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"><Save className="h-4 w-4" />Save calendar</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-black text-white"><CalendarDays className="h-4 w-4 text-amber-400" />Days of work</h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-500">Tap the days the factory works. Everything else is a day off (overtime on those days uses the day-off multiplier).</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {WEEKDAY_LABELS.map((day) => {
+                  const on = calendarDraft.workDays.includes(day.index);
+                  return (
+                    <button
+                      key={day.index}
+                      type="button"
+                      onClick={() => toggleWorkDay(day.index)}
+                      className={`rounded-xl border px-3.5 py-2 text-[11px] font-black transition ${on ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200" : "border-slate-700 bg-slate-950 text-slate-500 hover:text-slate-300"}`}
+                    >
+                      {day.long}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => patchCalendar({ workDays: [1, 2, 3, 4, 5] })} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-400 hover:text-white">Mon–Fri</button>
+                <button type="button" onClick={() => patchCalendar({ workDays: [1, 2, 3, 4, 5, 6] })} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-400 hover:text-white">Mon–Sat</button>
+                <button type="button" onClick={() => patchCalendar({ workDays: [2, 3, 4, 5, 6] })} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-400 hover:text-white">Tue–Sat</button>
+                <button type="button" onClick={() => patchCalendar({ workDays: [0, 1, 2, 3, 4, 5, 6] })} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-400 hover:text-white">Every day</button>
+              </div>
+
+              <h3 className="mt-6 flex items-center gap-2 text-sm font-black text-white"><Clock className="h-4 w-4 text-amber-400" />Daily hours of work</h3>
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <label>
+                  <span className={SMALL_LABEL}>Start</span>
+                  <input type="time" value={calendarDraft.workdayStart} onChange={(event) => patchCalendar({ workdayStart: event.target.value })} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>End</span>
+                  <input type="time" value={calendarDraft.workdayEnd} onChange={(event) => patchCalendar({ workdayEnd: event.target.value })} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Break (min)</span>
+                  <input type="number" min="0" max="600" step="5" value={calendarDraft.breakMinutes} onChange={(event) => patchCalendar({ breakMinutes: Number(event.target.value) })} className={INPUT} />
+                </label>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-center">
+                <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Hours / day</div><div className="mt-1 font-mono text-sm font-black text-white">{formatMinutes(dailyMinutes)}</div></div>
+                <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Working days in {monthLabel(periodYear, periodMonth)}</div><div className="mt-1 font-mono text-sm font-black text-white">{monthWorkingDays}</div></div>
+                <div><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Standard hours / month</div><div className="mt-1 font-mono text-sm font-black text-white">{monthStandardHours.toFixed(1)}</div></div>
+              </div>
+              <p className="mt-2 text-[10px] font-semibold leading-relaxed text-slate-500">
+                Standard monthly hours divide a monthly salary into an hourly rate — that rate is what overtime multiplies when no
+                company rate is set. The break is unpaid: it is subtracted from the daily hours.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-black text-white"><Settings2 className="h-4 w-4 text-amber-400" />Public holidays</h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-500">National and religious holidays. Tick <span className="font-bold text-slate-300">every year</span> for fixed feasts and national days so next year&apos;s calendar is already right.</p>
+              <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3 sm:grid-cols-2">
+                <label className="sm:col-span-2">
+                  <span className={SMALL_LABEL}>Holiday name</span>
+                  <input value={holidayForm.name} onChange={(event) => setHolidayForm((current) => ({ ...current, name: event.target.value }))} placeholder="Independence Day / Eid al-Fitr / New Year" maxLength={80} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Type</span>
+                  <select value={holidayForm.type} onChange={(event) => setHolidayForm((current) => ({ ...current, type: event.target.value }))} className={INPUT}>
+                    {HOLIDAY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Date</span>
+                  <input type="date" value={holidayForm.startDate} onChange={(event) => setHolidayForm((current) => ({ ...current, startDate: event.target.value }))} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Until <span className="normal-case font-semibold text-slate-600">(multi-day feasts)</span></span>
+                  <input type="date" min={holidayForm.startDate} value={holidayForm.endDate} onChange={(event) => setHolidayForm((current) => ({ ...current, endDate: event.target.value }))} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Notes <span className="normal-case font-semibold text-slate-600">(optional)</span></span>
+                  <input value={holidayForm.notes} onChange={(event) => setHolidayForm((current) => ({ ...current, notes: event.target.value }))} maxLength={200} placeholder="Offices closed, dispatch runs" className={INPUT} />
+                </label>
+                <div className="flex flex-wrap items-center gap-4 sm:col-span-2">
+                  <label className="inline-flex items-center gap-2 text-[11px] font-bold text-slate-300">
+                    <input type="checkbox" checked={holidayForm.recurring} onChange={(event) => setHolidayForm((current) => ({ ...current, recurring: event.target.checked }))} className="h-4 w-4 accent-amber-500" />
+                    Repeats every year
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-[11px] font-bold text-slate-300">
+                    <input type="checkbox" checked={holidayForm.paid} onChange={(event) => setHolidayForm((current) => ({ ...current, paid: event.target.checked }))} className="h-4 w-4 accent-amber-500" />
+                    Paid holiday
+                  </label>
+                  <button type="button" onClick={addHoliday} disabled={!holidayForm.name.trim()} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Add holiday</button>
+                </div>
+              </div>
+
+              <div className="mt-4 max-h-80 overflow-y-auto rounded-xl border border-slate-800">
+                {calendarDraft.holidays.length === 0 ? (
+                  <div className="p-6 text-center text-[11px] font-bold text-slate-500">No holidays yet — every day that is a work day counts as working time.</div>
+                ) : (
+                  <ul className="divide-y divide-slate-800/70">
+                    {calendarDraft.holidays.map((holiday) => (
+                      <li key={holiday.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-xs font-black text-white">{holiday.name}</span>
+                            <span className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${holiday.type === "National" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : holiday.type === "Religious" ? "border-violet-500/40 bg-violet-500/10 text-violet-300" : "border-slate-700 bg-slate-800/70 text-slate-400"}`}>{holiday.type}</span>
+                            {holiday.recurring && <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-300">Every year</span>}
+                            {!holiday.paid && <span className="rounded-full border border-slate-700 bg-slate-800/70 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-slate-400">Unpaid</span>}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-semibold text-slate-500">
+                            {ymdLabel(holiday.startDate)}{holiday.endDate !== holiday.startDate ? ` – ${ymdLabel(holiday.endDate)}` : ""}
+                            {holiday.notes ? ` · ${holiday.notes}` : ""}
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => removeHoliday(holiday.id)} className="shrink-0 rounded-lg border border-slate-700 bg-slate-950 p-2 text-slate-400 hover:border-rose-500/60 hover:text-rose-200" aria-label={`Remove ${holiday.name}`}><Trash2 className="h-3.5 w-3.5" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <p className="mt-2 text-[10px] font-semibold text-slate-500">{calendarDraft.holidays.length} holiday(s) in the list. Holidays are not working days, and overtime on them uses the holiday multiplier. Save to apply.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-black text-white"><Hourglass className="h-4 w-4 text-amber-400" />Overtime rules</h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-500">How the suggested rate per hour is built. HR can always type a different rate on the entry itself.</p>
+              <label className="mt-3 block">
+                <span className={SMALL_LABEL}>Company overtime rate per hour ($) <span className="normal-case font-semibold text-slate-600">(0 = derive from each salary)</span></span>
+                <input type="number" min="0" step="0.01" value={calendarDraft.overtime.defaultRateCentsPerHour > 0 ? (calendarDraft.overtime.defaultRateCentsPerHour / 100).toFixed(2) : ""} onChange={(event) => patchOvertimePolicy({ defaultRateCentsPerHour: Math.max(0, Math.round(Number(event.target.value || 0) * 100)) })} placeholder="0.00" className={INPUT} />
+              </label>
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <label>
+                  <span className={SMALL_LABEL}>Working day ×</span>
+                  <input type="number" min="100" max="1000" step="25" value={calendarDraft.overtime.weekdayMultiplierPercent} onChange={(event) => patchOvertimePolicy({ weekdayMultiplierPercent: Number(event.target.value) })} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Day off ×</span>
+                  <input type="number" min="100" max="1000" step="25" value={calendarDraft.overtime.weekendMultiplierPercent} onChange={(event) => patchOvertimePolicy({ weekendMultiplierPercent: Number(event.target.value) })} className={INPUT} />
+                </label>
+                <label>
+                  <span className={SMALL_LABEL}>Holiday ×</span>
+                  <input type="number" min="100" max="1000" step="25" value={calendarDraft.overtime.holidayMultiplierPercent} onChange={(event) => patchOvertimePolicy({ holidayMultiplierPercent: Number(event.target.value) })} className={INPUT} />
+                </label>
+              </div>
+              <p className="mt-2 text-[10px] font-semibold text-slate-500">Percentages: 150 = time and a half, 200 = double time.</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label>
+                  <span className={SMALL_LABEL}>Daily overtime cap (hours, 0 = none)</span>
+                  <input type="number" min="0" max="12" step="0.5" value={calendarDraft.overtime.maxMinutesPerDay > 0 ? Number((calendarDraft.overtime.maxMinutesPerDay / 60).toFixed(2)) : 0} onChange={(event) => patchOvertimePolicy({ maxMinutesPerDay: Math.round(Number(event.target.value || 0) * 60) })} className={INPUT} />
+                </label>
+                <label className="flex items-end">
+                  <span className="inline-flex items-center gap-2 pb-2 text-[11px] font-bold text-slate-300">
+                    <input type="checkbox" checked={calendarDraft.overtime.approvalRequired} onChange={(event) => patchOvertimePolicy({ approvalRequired: event.target.checked })} className="h-4 w-4 accent-amber-500" />
+                    Overtime needs approval before payroll
+                  </span>
+                </label>
+              </div>
+              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[11px] font-semibold leading-relaxed text-slate-400">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-500"><Percent className="h-3.5 w-3.5" />Worked example</div>
+                <p className="mt-1">
+                  An employee on <span className="font-mono text-slate-200">{money(60000)}</span>/month with {formatMinutes(dailyMinutes)} days and {monthWorkingDays} working days in {monthLabel(periodYear, periodMonth)} earns about
+                  <span className="font-mono text-slate-200"> {money(Math.round(60000 / Math.max(1, monthStandardHours)))}</span>/hour.
+                  One hour of overtime today ({dayKind(localYmd(), calendarDraft)}) is therefore suggested at
+                  <span className="font-mono text-emerald-300"> {money(overtimeRateCentsPerHour(dayKind(localYmd(), calendarDraft), Math.round(60000 / Math.max(1, monthStandardHours)), calendarDraft.overtime))}</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-black text-white"><CalendarOff className="h-4 w-4 text-amber-400" />Leave rules</h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-500">What an <span className="font-bold text-slate-300">approved</span> leave record blocks. Pending and declined records never block anything.</p>
+              <div className="mt-3 space-y-3">
+                <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <input type="checkbox" checked={calendarDraft.leaveAccess.blockLogin} onChange={(event) => patchLeaveAccess({ blockLogin: event.target.checked })} className="mt-0.5 h-4 w-4 accent-amber-500" />
+                  <span>
+                    <span className="block text-xs font-black text-white">Block sign-in during leave</span>
+                    <span className="mt-0.5 block text-[11px] font-semibold leading-relaxed text-slate-500">
+                      The employee cannot sign in and an open session ends: the sign-in screen shows
+                      “on approved leave until …” and the PIN pad is disabled. Safety valve: the last active Manager sign-in is
+                      never blocked, so somebody can always get in and fix a wrong leave record.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <input type="checkbox" checked={calendarDraft.leaveAccess.blockWork} onChange={(event) => patchLeaveAccess({ blockWork: event.target.checked })} className="mt-0.5 h-4 w-4 accent-amber-500" />
+                  <span>
+                    <span className="block text-xs font-black text-white">Block assigning and processing work</span>
+                    <span className="mt-0.5 block text-[11px] font-semibold leading-relaxed text-slate-500">
+                      Refuses a shift assignment for a leave day, handing an order step or machine task to that employee, clocking
+                      them in, starting or completing work in their name, and recording overtime on a leave day — each with the
+                      prompt “<span className="font-bold text-slate-300">… is on annual leave until …</span>”.
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <div className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-[11px] font-semibold leading-relaxed text-sky-100/85">
+                <ShieldCheck className="mr-1 inline h-4 w-4 align-[-3px] text-sky-300" />
+                Pickers warn before the save is even attempted: the shift planner and the station crew lists read
+                <span className="font-mono"> /api/hr/availability</span> and mark anyone on leave that day. The server refuses the
+                save anyway — hiding a button is never the guard.
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {tab === "payroll" && (
         <section className="space-y-4">
-          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-[11px] font-semibold leading-relaxed text-amber-100/80"><CircleDollarSign className="mr-1 inline h-4 w-4 align-[-3px] text-amber-300" /><strong className="text-amber-200">Payroll setup note:</strong> payroll uses the saved monthly base salary plus manually entered earnings and deductions. Leave records are for reference and do not automatically change pay. This tool does not calculate statutory taxes, social contributions, overtime rules or legal leave accrual; confirm local policy before posting.</div>
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-[11px] font-semibold leading-relaxed text-amber-100/80"><CircleDollarSign className="mr-1 inline h-4 w-4 align-[-3px] text-amber-300" /><strong className="text-amber-200">Payroll setup note:</strong> payroll uses the saved monthly base salary, <strong className="text-amber-200">approved overtime</strong> from the Overtime tab and any earnings and deductions you enter by hand. Leave records stay a reference and do not automatically change pay. This tool does not calculate statutory taxes, social contributions or legal leave accrual; confirm local policy before posting.</div>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 sm:p-5">
             <div><h2 className="text-sm font-black text-white">Monthly payroll</h2><p className="mt-1 text-[11px] font-semibold text-slate-500">Select a month, review each employee&apos;s payslip, then post to lock the run.</p></div>
             <div className="flex flex-wrap items-center gap-2"><label className="sr-only" htmlFor="hr-payroll-month">Payroll month</label><select id="hr-payroll-month" value={periodMonth} onChange={(event) => setPeriodMonth(Number(event.target.value))} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white">{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Date(Date.UTC(2020, i, 1)).toLocaleDateString([], { month: "long", timeZone: "UTC" })}</option>)}</select><select aria-label="Payroll year" value={periodYear} onChange={(event) => setPeriodYear(Number(event.target.value))} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white">{Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 3 + i).map((year) => <option key={year} value={year}>{year}</option>)}</select><button type="button" disabled={saving || payrollLoading || Boolean(payrollRun) || activeWithProfile === 0} onClick={() => void createPayroll()} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-45"><Plus className="h-4 w-4" />Create draft</button></div>
           </div>
 
+          {payrollOvertimeUnpaid.length > 0 && !payrollRun && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-[11px] font-semibold text-emerald-100/85">
+              <span>
+                <Hourglass className="mr-1 inline h-4 w-4 align-[-3px] text-emerald-300" />
+                {payrollOvertimeUnpaid.length} approved overtime entr{payrollOvertimeUnpaid.length === 1 ? "y" : "ies"} for {monthLabel(periodYear, periodMonth)} —
+                {" "}{formatMinutes(payrollOvertimeUnpaid.reduce((sum, row) => sum + row.minutes, 0))}, {money(payrollOvertimeUnpaid.reduce((sum, row) => sum + row.amountCents, 0))} — will be added to the draft as an earnings line per employee.
+              </span>
+              <button type="button" onClick={() => { setOtYear(periodYear); setOtMonth(periodMonth); setTab("overtime"); }} className="font-black text-emerald-200 underline decoration-emerald-400/40 underline-offset-2">Review overtime</button>
+            </div>
+          )}
+          {payrollOvertimePending.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-[11px] font-semibold text-amber-100/85">
+              <span>
+                <Clock className="mr-1 inline h-4 w-4 align-[-3px] text-amber-300" />
+                {payrollOvertimePending.length} overtime entr{payrollOvertimePending.length === 1 ? "y" : "ies"} for {monthLabel(periodYear, periodMonth)} still wait{payrollOvertimePending.length === 1 ? "s" : ""} for approval and will NOT be paid by this draft.
+              </span>
+              <button type="button" onClick={() => { setOtYear(periodYear); setOtMonth(periodMonth); setOtStatus("Pending"); setTab("overtime"); }} className="font-black text-amber-200 underline decoration-amber-400/40 underline-offset-2">Approve them</button>
+            </div>
+          )}
           {activeWithoutProfile > 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-[11px] font-semibold text-sky-100/80"><span><UserRound className="mr-1 inline h-4 w-4 align-[-3px] text-sky-300" />{activeWithoutProfile} active account(s) have no pay profile and will not be included in a draft.</span><button type="button" onClick={() => setTab("employees")} className="font-black text-sky-200 underline decoration-sky-400/40 underline-offset-2">Set up profiles</button></div>}
 
           {payrollBoard?.runs && payrollBoard.runs.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3"><span className="mr-1 text-[10px] font-black uppercase tracking-wider text-slate-500">Recent runs</span>{payrollBoard.runs.slice(0, 6).map((run) => <button key={run.id} type="button" onClick={() => { setPeriodYear(run.periodYear); setPeriodMonth(run.periodMonth); }} className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition ${run.periodYear === periodYear && run.periodMonth === periodMonth ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-slate-800 bg-slate-900 text-slate-400 hover:text-white"}`}>{monthLabel(run.periodYear, run.periodMonth)}<span className={`h-1.5 w-1.5 rounded-full ${run.status === "Posted" ? "bg-emerald-400" : "bg-amber-400"}`} /></button>)}</div>}

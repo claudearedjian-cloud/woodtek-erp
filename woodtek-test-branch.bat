@@ -26,7 +26,9 @@ if not exist ".git" (
   exit /b 1
 )
 
-set DEFAULT_BRANCH=arena/032c17f7-woodtek-erp
+rem 2026-10-07: default test branch = HR working calendar + overtime + leave
+rem enforcement (session arena/265a62fe). It also contains PR #23 (HR & Payroll).
+set DEFAULT_BRANCH=arena/265a62fe-woodtek-erp
 set BRANCH=%~1
 if "%BRANCH%"=="" set /p BRANCH=Branch name [press Enter for %DEFAULT_BRANCH%]: 
 if "%BRANCH%"=="" set BRANCH=%DEFAULT_BRANCH%

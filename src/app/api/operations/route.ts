@@ -15,6 +15,7 @@ import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { routeStageKeys } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
+import { workLeaveBlock } from "@/lib/hrLeaveGate.server";
 
 export async function GET(request: Request) {
   const { user, error: authError } = await authorize("orders:read");
@@ -240,6 +241,16 @@ export async function POST(request: Request) {
         { error: "Add or change passes through the material production plan, not as a loose order step." },
         { status: 409 },
       );
+    }
+
+    // An employee on approved leave cannot be given work. The refusal carries
+    // the same sentence the shift planner and the sign-in screen use, so the
+    // supervisor sees WHY instead of a bare error.
+    if (operatorId) {
+      const onLeave = await workLeaveBlock(Number(operatorId), undefined, "assign");
+      if (onLeave) {
+        return NextResponse.json({ error: onLeave.message, onLeave: onLeave.onLeave }, { status: 409 });
+      }
     }
 
     const existingOps = await db.select().from(orderOperations).where(eq(orderOperations.orderId, Number(orderId))).orderBy(asc(orderOperations.stepOrder));

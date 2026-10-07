@@ -15,9 +15,11 @@ import {
   Timer,
   Users,
   CalendarClock,
+  CalendarOff,
   Sparkles,
 } from "lucide-react";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
+import { fetchLeaveAvailability, leaveEntryFor, leaveOptionSuffix, leavePrompt, type LeaveAvailabilityEntry } from "@/lib/leaveAvailability";
 
 interface WorkforceViewProps {
   currentUser: any;
@@ -80,6 +82,8 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
   const [assignments, setAssignments] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [assignForm, setAssignForm] = useState<{ date: string; userId: string; shiftId: string; machineId: string } | null>(null);
+  // Who is on approved leave on the day being planned (HR leave gate).
+  const [leaveAvailability, setLeaveAvailability] = useState<LeaveAvailabilityEntry[]>([]);
 
   // ---- Attendance ----
   const [todayRows, setTodayRows] = useState<any[]>([]);
@@ -190,11 +194,24 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
   const openAssign = (date: string) => {
     setAssignForm({ date, userId: "", shiftId: "", machineId: "" });
     setError("");
+    // Ask the HR leave gate who is away that day so the picker can warn.
+    void fetchLeaveAvailability(date).then(setLeaveAvailability);
   };
+
+  /** The employee picked in the assign dialog, when they are on leave that day. */
+  const assignOnLeave = assignForm ? leaveEntryFor(leaveAvailability, assignForm.userId) : null;
 
   const handleSaveAssignment = async () => {
     if (!assignForm || !assignForm.userId || !assignForm.shiftId) {
       setError("Pick an employee and a shift.");
+      return;
+    }
+    // Leave gate: pop the prompt before the round trip (the server refuses too).
+    const blocked = leaveEntryFor(leaveAvailability, assignForm.userId);
+    if (blocked) {
+      const message = leavePrompt(blocked);
+      window.alert(message);
+      setError(message);
       return;
     }
     try {
@@ -435,11 +452,24 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
                       className="w-full mt-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-semibold"
                     >
                       <option value="">Select employee…</option>
-                      {users.map((u: any) => (
-                        <option key={u.id} value={u.id}>{u.name} — {u.role}</option>
-                      ))}
+                      {users.map((u: any) => {
+                        const away = leaveEntryFor(leaveAvailability, u.id);
+                        return (
+                          <option key={u.id} value={u.id}>{u.name} — {u.role}{leaveOptionSuffix(away)}</option>
+                        );
+                      })}
                     </select>
                   </div>
+                  {/* Leave gate prompt: shown the moment an employee on approved
+                      leave is picked, before any save is attempted. */}
+                  {assignOnLeave && (
+                    <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-3 text-[11px] font-bold leading-relaxed text-sky-100">
+                      <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-sky-300">
+                        <CalendarOff className="w-3.5 h-3.5" />On approved leave
+                      </span>
+                      <span className="mt-1 block">{leavePrompt(assignOnLeave)}</span>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[11px] font-bold text-slate-400 uppercase">Shift</label>
                     <select
@@ -469,6 +499,7 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={handleSaveAssignment}
+                      disabled={Boolean(assignOnLeave)}
                       className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase rounded-xl transition active:scale-95"
                     >
                       Save Assignment

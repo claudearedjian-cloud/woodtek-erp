@@ -87,6 +87,12 @@ const AR: Record<string, string> = {
   "Enter your personal four-digit PIN. Accounts lock for 5 minutes after 5 failed attempts.":
     "أدخل رمزك المكوّن من أربعة أرقام. يُقفل الحساب 5 دقائق بعد 5 محاولات فاشلة.",
   "Sign In": "تسجيل الدخول",
+  // --- sign-in screen: approved leave blocks the account ---
+  "On leave": "في إجازة",
+  "On approved leave": "في إجازة معتمدة",
+  "Sign-in is blocked while this employee is on leave.":
+    "يُمنع تسجيل الدخول أثناء إجازة هذا الموظف.",
+  "Back on": "يعود في",
   "Cancel": "إلغاء",
   "Select profile": "اختر الحساب",
   "PIN": "الرمز",
@@ -226,6 +232,12 @@ const FR: Record<string, string> = {
   "Enter your personal four-digit PIN. Accounts lock for 5 minutes after 5 failed attempts.":
     "Saisissez votre code à quatre chiffres. Le compte se bloque 5 minutes après 5 tentatives échouées.",
   "Sign In": "Se connecter",
+  // --- sign-in screen: approved leave blocks the account ---
+  "On leave": "En congé",
+  "On approved leave": "En congé approuvé",
+  "Sign-in is blocked while this employee is on leave.":
+    "La connexion est bloquée pendant le congé de cet employé.",
+  "Back on": "Retour le",
   "Cancel": "Annuler",
   "Select profile": "Choisir le profil",
   "PIN": "Code",

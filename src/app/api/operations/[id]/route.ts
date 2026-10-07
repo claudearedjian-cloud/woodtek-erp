@@ -27,6 +27,7 @@ import {
 } from "@/lib/operationMachineCandidates";
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
+import { dateToYmd, workBlockingEnabled, workLeaveBlock } from "@/lib/hrLeaveGate.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
 
@@ -116,6 +117,31 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
         throw new WorkflowError("Unsupported operation status.", 400);
+      }
+
+      // ---- Leave gate ------------------------------------------------------
+      // An employee on approved leave is not at work: this step cannot be
+      // handed to them, and it cannot be started or completed in their name.
+      // The refusal carries the same sentence the sign-in screen and the shift
+      // planner show, so everybody hears one reason. HR → Working calendar owns
+      // the switch (data/hr-calendar.json) and the gate fails open when the HR
+      // tables do not exist yet.
+      if (workBlockingEnabled()) {
+        const requestedOperatorId = body.operatorId !== undefined
+          ? (body.operatorId ? Number(body.operatorId) : null)
+          : null;
+        const creditedOperatorId = requestedOperatorId ?? currentOp.operatorId;
+        // A scheduled appointment is checked against its own day; an
+        // unscheduled one against today.
+        const assignmentDate = dateToYmd(body.scheduledStart) ?? dateToYmd(currentOp.scheduledStart);
+        if (requestedOperatorId) {
+          const onLeave = await workLeaveBlock(requestedOperatorId, assignmentDate, "assign");
+          if (onLeave) throw new WorkflowError(onLeave.message, 409);
+        }
+        if (creditedOperatorId && (requestedStatus === "In Progress" || requestedStatus === "Completed")) {
+          const onLeave = await workLeaveBlock(creditedOperatorId, undefined, "process");
+          if (onLeave) throw new WorkflowError(onLeave.message, 409);
+        }
       }
 
       let requestedCandidateMachineIds: number[] | null = null;
@@ -708,6 +734,14 @@ export async function POST(request: Request) {
         { error: "Add or change passes through the material production plan, not as a loose order step." },
         { status: 409 },
       );
+    }
+
+    // Leave gate: an employee on approved leave cannot be handed this step.
+    if (operatorId) {
+      const onLeave = await workLeaveBlock(Number(operatorId), undefined, "assign");
+      if (onLeave) {
+        return NextResponse.json({ error: onLeave.message, onLeave: onLeave.onLeave }, { status: 409 });
+      }
     }
 
     const existingOps = await db.select().from(orderOperations)

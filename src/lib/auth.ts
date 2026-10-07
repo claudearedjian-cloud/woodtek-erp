@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import { loginLeaveBlock } from "@/lib/hrLeaveGate.server";
 import { ensureUsersLoginColumn } from "@/lib/usersSchema.server";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 import { canSeeMoney, moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
@@ -184,6 +185,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   // HR-only staff (can_login = false) and deactivated accounts resolve no
   // session, so disabling a login kills existing sessions immediately.
   if (!found || !found.active || !found.canLogin) return null;
+  // Approved leave ends the session too: an employee on annual/sick leave is
+  // not at work, so they cannot sign in, be handed a task or report one. The
+  // rule lives in HR → Working calendar (data/hr-calendar.json) and the gate
+  // fails OPEN — a missing HR table or a database hiccup never locks anybody
+  // out. The last active Manager sign-in is exempt so someone can always get in
+  // and fix the calendar or decline the leave.
+  if (await loginLeaveBlock(found.id, found.role)) return null;
   // Custom roles resolve to the built-in role they inherit: every permission,
   // module and data-scope check downstream keeps working on the base name,
   // while `displayRole` carries the custom label for the UI.

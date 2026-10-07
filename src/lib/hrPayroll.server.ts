@@ -18,14 +18,17 @@ import {
   calculateNetPay,
   HRPayrollError,
   NO_LOGIN_EMAIL_DOMAIN,
+  overtimePayrollLine,
   parseEmployeeProfile,
   parseLeaveRequest,
   parseNoLoginIdentity,
   parsePayrollAdjustments,
   parsePayrollPeriod,
   parseSalaryHistoryEntry,
+  payrollPeriodLabel,
   type LeaveStatus,
 } from "@/lib/hrPayroll";
+import { approvedOvertimeForPeriod, linkOvertimeToRun, unlinkOvertimeFromRun } from "@/lib/hrOvertime.server";
 import { ensureHrSchema } from "@/lib/hrSchema.server";
 import { hashPin } from "@/lib/auth";
 import { allRoles, baseRoleOf } from "@/lib/permissions";
@@ -702,23 +705,43 @@ export async function createHRPayrollRun(input: unknown, actorId: number) {
       if (employees.length === 0) {
         throw new HRPayrollError("Add salary profiles for active employees before generating payroll.", 409);
       }
+      // Approved overtime of this month that no run has paid yet becomes one
+      // labelled earnings line per employee; the entries are linked to this run
+      // inside the same transaction so a rolled-back draft pays nothing twice.
+      const overtime = await approvedOvertimeForPeriod(year, month, tx);
+      const overtimeByEmployee = new Map(overtime.map((entry) => [entry.userId, entry]));
       const [run] = await tx.insert(hrPayrollRuns).values({
         periodYear: year,
         periodMonth: month,
         status: "Draft",
         createdById: actorId,
       }).returning();
-      const items = await tx.insert(hrPayrollItems).values(employees.map((employee) => ({
-        runId: run.id,
-        userId: employee.userId,
-        employeeName: employee.name,
-        roleSnapshot: employee.role,
-        baseSalaryCents: employee.baseSalaryCents,
-        additionsJson: [],
-        deductionsJson: [],
-        netPayCents: employee.baseSalaryCents,
-      }))).returning();
-      return { ...run, items, employeeCount: items.length, netTotalCents: items.reduce((sum, item) => sum + item.netPayCents, 0) };
+      const linkedEntryIds: number[] = [];
+      const items = await tx.insert(hrPayrollItems).values(employees.map((employee) => {
+        const ot = overtimeByEmployee.get(employee.userId);
+        const line = ot ? overtimePayrollLine(ot.minutes, ot.amountCents, payrollPeriodLabel(year, month)) : null;
+        const additions = line ? [line] : [];
+        if (ot && line) linkedEntryIds.push(...ot.entryIds);
+        return {
+          runId: run.id,
+          userId: employee.userId,
+          employeeName: employee.name,
+          roleSnapshot: employee.role,
+          baseSalaryCents: employee.baseSalaryCents,
+          additionsJson: additions,
+          deductionsJson: [],
+          netPayCents: calculateNetPay(employee.baseSalaryCents, { additions, deductions: [] }),
+        };
+      })).returning();
+      await linkOvertimeToRun(linkedEntryIds, run.id, tx);
+      return {
+        ...run,
+        items,
+        employeeCount: items.length,
+        netTotalCents: items.reduce((sum, item) => sum + item.netPayCents, 0),
+        overtimeEntriesPaid: linkedEntryIds.length,
+        overtimeMinutesPaid: overtime.reduce((sum, entry) => sum + entry.minutes, 0),
+      };
     });
   } catch (error) {
     if (error instanceof HRPayrollError) throw error;
@@ -780,7 +803,12 @@ export async function deleteHRPayrollRun(runValue: unknown) {
       .where(eq(hrPayrollRuns.id, runId)).for("update");
     if (!run) throw new HRPayrollError("Payroll run not found.", 404);
     if (run.status !== "Draft") throw new HRPayrollError("Posted payroll is a permanent record and cannot be deleted.", 409);
+    // Put the overtime this draft had taken back in the unpaid pool, so the next
+    // draft for the month pays those hours instead of silently dropping them.
+    // (The foreign key would null them anyway; doing it here keeps the intent in
+    // the transaction and the returned count in the audit trail.)
+    const freedOvertime = await unlinkOvertimeFromRun(runId, tx);
     await tx.delete(hrPayrollRuns).where(eq(hrPayrollRuns.id, runId));
-    return { id: runId };
+    return { id: runId, overtimeEntriesFreed: freedOvertime };
   });
 }
