@@ -16,6 +16,7 @@ import {
 import { logAudit } from "@/lib/audit.server";
 import { baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import { ensureUsersLoginColumn } from "@/lib/usersSchema.server";
 
 /** GET /api/auth — who am I? Used to restore the session after a page refresh. */
 export async function GET() {
@@ -53,12 +54,14 @@ export async function POST(request: Request) {
       );
     }
 
-    // Resolve the candidate account.
+    // Resolve the candidate account. HR-only staff (can_login = false) can
+    // never log in — even with a valid PIN.
+    await ensureUsersLoginColumn();
     let candidate: typeof users.$inferSelect | undefined;
     if (Number.isInteger(userId) && userId > 0) {
-      [candidate] = await db.select().from(users).where(and(eq(users.id, userId), eq(users.active, true)));
+      [candidate] = await db.select().from(users).where(and(eq(users.id, userId), eq(users.active, true), eq(users.canLogin, true)));
     } else if (email) {
-      [candidate] = await db.select().from(users).where(and(eq(users.email, email), eq(users.active, true)));
+      [candidate] = await db.select().from(users).where(and(eq(users.email, email), eq(users.active, true), eq(users.canLogin, true)));
     }
 
     if (!candidate) {

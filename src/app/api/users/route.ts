@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { allRoles } from "@/lib/permissions";
@@ -23,6 +23,7 @@ export async function GET() {
         createdAt: users.createdAt,
       })
       .from(users)
+      .where(eq(users.canLogin, true)) // HR-only staff have no login — they live in the HR directory, not here.
       .orderBy(asc(users.role), asc(users.name));
     return NextResponse.json(allUsers);
   } catch (error: unknown) {
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
       avatarColor,
       pin: await hashPin(String(pin)),
       active: true,
+      canLogin: true,
     }).returning({
       id: users.id,
       name: users.name,

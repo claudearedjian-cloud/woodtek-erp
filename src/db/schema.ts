@@ -24,6 +24,10 @@ export const users = pgTable("users", {
   avatarColor: text("avatar_color").notNull().default("bg-amber-600"),
   pin: text("pin").notNull().default("1234"),
   active: boolean("active").notNull().default(true),
+  // HR-only staff (Worker, Cleaner, …) live in the same table so the employee
+  // card, leave and payroll keep working, but can never sign in: the roster
+  // hides them and every session lookup requires this flag.
+  canLogin: boolean("can_login").notNull().default(true),
   phone: text("phone"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

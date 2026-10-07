@@ -1,5 +1,6 @@
 // Server-side HR/payroll persistence. Every caller must first enforce the
 // optional payroll grant; this module only owns scoped SQL and transaction rules.
+import { randomBytes } from "node:crypto";
 import { alias } from "drizzle-orm/pg-core";
 import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -9,18 +10,24 @@ import {
   hrLeaveRequests,
   hrPayrollItems,
   hrPayrollRuns,
+  orderOperations,
   users,
 } from "@/db/schema";
 import {
   calculateNetPay,
   HRPayrollError,
+  NO_LOGIN_EMAIL_DOMAIN,
   parseEmployeeProfile,
   parseLeaveRequest,
+  parseNoLoginIdentity,
   parsePayrollAdjustments,
   parsePayrollPeriod,
   type LeaveStatus,
 } from "@/lib/hrPayroll";
 import { ensureHrSchema } from "@/lib/hrSchema.server";
+import { hashPin } from "@/lib/auth";
+import { allRoles, baseRoleOf } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -48,6 +55,7 @@ export async function listHREmployees() {
     email: users.email,
     role: users.role,
     active: users.active,
+    canLogin: users.canLogin,
     avatarColor: users.avatarColor,
     profileId: hrEmployeeProfiles.id,
     jobTitle: hrEmployeeProfiles.jobTitle,
@@ -142,6 +150,191 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
     },
   }).returning();
   return saved;
+}
+
+// ------------------------------------------- HR-only (no-login) employees
+//
+// Staff without a sign-in (Worker, Cleaner, …) live in the same users table
+// so the employee card, leave and payroll keep working untouched. The
+// can_login flag is the only difference: the roster hides them,
+// getSessionUser rejects them and the login POST never resolves them.
+
+async function checkedEmployee(userId: number) {
+  const [employee] = await db.select({
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    role: users.role,
+    active: users.active,
+    canLogin: users.canLogin,
+  }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  return employee;
+}
+
+/** True when another active login Manager exists besides `excludeId`. */
+async function anotherLoginManagerExists(excludeId: number): Promise<boolean> {
+  ensureRolesRegistered();
+  const rows = await db.select({ id: users.id, role: users.role })
+    .from(users)
+    .where(and(eq(users.active, true), eq(users.canLogin, true)));
+  return rows.some((row) => row.id !== excludeId && (baseRoleOf(row.role) || row.role) === "Manager");
+}
+
+async function guardAccountStillManaged(targetUserId: number): Promise<void> {
+  const target = await checkedEmployee(targetUserId);
+  ensureRolesRegistered();
+  const targetIsManager = (baseRoleOf(target.role) || target.role) === "Manager";
+  if (target.active && target.canLogin && targetIsManager && !(await anotherLoginManagerExists(targetUserId))) {
+    throw new HRPayrollError("This is the last active Manager sign-in; it cannot be switched off.", 409);
+  }
+}
+
+function uniqueNoLoginEmail(): string {
+  return `hr-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}@${NO_LOGIN_EMAIL_DOMAIN}`;
+}
+
+/**
+ * Creates an HR-only employee (no sign-in) with its card shell. The stored
+ * users.role is the inert job-description text until a Manager enables a
+ * login with a real system role. Callers must enforce the payroll grant.
+ */
+export async function createNoLoginEmployee(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Enter the employee's name.");
+  const identity = parseNoLoginIdentity(raw);
+  // Validate every card field BEFORE inserting, so a bad date never leaves
+  // a half-created employee behind.
+  parseEmployeeProfile({ ...(raw as Record<string, unknown>), userId: 1 });
+  await ensureHrSchema();
+
+  const jobTitle = String(raw.jobTitle ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || "Worker";
+  let email = identity.email;
+  if (!email) {
+    email = uniqueNoLoginEmail();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const [clash] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      if (!clash) break;
+      email = uniqueNoLoginEmail();
+    }
+  }
+  try {
+    const [created] = await db.insert(users).values({
+      name: identity.name,
+      email,
+      role: jobTitle,
+      avatarColor: "bg-slate-600",
+      pin: await hashPin(randomBytes(16).toString("hex")),
+      active: true,
+      canLogin: false,
+      phone: String(raw.phone ?? "").trim().slice(0, 30) || null,
+      notes: null,
+    }).returning({ id: users.id, name: users.name, email: users.email, role: users.role });
+    await saveHREmployeeProfile({ ...(raw as Record<string, unknown>), userId: created.id }, actorId);
+    return created;
+  } catch (error) {
+    if (error instanceof HRPayrollError) throw error;
+    if (postgresCode(error) === "23505") {
+      throw new HRPayrollError("This e-mail address is already used by another employee.", 409);
+    }
+    throw error;
+  }
+}
+
+export interface EmployeeLoginInput {
+  userId: number;
+  enable: boolean;
+  role?: unknown;
+  pin?: unknown;
+}
+
+/**
+ * Enables or disables an employee's sign-in. Enabling requires a real
+ * system role and a fresh 4-digit PIN. Callers must enforce users:manage —
+ * only a Manager hands out or revokes access.
+ */
+export async function setEmployeeLogin(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Choose an employee.");
+  const userId = positiveId(raw.userId, "Employee");
+  const enable = raw.enable === true;
+  await ensureHrSchema();
+  const target = await checkedEmployee(userId);
+
+  if (enable) {
+    ensureRolesRegistered();
+    const role = String(raw.role ?? "").trim();
+    if (!allRoles().includes(role)) {
+      throw new HRPayrollError(`Unknown role "${role || "—"}". Pick a system role for the new login.`);
+    }
+    const pin = String(raw.pin ?? "").trim();
+    if (!/^\d{4}$/.test(pin)) throw new HRPayrollError("A four-digit PIN is required to enable the login.");
+    const [updated] = await db.update(users).set({
+      role,
+      pin: await hashPin(pin),
+      canLogin: true,
+    }).where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, role: users.role, canLogin: users.canLogin,
+    });
+    return updated;
+  }
+
+  if (userId === actorId) throw new HRPayrollError("You cannot disable your own sign-in.", 403);
+  await guardAccountStillManaged(userId);
+  const [updated] = await db.update(users).set({ canLogin: false })
+    .where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, role: users.role, canLogin: users.canLogin,
+    });
+  void target;
+  return updated;
+}
+
+/**
+ * Activates or deactivates an employee account. Inactive staff leave the
+ * sign-in roster and stop entering new payroll drafts; their card, leave
+ * history and posted payslips stay untouched. Callers enforce payroll grant.
+ */
+export async function setEmployeeActive(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Choose an employee.");
+  const userId = positiveId(raw.userId, "Employee");
+  const active = raw.active === true;
+  await ensureHrSchema();
+  await checkedEmployee(userId);
+  if (!active) {
+    if (userId === actorId) throw new HRPayrollError("You cannot deactivate your own account.", 403);
+    await guardAccountStillManaged(userId);
+  }
+  const [updated] = await db.update(users).set({ active })
+    .where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, active: users.active, canLogin: users.canLogin,
+    });
+  return updated;
+}
+
+/**
+ * Deletes an HR-only employee record. Login users are refused here — their
+ * deletion stays a Manager action in Settings. Cascades the card and its
+ * attachments; leave and payroll history keep their snapshots. Callers
+ * enforce the payroll grant.
+ */
+export async function deleteNoLoginEmployee(userValue: unknown, actorId: number) {
+  const userId = positiveId(userValue, "Employee");
+  await ensureHrSchema();
+  const target = await checkedEmployee(userId);
+  if (userId === actorId) throw new HRPayrollError("You cannot delete your own account.", 403);
+  if (target.canLogin) {
+    throw new HRPayrollError("This employee has a login — delete the account in Settings instead.", 409);
+  }
+  const assigned = await db.select({ id: orderOperations.id })
+    .from(orderOperations).where(eq(orderOperations.operatorId, userId)).limit(1);
+  if (assigned.length > 0) {
+    throw new HRPayrollError("Cannot delete an employee with assigned operations. Deactivate instead.", 409);
+  }
+  await db.delete(users).where(eq(users.id, userId));
+  // Orphaned photo/document files (if any) are ignored by every reader, the
+  // same as other file-backed stores — metadata deletion is authoritative.
+  return { id: userId, name: target.name };
 }
 
 // ------------------------------------------------- employee card attachments

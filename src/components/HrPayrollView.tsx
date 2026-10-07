@@ -32,6 +32,7 @@ import {
   HR_EMPLOYMENT_STATUSES,
   HR_GENDERS,
   HR_MARITAL_STATUSES,
+  NO_LOGIN_EMAIL_DOMAIN,
   inclusiveDays,
   type HrDocumentType,
   type LeaveType,
@@ -44,6 +45,7 @@ interface HrEmployee {
   email: string;
   role: string;
   active: boolean;
+  canLogin: boolean;
   avatarColor: string;
   profileId: number | null;
   jobTitle: string | null;
@@ -172,6 +174,12 @@ function photoUrl(userId: number, stamp: number): string {
   return `/api/hr/photo?userId=${userId}&v=${stamp}`;
 }
 
+/** HR-only staff created without an e-mail carry a placeholder — never show it. */
+function displayEmail(employee: { email: string }): string {
+  const email = String(employee.email ?? "");
+  return email.toLowerCase().endsWith(`@${NO_LOGIN_EMAIL_DOMAIN}`) ? "" : email;
+}
+
 function jsonLines(value: unknown): PayAdjustment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -258,6 +266,21 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const [titlesOpen, setTitlesOpen] = useState(false);
   const [titlesDraft, setTitlesDraft] = useState("");
   const [titlesBusy, setTitlesBusy] = useState(false);
+  // --- HR-only (no-login) employees -------------------------------------------
+  const [loginFilter, setLoginFilter] = useState<"all" | "login" | "nologin">("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    email: "",
+    jobTitle: "",
+    department: "",
+    nationality: "",
+    phone: "",
+    hireDate: "",
+    monthlySalary: "",
+  });
+  const [loginModal, setLoginModal] = useState<HrEmployee | null>(null);
+  const [loginForm, setLoginForm] = useState({ role: "Machine Operator", pin: "" });
   const [leaveForm, setLeaveForm] = useState({ userId: "", leaveType: "Annual" as LeaveType, startDate: localYmd(), endDate: localYmd(), reason: "" });
   const [editingItem, setEditingItem] = useState<PayrollItem | null>(null);
   const [additionDrafts, setAdditionDrafts] = useState<Array<{ label: string; amount: string }>>([]);
@@ -362,9 +385,13 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
 
   const filteredEmployees = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return employees.filter((employee) => !q || [employee.name, employee.email, employee.role, employee.jobTitle, employee.nationality, employee.employeeCode, employee.department, employee.phone]
-      .some((value) => String(value ?? "").toLowerCase().includes(q)));
-  }, [employees, search]);
+    return employees.filter((employee) =>
+      (loginFilter === "all" || (loginFilter === "login") === Boolean(employee.canLogin))
+      && (!q || [employee.name, employee.email, employee.role, employee.jobTitle, employee.nationality, employee.employeeCode, employee.department, employee.phone]
+        .some((value) => String(value ?? "").toLowerCase().includes(q))));
+  }, [employees, search, loginFilter]);
+
+  const noLoginCount = useMemo(() => employees.filter((employee) => !employee.canLogin).length, [employees]);
 
   const jobTitleSuggestions = useMemo(() => {
     const seen = new Set<string>();
@@ -602,6 +629,107 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
     void saveJobTitles([...jobTitles, title]);
   };
 
+  // --- HR-only employee accounts ------------------------------------------------
+  const openCreateEmployee = () => {
+    setCreateForm({ name: "", email: "", jobTitle: "", department: "", nationality: "", phone: "", hireDate: "", monthlySalary: "" });
+    setCreateOpen(true);
+    setError("");
+  };
+
+  const createEmployee = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!createForm.name.trim()) {
+      setError("Enter the employee's name.");
+      return;
+    }
+    const amount = createForm.monthlySalary.trim() === "" ? 0 : Number(createForm.monthlySalary);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 999999.99) {
+      setError("Enter a monthly salary from $0.00 to $999,999.99.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/hr/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: createForm.name.trim(),
+          email: createForm.email.trim(),
+          jobTitle: createForm.jobTitle.trim(),
+          department: createForm.department.trim(),
+          nationality: createForm.nationality.trim(),
+          phone: createForm.phone.trim(),
+          hireDate: createForm.hireDate || null,
+          baseSalaryCents: Math.round(amount * 100),
+        }),
+      });
+      const created = await payloadOf<{ id: number; name: string }>(response, "Failed to create the employee.");
+      setCreateOpen(false);
+      setLoginFilter("all");
+      flashMsg(`${created.name} added (no login). Open the card to complete the details.`);
+      await loadDirectory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create the employee.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patchAccount = async (employee: HrEmployee, action: "enableLogin" | "disableLogin" | "setActive", extra?: Record<string, unknown>) => {
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/hr/employees", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, userId: employee.id, ...(extra ?? {}) }),
+      });
+      const updated = await payloadOf<HrEmployee>(response, "Failed to update the employee account.");
+      flashMsg(
+        action === "enableLogin" ? `Sign-in enabled for ${employee.name}.`
+        : action === "disableLogin" ? `Sign-in disabled for ${employee.name}.`
+        : `${employee.name} ${updated.active ? "activated" : "deactivated"}.`,
+      );
+      await loadDirectory();
+      setCardEmployee((current) => (current && current.id === employee.id ? { ...current, ...updated } : current));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update the employee account.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitEnableLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!loginModal) return;
+    if (!/^\d{4}$/.test(loginForm.pin.trim())) {
+      setError("Enter a four-digit PIN for the new login.");
+      return;
+    }
+    setLoginModal(null);
+    await patchAccount(loginModal, "enableLogin", { role: loginForm.role, pin: loginForm.pin.trim() });
+    setLoginForm({ role: "Machine Operator", pin: "" });
+  };
+
+  const deleteEmployeeRecord = async (employee: HrEmployee) => {
+    if (!window.confirm(`Permanently delete the HR record of ${employee.name}? The card and its attachments are removed; leave and payroll history keep their snapshots. This cannot be undone.`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/hr/employees?userId=${employee.id}`, { method: "DELETE" });
+      await payloadOf(response, "Failed to delete the employee.");
+      setCardEmployee(null);
+      setEditingEmployee(null);
+      flashMsg(`${employee.name} deleted.`);
+      await loadDirectory();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the employee.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const submitLeave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
@@ -808,10 +936,12 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
           </div>
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-              <div><h2 className="text-sm font-black text-white">Employee cards</h2><p className="mt-1 text-[11px] font-semibold text-slate-500">Accounts are managed in Settings. The card holds the job description (linked to the system role), personal details, photo, residency papers and pay profile.</p></div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-slate-500">{filteredEmployees.length} of {employees.length}</span>
+              <div><h2 className="text-sm font-black text-white">Employee cards</h2><p className="mt-1 text-[11px] font-semibold text-slate-500">Login accounts are managed in Settings; staff without a sign-in (Worker, Cleaner, …) are created and kept here. The card holds the job description, personal details, photo, residency papers and pay profile.</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-500">{filteredEmployees.length} of {employees.length}{noLoginCount > 0 ? ` · ${noLoginCount} without login` : ""}</span>
+                <select aria-label="Filter by sign-in" value={loginFilter} onChange={(event) => setLoginFilter(event.target.value as "all" | "login" | "nologin")} className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-[10px] font-bold text-slate-300"><option value="all">All staff</option><option value="login">With login</option><option value="nologin">No login</option></select>
                 <button type="button" onClick={() => { setTitlesOpen(true); setError(""); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 transition hover:border-amber-500/60 hover:text-amber-200"><ListChecks className="h-3.5 w-3.5" />Job titles</button>
+                <button type="button" onClick={openCreateEmployee} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white transition hover:bg-amber-500"><Plus className="h-3.5 w-3.5" />Add employee</button>
               </div>
             </div>
             {loading ? <div className="p-10 text-center text-sm font-bold text-slate-500">Loading HR records…</div> : filteredEmployees.length === 0 ? <div className="p-10 text-center text-sm font-bold text-slate-500">No employees match this search.</div> : (
@@ -821,7 +951,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                   <tbody className="divide-y divide-slate-800/70">
                     {filteredEmployees.map((employee) => (
                       <tr key={employee.id} className={`text-slate-300 ${employee.active ? "" : "opacity-55"}`}>
-                        <td className="px-5 py-3.5"><div className="flex items-center gap-3">{employee.photoFile ? <img src={photoUrl(employee.id, photoStamp)} alt="" className="h-9 w-9 rounded-xl border border-slate-700 object-cover" /> : <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${employee.avatarColor || "bg-slate-700"} text-xs font-black text-white`}>{employee.name.slice(0, 1).toUpperCase()}</span>}<span><span className="block font-black text-white">{employee.name}{!employee.active && <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] uppercase text-slate-500">Inactive</span>}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.employeeCode ? `${employee.employeeCode} · ` : ""}{employee.email}</span></span></div></td>
+                        <td className="px-5 py-3.5"><div className="flex items-center gap-3">{employee.photoFile ? <img src={photoUrl(employee.id, photoStamp)} alt="" className="h-9 w-9 rounded-xl border border-slate-700 object-cover" /> : <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${employee.avatarColor || "bg-slate-700"} text-xs font-black text-white`}>{employee.name.slice(0, 1).toUpperCase()}</span>}<span><span className="block font-black text-white">{employee.name}{!employee.canLogin && <span className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] uppercase text-amber-300">No login</span>}{!employee.active && <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[9px] uppercase text-slate-500">Inactive</span>}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{[employee.employeeCode, displayEmail(employee)].filter(Boolean).join(" · ") || "—"}</span></span></div></td>
                         <td className="px-3 py-3.5"><span className="block font-bold text-slate-300">{employee.jobTitle || employee.role}</span><span className="mt-0.5 block text-[10px] font-semibold text-slate-500">Role: {employee.role}{employee.jobTitle && employee.jobTitle !== employee.role ? " · custom job description" : " · linked"}</span></td>
                         <td className="px-3 py-3.5 font-semibold text-slate-400">{textOr(employee.nationality)}{employee.department ? <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{employee.department}</span> : null}</td>
                         <td className="px-3 py-3.5 font-semibold text-slate-400">{dateLabel(employee.hireDate)}</td>
@@ -917,7 +1047,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                   : <span className={`flex h-14 w-14 items-center justify-center rounded-2xl ${editingEmployee.avatarColor || "bg-slate-700"} text-lg font-black text-white`}>{editingEmployee.name.slice(0, 1).toUpperCase()}</span>}
                 <div>
                   <h2 id="hr-profile-title" className="text-lg font-black text-white">Employee card</h2>
-                  <p className="mt-0.5 text-xs font-semibold text-slate-400">{editingEmployee.name} · {editingEmployee.email}</p>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-400">{editingEmployee.name} · {[displayEmail(editingEmployee), editingEmployee.canLogin ? "" : "no sign-in"].filter(Boolean).join(" · ") || "—"}</p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <button type="button" disabled={photoBusy} onClick={() => pickPhoto(editingEmployee)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-amber-500/60 hover:text-amber-200 disabled:opacity-50"><Camera className="h-3 w-3" />{photoBusy ? "Uploading…" : editingEmployee.photoFile ? "Change photo" : "Add photo"}</button>
                     {editingEmployee.photoFile && <button type="button" disabled={photoBusy} onClick={() => void removePhoto(editingEmployee)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-500 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-50"><Trash2 className="h-3 w-3" />Remove</button>}
@@ -1022,12 +1152,30 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
         <div className="hr-modal fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-slate-950/85 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="hr-card-title">
           <div className="hr-modal-panel max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
             <div className="hr-no-print flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
-              <div><h2 id="hr-card-title" className="text-sm font-black text-white">Employee card · {cardEmployee.name}</h2><p className="mt-1 text-[10px] font-semibold text-slate-500">{textOr(cardEmployee.jobTitle, cardEmployee.role)}{cardEmployee.employeeCode ? ` · ${cardEmployee.employeeCode}` : ""}</p></div>
+              <div><h2 id="hr-card-title" className="text-sm font-black text-white">Employee card · {cardEmployee.name}</h2><p className="mt-1 text-[10px] font-semibold text-slate-500">{textOr(cardEmployee.jobTitle, cardEmployee.role)}{cardEmployee.employeeCode ? ` · ${cardEmployee.employeeCode}` : ""}{cardEmployee.canLogin ? "" : " · no sign-in"}</p></div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => { setCardEmployee(null); openEmployeeEditor(cardEmployee); }} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] font-black text-slate-300 hover:border-amber-500/50 hover:text-amber-200"><BriefcaseBusiness className="h-3.5 w-3.5" />Edit card</button>
                 <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white hover:bg-amber-500"><Printer className="h-3.5 w-3.5" />Print</button>
                 <button type="button" aria-label="Close card" onClick={() => setCardEmployee(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-4 w-4" /></button>
               </div>
+            </div>
+            <div className="hr-no-print flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/50 px-5 py-3">
+              <span className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                Account:
+                {cardEmployee.canLogin
+                  ? <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-black uppercase text-emerald-300">Sign-in on</span>
+                  : <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-black uppercase text-amber-300">No sign-in</span>}
+                {cardEmployee.active
+                  ? <span className="rounded-full bg-slate-800 px-2 py-0.5 font-black uppercase text-slate-300">Active</span>
+                  : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 font-black uppercase text-rose-300">Inactive</span>}
+              </span>
+              <span className="flex flex-wrap gap-1.5">
+                <button type="button" disabled={saving} onClick={() => { if (cardEmployee.active && !window.confirm(`Deactivate ${cardEmployee.name}? They leave the sign-in roster and stop entering new payroll drafts.`)) return; void patchAccount(cardEmployee, "setActive", { active: !cardEmployee.active }); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-amber-500/50 hover:text-amber-200 disabled:opacity-50">{cardEmployee.active ? <><XCircle className="h-3 w-3" />Deactivate</> : <><Check className="h-3 w-3" />Activate</>}</button>
+                {isManager && (cardEmployee.canLogin
+                  ? <button type="button" disabled={saving} onClick={() => { if (!window.confirm(`Disable the sign-in of ${cardEmployee.name}? They keep their card, leave and payroll history but can no longer log in.`)) return; void patchAccount(cardEmployee, "disableLogin"); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-50"><XCircle className="h-3 w-3" />Disable login</button>
+                  : <button type="button" disabled={saving} onClick={() => { setLoginForm({ role: systemRoles.includes(cardEmployee.role) ? cardEmployee.role : "Machine Operator", pin: "" }); setLoginModal(cardEmployee); setError(""); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-black text-slate-300 hover:border-emerald-500/50 hover:text-emerald-200 disabled:opacity-50"><ShieldCheck className="h-3 w-3" />Enable login</button>)}
+                {!cardEmployee.canLogin && <button type="button" disabled={saving} onClick={() => void deleteEmployeeRecord(cardEmployee)} className="inline-flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/5 px-2.5 py-1.5 text-[10px] font-black text-rose-200 hover:bg-rose-500/10 disabled:opacity-50"><Trash2 className="h-3 w-3" />Delete record</button>}
+              </span>
             </div>
             <div className="hr-printable m-5 rounded-xl bg-white p-6 text-slate-900 sm:m-7 sm:p-9">
               <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-300 pb-5">
@@ -1044,7 +1192,7 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                 <div className="text-right"><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</div><div className="mt-1 text-sm font-black">{textOr(cardEmployee.employmentStatus, cardEmployee.active ? "Active" : "Inactive")}</div>{cardEmployee.employeeCode && <div className="mt-1 font-mono text-[11px] text-slate-500">{cardEmployee.employeeCode}</div>}</div>
               </div>
               <div className="grid grid-cols-1 gap-x-8 gap-y-3 border-b border-slate-200 py-5 sm:grid-cols-2 lg:grid-cols-3">
-                {[["System role", cardEmployee.role], ["Job description", textOr(cardEmployee.jobTitle, cardEmployee.role)], ["Department", textOr(cardEmployee.department)], ["Nationality", textOr(cardEmployee.nationality)], ["Date of birth", dateLabel(cardEmployee.dateOfBirth)], ["Gender", textOr(cardEmployee.gender)], ["Marital status", textOr(cardEmployee.maritalStatus)], ["Phone", textOr(cardEmployee.phone)], ["Email", cardEmployee.email], ["Address", textOr(cardEmployee.address)], ["Hire date", dateLabel(cardEmployee.hireDate)], ["Monthly salary", cardEmployee.baseSalaryCents == null ? "—" : money(cardEmployee.baseSalaryCents)]].map(([label, value]) => (
+                {[["System role", cardEmployee.role], ["Job description", textOr(cardEmployee.jobTitle, cardEmployee.role)], ["Department", textOr(cardEmployee.department)], ["Nationality", textOr(cardEmployee.nationality)], ["Date of birth", dateLabel(cardEmployee.dateOfBirth)], ["Gender", textOr(cardEmployee.gender)], ["Marital status", textOr(cardEmployee.maritalStatus)], ["Phone", textOr(cardEmployee.phone)], ["Email", displayEmail(cardEmployee) || "—"], ["Address", textOr(cardEmployee.address)], ["Hire date", dateLabel(cardEmployee.hireDate)], ["Monthly salary", cardEmployee.baseSalaryCents == null ? "—" : money(cardEmployee.baseSalaryCents)]].map(([label, value]) => (
                   <div key={label}><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-0.5 text-sm font-bold">{value}</div></div>
                 ))}
               </div>
@@ -1071,6 +1219,48 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
               <div className="mt-8 grid grid-cols-2 gap-8 text-[10px] text-slate-500"><div className="border-t border-slate-400 pt-2">Employee signature</div><div className="border-t border-slate-400 pt-2">HR signature</div></div>
             </div>
           </div>
+        </div>
+      )}
+
+      {createOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="hr-create-title">
+          <form onSubmit={createEmployee} className="max-h-[92vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 id="hr-create-title" className="text-lg font-black text-white">Add employee</h2><p className="mt-1 text-xs font-semibold text-slate-400">HR-only record — no sign-in. The full card (photo, papers, documents) can be completed afterwards.</p></div>
+              <button type="button" aria-label="Close" onClick={() => setCreateOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label><span className={SMALL_LABEL}>Full name *</span><input required maxLength={120} value={createForm.name} onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Ahmad Khalil" className={INPUT} /></label>
+              <label><span className={SMALL_LABEL}>E-mail (optional)</span><input type="email" maxLength={120} value={createForm.email} onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))} placeholder="Leave empty if none" className={INPUT} /></label>
+            </div>
+            <label><span className={SMALL_LABEL}>Job description</span><input maxLength={80} list="hr-create-job-options" value={createForm.jobTitle} onChange={(event) => setCreateForm((current) => ({ ...current, jobTitle: event.target.value }))} placeholder="Worker, Cleaner, …" className={INPUT} /></label>
+            <datalist id="hr-create-job-options">
+              {jobTitleSuggestions.map((option) => <option key={option.value} value={option.value}>{option.group}</option>)}
+            </datalist>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label><span className={SMALL_LABEL}>Department</span><input maxLength={60} list="hr-department-options" value={createForm.department} onChange={(event) => setCreateForm((current) => ({ ...current, department: event.target.value }))} placeholder="Production" className={INPUT} /></label>
+              <label><span className={SMALL_LABEL}>Nationality</span><input maxLength={60} list="hr-nationality-options" value={createForm.nationality} onChange={(event) => setCreateForm((current) => ({ ...current, nationality: event.target.value }))} placeholder="Lebanese" className={INPUT} /></label>
+              <label><span className={SMALL_LABEL}>Phone</span><input maxLength={30} value={createForm.phone} onChange={(event) => setCreateForm((current) => ({ ...current, phone: event.target.value }))} placeholder="+961 …" className={INPUT} /></label>
+              <label><span className={SMALL_LABEL}>Hire date</span><input type="date" value={createForm.hireDate} onChange={(event) => setCreateForm((current) => ({ ...current, hireDate: event.target.value }))} className={INPUT} /></label>
+            </div>
+            <label><span className={SMALL_LABEL}>Monthly base salary (USD)</span><span className="relative block max-w-xs"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">$</span><input type="number" min="0" max="999999.99" step="0.01" value={createForm.monthlySalary} onChange={(event) => setCreateForm((current) => ({ ...current, monthlySalary: event.target.value }))} placeholder="0.00" className={`${INPUT} pl-7`} /></span></label>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setCreateOpen(false)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white">Cancel</button><button disabled={saving} className="rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-black text-white hover:bg-amber-500 disabled:opacity-50">{saving ? "Saving…" : "Add employee"}</button></div>
+          </form>
+        </div>
+      )}
+
+      {loginModal && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="hr-login-title">
+          <form onSubmit={submitEnableLogin} className="w-full max-w-sm space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 id="hr-login-title" className="text-base font-black text-white">Enable sign-in</h2><p className="mt-1 text-xs font-semibold text-slate-400">{loginModal.name} · currently no login</p></div>
+              <button type="button" aria-label="Close" onClick={() => setLoginModal(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"><X className="h-5 w-5" /></button>
+            </div>
+            <label><span className={SMALL_LABEL}>System role *</span><select required value={loginForm.role} onChange={(event) => setLoginForm((current) => ({ ...current, role: event.target.value }))} className={INPUT}>{systemRoles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+            <label><span className={SMALL_LABEL}>4-digit PIN *</span><input required inputMode="numeric" maxLength={4} value={loginForm.pin} onChange={(event) => setLoginForm((current) => ({ ...current, pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))} placeholder="0000" className={`${INPUT} font-mono tracking-widest`} /></label>
+            <p className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-[10px] font-semibold leading-relaxed text-slate-500">The employee appears on the sign-in screen immediately. The job description on the card stays as-is — only the access role changes.</p>
+            <div className="flex justify-end gap-2"><button type="button" onClick={() => setLoginModal(null)} className="rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white">Cancel</button><button disabled={saving} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50">{saving ? "Saving…" : "Enable login"}</button></div>
+          </form>
         </div>
       )}
 

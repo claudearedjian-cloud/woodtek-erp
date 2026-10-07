@@ -13,10 +13,13 @@ create table if not exists users (
   avatar_color text not null default 'bg-amber-600',
   pin text not null default '1234',
   active boolean not null default true,
+  can_login boolean not null default true,
   phone text,
   notes text,
   created_at timestamp not null default now()
 );
+-- PCs installed before HR-only (no-login) employees existed.
+alter table users add column if not exists can_login boolean not null default true;
 
 create table if not exists reports (
   id serial primary key,

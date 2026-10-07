@@ -205,6 +205,32 @@ export function parseEmployeeProfile(input: unknown): EmployeeProfileInput {
   };
 }
 
+/** Placeholder domain for HR-only employees created without an e-mail. */
+export const NO_LOGIN_EMAIL_DOMAIN = "no-login.local";
+
+export interface NoLoginIdentity {
+  name: string;
+  email: string;
+}
+
+/**
+ * Identity of an HR-only employee (no sign-in): a display name is required,
+ * the e-mail is optional — the server mints a unique placeholder when empty.
+ */
+export function parseNoLoginIdentity(input: unknown): NoLoginIdentity {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Enter the employee's name.");
+  const name = String(raw.name ?? "").trim().replace(/\s+/g, " ");
+  if (!name) throw new HRPayrollError("Enter the employee's name.");
+  if (name.length > 120) throw new HRPayrollError("Name must be 120 characters or fewer.");
+  const email = String(raw.email ?? "").trim().toLowerCase();
+  if (email.length > 120) throw new HRPayrollError("E-mail must be 120 characters or fewer.");
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HRPayrollError("Enter a valid e-mail address or leave it empty.");
+  }
+  return { name, email };
+}
+
 /**
  * Editable job-description list (HR > Employees > Job titles). Accepts the raw
  * API body / file content and returns a clean, de-duplicated list. Free text
