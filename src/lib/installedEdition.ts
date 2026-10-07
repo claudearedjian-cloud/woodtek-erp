@@ -79,8 +79,8 @@ export const INSTALLER_ADDONS: readonly InstallerAddonDef[] = [
     label: "Workforce, Shifts & HR",
     shortLabel: "Workforce & HR",
     description:
-      "Shift definitions, production shift calendar, operator time & attendance clock-in/out, and HR & Payroll.",
-    screens: ["workforce"],
+      "Shift definitions, production shift calendar, operator time & attendance clock-in/out, plus the optional HR & Payroll workspace.",
+    screens: ["workforce", "hr"],
     optionalModuleIds: ["payroll"],
   },
 ] as const;

@@ -89,6 +89,7 @@ export const MENU_ICON_CHOICES: MenuIconChoice[] = [
   { key: "downtime", label: "Alert", Icon: AlertTriangle },
   { key: "quality", label: "Quality", Icon: ShieldCheck },
   { key: "workforce", label: "Shift clock", Icon: CalendarClock },
+  { key: "hr", label: "HR & Payroll", Icon: Banknote },
   { key: "station", label: "Touchscreen", Icon: Tablet },
   { key: "customers", label: "People", Icon: Users },
   { key: "inventory", label: "Package", Icon: Package },

@@ -1,5 +1,5 @@
 // ============================================================================
-// Optional modules — money (and later HR) as a grant to a role or to one person
+// Optional modules — money and HR/payroll as grants to a role or person
 // ============================================================================
 //
 // The owner's rule: money and HR must work like OPTIONAL MODULES. Switched off
@@ -57,8 +57,8 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
     id: "payroll",
     label: "HR & Payroll",
     description:
-      "Arrives in the next bundle — leave and absence tracking, payroll and printable payslips.",
-    ready: false,
+      "Employee pay profiles, leave and absence tracking, monthly payroll drafts, manual earnings/deductions and printable payslips.",
+    ready: true,
   },
 ] as const;
 
@@ -69,7 +69,7 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
 export const OPTIONAL_MODULE_SCREENS: Record<OptionalModuleId, readonly string[]> = {
   invoicing: ["invoicing", "jobcosting"],
   purchasing: ["purchasing"],
-  payroll: [],
+  payroll: ["hr"],
 };
 
 /** The module that governs money visibility everywhere in the app. */

@@ -26,7 +26,7 @@ if not exist ".git" (
   exit /b 1
 )
 
-set DEFAULT_BRANCH=arena/b4a6a687-woodtek-erp
+set DEFAULT_BRANCH=arena/032c17f7-woodtek-erp
 set BRANCH=%~1
 if "%BRANCH%"=="" set /p BRANCH=Branch name [press Enter for %DEFAULT_BRANCH%]: 
 if "%BRANCH%"=="" set BRANCH=%DEFAULT_BRANCH%

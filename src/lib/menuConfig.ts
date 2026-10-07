@@ -22,7 +22,7 @@ export const GROUP_MAX = 30;
 export const MENU_ICON_KEYS: string[] = [
   // built-in screens (keep today's automatic look available explicitly)
   "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "production", "machines",
-  "cmms", "downtime", "quality", "workforce", "station", "customers",
+  "cmms", "downtime", "quality", "workforce", "hr", "station", "customers",
   "inventory", "purchasing", "invoicing", "jobcosting", "pims", "reports", "settings", "designer", "warehouse",
   "reception", "plant",
   // generic factory/office icons for custom entries
@@ -60,6 +60,7 @@ export const MENU_REGISTRY: MenuRegistryItem[] = [
   { id: "downtime", label: "Downtime Log", badge: "Down", group: "settings" },
   { id: "quality", label: "Scrap & Rework", badge: "QA", group: "top" },
   { id: "workforce", label: "Workforce & Shifts", badge: "Shift", group: "settings" },
+  { id: "hr", label: "HR & Payroll", badge: "HR", group: "settings" },
   { id: "station", label: "Operator Station Mode", badge: "Touch", group: "top" },
   { id: "customers", label: "Clients & Architects", badge: "", group: "top" },
   { id: "warehouse", label: "Warehouse", badge: "BOM", group: "top" },

@@ -71,6 +71,7 @@ compile("src/lib/purchasing.ts", "lib/purchasing.js");
 compile("src/lib/payables.ts", "lib/payables.js");
 compile("src/lib/invoicing.ts", "lib/invoicing.js");
 compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
+compile("src/lib/hrPayroll.ts", "lib/hrPayroll.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -774,7 +775,7 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
-const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_)/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_leave_requests_|hr_payroll_items_)/g) || []).length;
 check(
   schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
   "dbx: schema.ts keeps every planned index, plus purchasing, payables and invoicing-only indexes",
@@ -2126,10 +2127,35 @@ check(orderWorkflowSource.includes("emailResult") && orderWorkflowSource.include
 const optMod = require("./compiled/lib/optionalModules.js");
 const optModServer = require("./compiled/lib/optionalModules.server.js");
 const repMoney = require("./compiled/lib/reportMoney.js");
+const hrPay = require("./compiled/lib/hrPayroll.js");
+check(hrPay.inclusiveDays("2026-03-31", "2026-04-02") === 3 && hrPay.inclusiveDays("2024-02-28", "2024-03-01") === 3, "HR: inclusive leave day counts handle month boundaries and leap years");
+check(hrPay.inclusiveDays("2026-02-30", "2026-03-01") === 0 && hrPay.inclusiveDays("2026-05-03", "2026-05-02") === 0, "HR: invalid or reversed leave dates do not produce day counts");
+const hrProfile = hrPay.parseEmployeeProfile({ userId: "7", jobTitle: "  CNC Operator ", hireDate: "2020-02-29", baseSalaryCents: 250000 });
+check(hrProfile.userId === 7 && hrProfile.jobTitle === "CNC Operator" && hrProfile.hireDate === "2020-02-29" && hrProfile.baseSalaryCents === 250000, "HR: pay profile parser trims titles and keeps cents as integers");
+let hrInvalidDate = false;
+try { hrPay.parseEmployeeProfile({ userId: 1, jobTitle: "x", hireDate: "2026-02-30", baseSalaryCents: 100 }); } catch (error) { hrInvalidDate = error instanceof hrPay.HRPayrollError; }
+check(hrInvalidDate, "HR: pay profile rejects impossible hire dates");
+const hrLeave = hrPay.parseLeaveRequest({ userId: 4, leaveType: "Unpaid", startDate: "2026-10-02", endDate: "2026-10-04", reason: "  Personal  " });
+check(hrLeave.userId === 4 && hrLeave.days === 3 && hrLeave.reason === "Personal" && hrLeave.leaveType === "Unpaid", "HR: leave parser derives inclusive days and trims the optional note");
+let hrTooLongLeave = false;
+try { hrPay.parseLeaveRequest({ userId: 4, leaveType: "Annual", startDate: "2025-01-01", endDate: "2026-01-02" }); } catch (error) { hrTooLongLeave = error instanceof hrPay.HRPayrollError; }
+check(hrTooLongLeave, "HR: leave parser caps records at 366 calendar days");
+const hrAdj = hrPay.parsePayrollAdjustments({ additions: [{ label: "Transport", amountCents: 10000 }, { label: "Bonus", amountCents: 2500 }], deductions: [{ label: "Advance", amountCents: 5000 }] });
+check(hrPay.totalAdjustments(hrAdj.additions) === 12500 && hrPay.calculateNetPay(200000, hrAdj) === 207500, "HR: payroll sums earnings and deductions in integer cents");
+let hrNegativeNet = false;
+try { hrPay.calculateNetPay(100, { additions: [], deductions: [{ label: "Advance", amountCents: 101 }] }); } catch (error) { hrNegativeNet = error instanceof hrPay.HRPayrollError; }
+check(hrNegativeNet, "HR: payroll rejects deductions that would create a negative net pay");
+let hrBadLines = false;
+try { hrPay.parsePayrollAdjustments({ additions: [{ label: "", amountCents: 0 }], deductions: [] }); } catch (error) { hrBadLines = error instanceof hrPay.HRPayrollError; }
+check(hrBadLines, "HR: payroll adjustments require a description and a positive amount");
+check(hrPay.parsePayrollPeriod("2026", "10").year === 2026 && hrPay.parsePayrollPeriod(2026, 10).month === 10 && hrPay.payrollPeriodLabel(2026, 10) === "October 2026", "HR: payroll period parser and label are stable");
+let hrBadPeriod = false;
+try { hrPay.parsePayrollPeriod(2026, 13); } catch (error) { hrBadPeriod = error instanceof hrPay.HRPayrollError; }
+check(hrBadPeriod, "HR: payroll period parser rejects out-of-range months");
 check(optMod.OPTIONAL_MODULE_IDS.includes("invoicing") && optMod.OPTIONAL_MODULE_IDS.includes("purchasing") && optMod.OPTIONAL_MODULE_IDS.includes("payroll"), "optional modules: registry has invoicing, purchasing, payroll");
 check(optMod.OPTIONAL_MODULES.length === 3 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true, "optional modules: invoicing remains ready");
-check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === true && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === false, "optional modules: purchasing shipped; payroll stays not ready");
-check(optMod.OPTIONAL_MODULE_SCREENS.purchasing.includes("purchasing"), "optional modules: purchasing screen is registered with the grant");
+check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === true && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === true, "optional modules: purchasing and HR/payroll are ready");
+check(optMod.OPTIONAL_MODULE_SCREENS.purchasing.includes("purchasing") && optMod.OPTIONAL_MODULE_SCREENS.payroll.includes("hr"), "optional modules: Purchasing and HR screens are registered with their grants");
 check(optMod.MONEY_MODULE === "invoicing", "optional modules: MONEY_MODULE is invoicing");
 check(optMod.MANAGER_ROLE === "Manager", "optional modules: MANAGER_ROLE is Manager");
 check(optMod.isOptionalModuleId("invoicing") && !optMod.isOptionalModuleId("unknown"), "optional modules: isOptionalModuleId validates IDs");
@@ -2306,6 +2332,11 @@ check(payables.supplierBillNumber(14) === "SB-000014" && purchasing.newSupplierP
 
 const purchasingGrants = { version: 1, enabled: ["invoicing", "purchasing"], roles: { Technician: ["purchasing"] }, users: { "9": ["purchasing"] } };
 const renderPurchaseSidebar = (role, cfg, id = 1) => renderToString(React.createElement(Sidebar, { ...props(role), currentUser: { ...props(role).currentUser, id }, optionalModulesConfig: cfg }));
+const payrollGrants = { version: 1, enabled: ["payroll"], roles: { Technician: ["payroll"] }, users: {} };
+const payrollPersonalGrant = { version: 1, enabled: ["payroll"], roles: {}, users: { "9": ["payroll"] } };
+check(!renderPurchaseSidebar("Technician", null).includes("HR &amp; Payroll") && renderPurchaseSidebar("Technician", payrollGrants).includes("HR &amp; Payroll"), "HR: payroll grant hides the sidebar screen until enabled and granted to a role");
+check(renderPurchaseSidebar("Machine Operator", payrollPersonalGrant, 9).includes("HR &amp; Payroll") && !renderPurchaseSidebar("Machine Operator", { ...payrollPersonalGrant, enabled: [] }, 9).includes("HR &amp; Payroll"), "HR: personal payroll grant works independently, but the master switch still locks the screen");
+check(renderPurchaseSidebar("Manager", null).includes("HR &amp; Payroll"), "HR: Manager always sees the screen when the Workforce add-on is installed");
 check(mgr.includes("Purchasing &amp; Suppliers"), "purchasing: Manager always sees the new sidebar screen");
 check(!renderPurchaseSidebar("Technician", null).includes("Purchasing &amp; Suppliers"), "purchasing: ungranted role cannot see Purchasing in sidebar");
 check(renderPurchaseSidebar("Technician", purchasingGrants).includes("Purchasing &amp; Suppliers"), "purchasing: granted role gets the Purchasing screen");
@@ -2598,13 +2629,16 @@ check(
     instEd.screenOwnerAddon("purchasing") === "purchasing" &&
     instEd.screenOwnerAddon("cmms") === "cmms" &&
     instEd.screenOwnerAddon("workforce") === "workforce" &&
+    instEd.screenOwnerAddon("hr") === "workforce" &&
     instEd.screenOwnerAddon("orders") === null,
   "installer edition: screenOwnerAddon maps add-on screens and leaves Core screens unowned",
 );
 check(
   instEd.isScreenInstalled("orders", coreOnlyEd) &&
     !instEd.isScreenInstalled("cmms", coreOnlyEd) &&
+    !instEd.isScreenInstalled("hr", coreOnlyEd) &&
     instEd.isScreenInstalled("cmms", cmmsOnlyEd) &&
+    !instEd.isScreenInstalled("hr", cmmsOnlyEd) &&
     !instEd.isScreenInstalled("invoicing", cmmsOnlyEd),
   "installer edition: isScreenInstalled enforces selected add-on packs while keeping Core screens always on",
 );
@@ -2645,6 +2679,7 @@ check(
   optMod.screenAllowedForSubject("cmms", { role: "Manager" }, lockedOptCfg) === true &&
     optMod.screenAllowedForSubject("orders", { role: "Manager" }, lockedOptCfg) === true &&
     optMod.screenAllowedForSubject("workforce", { role: "Manager" }, lockedOptCfg) === false &&
+    optMod.screenAllowedForSubject("hr", { role: "Manager" }, lockedOptCfg) === false &&
     optMod.screenAllowedForSubject("invoicing", { role: "Manager" }, lockedOptCfg) === false &&
     optMod.screenAllowedForSubject("jobcosting", { role: "Manager" }, lockedOptCfg) === false &&
     optMod.screenAllowedForSubject("purchasing", { role: "Manager" }, lockedOptCfg) === false,
@@ -2876,6 +2911,82 @@ check(
   check(
     whServerSrc41.includes("warehouseItemCount") && whServerSrc41.includes("inventoryItems.location"),
     "warehouse register: usage is derived from the free-text location column of inventory_items",
+  );
+
+  // ---- HR & Payroll: grant boundary, leave workflow, immutable pay snapshots ----
+  const hrViewSrc = fs.readFileSync("src/components/HrPayrollView.tsx", "utf8");
+  const hrEmployeesApiSrc = fs.readFileSync("src/app/api/hr/employees/route.ts", "utf8");
+  const hrLeaveApiSrc = fs.readFileSync("src/app/api/hr/leave/route.ts", "utf8");
+  const hrPayrollApiSrc = fs.readFileSync("src/app/api/hr/payroll/route.ts", "utf8");
+  const hrServerSrc = fs.readFileSync("src/lib/hrPayroll.server.ts", "utf8");
+  const hrSchemaSrc = fs.readFileSync("src/lib/hrSchema.server.ts", "utf8");
+  const dbSchemaSrc = fs.readFileSync("src/db/schema.ts", "utf8");
+  const editionSrc = fs.readFileSync("src/lib/installedEdition.ts", "utf8");
+  const moduleAccessSrc = fs.readFileSync("src/lib/moduleAccess.ts", "utf8");
+  const permissionsSrc = fs.readFileSync("src/lib/permissions.ts", "utf8");
+  check(
+    pageSource.includes('dynamic(() => import("@/components/HrPayrollView")') && pageSource.includes('activeTab === "hr" && screenAllowedForSubject("hr"'),
+    "HR: the separate HR workspace is code-split and guarded at the page boundary",
+  );
+  check(
+    [hrEmployeesApiSrc, hrLeaveApiSrc, hrPayrollApiSrc].every((src) => src.includes('authorizeModule("payroll")')),
+    "HR: employee, leave and payroll APIs all enforce the payroll optional-module grant",
+  );
+  check(
+    [hrEmployeesApiSrc, hrLeaveApiSrc, hrPayrollApiSrc].every((src) => src.includes('Cache-Control": "no-store, max-age=0') && src.includes("privateResponse(error)")),
+    "HR: every compensation/leave response, including authorization failures, disables browser/proxy caching",
+  );
+  check(
+    dbSchemaSrc.includes('pgTable("hr_employee_profiles"') && dbSchemaSrc.includes('baseSalaryCents: integer("base_salary_cents")') && !dbSchemaSrc.includes('salary: numeric("salary")'),
+    "HR: compensation profiles live in a dedicated HR table, not the shared users/bootstrap row",
+  );
+  check(
+    hrServerSrc.includes("inArray(hrLeaveRequests.status, [\"Pending\", \"Approved\"])") && hrServerSrc.includes("This leave period overlaps an existing pending or approved record") && hrServerSrc.includes("reviewHRLeave"),
+    "HR: inclusive overlapping leave is blocked and review only changes pending records",
+  );
+  check(
+    hrServerSrc.includes("employeeName: employee.name") && hrServerSrc.includes("employeeName: hrLeaveRequests.employeeName") && dbSchemaSrc.includes('employeeName: text("employee_name").notNull()') && hrSchemaSrc.includes("employee_name text not null") && hrSchemaSrc.includes("references users(id) on delete set null"),
+    "HR: leave history snapshots identity and survives employee-account deletion",
+  );
+  check(
+    hrServerSrc.includes("baseSalaryCents: employee.baseSalaryCents") && hrServerSrc.includes('status: "Draft"') && hrServerSrc.includes('status: "Posted"') && hrServerSrc.includes('Posted payroll is locked'),
+    "HR: monthly runs snapshot active salaries, allow draft edits and lock posted payroll",
+  );
+  check(
+    hrServerSrc.includes('.for("update")') && hrServerSrc.includes("calculateNetPay(item.baseSalaryCents, adjustments)"),
+    "HR: payroll posting/adjustments serialize on run locks and recompute net pay server-side",
+  );
+  check(
+    hrSchemaSrc.includes("pg_advisory_xact_lock(874221908)") && ["hr_employee_profiles", "hr_leave_requests", "hr_payroll_runs", "hr_payroll_items"].every((table) => hrSchemaSrc.includes(`create table if not exists ${table}`)),
+    "HR: first access creates four additive tables under one advisory-locked transaction",
+  );
+  check(
+    hrSchemaSrc.includes("unique (period_year, period_month)") && hrSchemaSrc.includes("unique (run_id, user_id)") && hrSchemaSrc.includes("end_date >= start_date") && hrSchemaSrc.includes("additions_json json not null") && hrServerSrc.includes('postgresCode(error) === "23505"'),
+    "HR: database constraints prevent duplicate monthly runs, invalid leave ranges and duplicate payslips",
+  );
+  check(
+    editionSrc.includes('screens: ["workforce", "hr"]') && moduleAccessSrc.includes('hr: "HR & Payroll"') && permissionsSrc.includes('"jobcosting", "hr"'),
+    "HR: the installer Workforce pack owns the screen and the role/menu registries know HR",
+  );
+  check(
+    hrViewSrc.includes('fetch("/api/hr/employees"') && hrViewSrc.includes('fetch("/api/hr/leave"') && hrViewSrc.includes("baseSalaryCents: Math.round(amount * 100)"),
+    "HR UI: employee directory stores private monthly compensation in exact integer cents",
+  );
+  check(
+    hrViewSrc.includes("Approve") && hrViewSrc.includes("Decline") && hrViewSrc.includes("inclusiveDays") && hrViewSrc.includes("overlapping pending/approved"),
+    "HR UI: leave register supports employee dates, inclusive day counts and review actions",
+  );
+  check(
+    hrViewSrc.includes('body: JSON.stringify({ year: periodYear, month: periodMonth })') && hrViewSrc.includes('action: "adjust"') && hrViewSrc.includes('action: "post"') && hrViewSrc.includes("Delete draft"),
+    "HR UI: monthly payroll creates a draft, adjusts line items, posts or discards only a draft",
+  );
+  check(
+    hrViewSrc.includes("window.print()") && hrViewSrc.includes("hr-printable") && hrViewSrc.includes("DRAFT — PREVIEW") && hrViewSrc.includes("statutory taxes"),
+    "HR UI: payslips have a print-only layout, visible draft warning and payroll-rule disclaimer",
+  );
+  check(
+    fs.readFileSync("installer/schema.sql", "utf8").includes("create table if not exists hr_payroll_items") && fs.readFileSync("installer/schema.sql", "utf8").includes("create table if not exists hr_leave_requests"),
+    "HR installer: fresh setup includes the same leave and payroll tables as lazy setup",
   );
 
   // ---- WarehouseView register UI ----
