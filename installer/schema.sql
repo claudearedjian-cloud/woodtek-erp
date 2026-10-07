@@ -424,6 +424,11 @@ create table if not exists hr_employee_profiles (
   residency_expiry date,
   emergency_contact_name text not null default '',
   emergency_contact_phone text not null default '',
+  blood_type text not null default '',
+  religion text not null default '',
+  social_security_number text not null default '',
+  bank_name text not null default '',
+  iban text not null default '',
   notes text not null default '',
   photo_file text not null default '',
   updated_by_id integer references users(id) on delete set null,
@@ -448,6 +453,11 @@ alter table hr_employee_profiles add column if not exists emergency_contact_name
 alter table hr_employee_profiles add column if not exists emergency_contact_phone text not null default '';
 alter table hr_employee_profiles add column if not exists notes text not null default '';
 alter table hr_employee_profiles add column if not exists photo_file text not null default '';
+alter table hr_employee_profiles add column if not exists blood_type text not null default '';
+alter table hr_employee_profiles add column if not exists religion text not null default '';
+alter table hr_employee_profiles add column if not exists social_security_number text not null default '';
+alter table hr_employee_profiles add column if not exists bank_name text not null default '';
+alter table hr_employee_profiles add column if not exists iban text not null default '';
 
 create table if not exists hr_employee_documents (
   id serial primary key,
@@ -463,6 +473,17 @@ create table if not exists hr_employee_documents (
   created_at timestamp not null default now()
 );
 create index if not exists hr_employee_documents_user_idx on hr_employee_documents (user_id);
+
+create table if not exists hr_salary_history (
+  id serial primary key,
+  user_id integer not null references users(id) on delete cascade,
+  effective_date date not null,
+  monthly_amount_cents integer not null default 0 check (monthly_amount_cents between 0 and 99999999),
+  note text not null default '',
+  created_by_id integer references users(id) on delete set null,
+  created_at timestamp not null default now()
+);
+create index if not exists hr_salary_history_user_idx on hr_salary_history (user_id);
 
 create table if not exists hr_leave_requests (
   id serial primary key,

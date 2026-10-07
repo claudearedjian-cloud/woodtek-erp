@@ -10,6 +10,7 @@ import {
   hrLeaveRequests,
   hrPayrollItems,
   hrPayrollRuns,
+  hrSalaryHistory,
   orderOperations,
   users,
 } from "@/db/schema";
@@ -22,6 +23,7 @@ import {
   parseNoLoginIdentity,
   parsePayrollAdjustments,
   parsePayrollPeriod,
+  parseSalaryHistoryEntry,
   type LeaveStatus,
 } from "@/lib/hrPayroll";
 import { ensureHrSchema } from "@/lib/hrSchema.server";
@@ -77,6 +79,11 @@ export async function listHREmployees() {
     residencyExpiry: hrEmployeeProfiles.residencyExpiry,
     emergencyContactName: hrEmployeeProfiles.emergencyContactName,
     emergencyContactPhone: hrEmployeeProfiles.emergencyContactPhone,
+    bloodType: hrEmployeeProfiles.bloodType,
+    religion: hrEmployeeProfiles.religion,
+    socialSecurityNumber: hrEmployeeProfiles.socialSecurityNumber,
+    bankName: hrEmployeeProfiles.bankName,
+    iban: hrEmployeeProfiles.iban,
     notes: hrEmployeeProfiles.notes,
     photoFile: hrEmployeeProfiles.photoFile,
     profileUpdatedAt: hrEmployeeProfiles.updatedAt,
@@ -97,6 +104,10 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
   const [employee] = await db.select({ id: users.id })
     .from(users).where(eq(users.id, values.userId)).limit(1);
   if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  // Previous salary, read before the upsert: a change appends a salary-history
+  // entry automatically (below), an untouched amount appends nothing.
+  const [previous] = await db.select({ baseSalaryCents: hrEmployeeProfiles.baseSalaryCents })
+    .from(hrEmployeeProfiles).where(eq(hrEmployeeProfiles.userId, values.userId)).limit(1);
   const profileValues = {
     userId: values.userId,
     jobTitle: values.jobTitle,
@@ -118,6 +129,11 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
     residencyExpiry: values.residencyExpiry,
     emergencyContactName: values.emergencyContactName,
     emergencyContactPhone: values.emergencyContactPhone,
+    bloodType: values.bloodType,
+    religion: values.religion,
+    socialSecurityNumber: values.socialSecurityNumber,
+    bankName: values.bankName,
+    iban: values.iban,
     notes: values.notes,
     updatedById: actorId,
     updatedAt: new Date(),
@@ -144,12 +160,89 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
       residencyExpiry: profileValues.residencyExpiry,
       emergencyContactName: profileValues.emergencyContactName,
       emergencyContactPhone: profileValues.emergencyContactPhone,
+      bloodType: profileValues.bloodType,
+      religion: profileValues.religion,
+      socialSecurityNumber: profileValues.socialSecurityNumber,
+      bankName: profileValues.bankName,
+      iban: profileValues.iban,
       notes: profileValues.notes,
       updatedById: actorId,
       updatedAt: new Date(),
     },
   }).returning();
+  // Every base-salary change appends a dated history entry automatically, so
+  // the timeline stays complete even when HR only edits the card amount. A
+  // brand-new card seeds its starting salary (hire date when known, skipped
+  // when the starting salary is $0); later changes take effect today.
+  const salaryChanged = previous
+    ? previous.baseSalaryCents !== values.baseSalaryCents
+    : values.baseSalaryCents > 0;
+  if (salaryChanged) {
+    await db.insert(hrSalaryHistory).values({
+      userId: values.userId,
+      effectiveDate: previous ? new Date().toISOString().slice(0, 10) : (values.hireDate ?? new Date().toISOString().slice(0, 10)),
+      monthlyAmountCents: values.baseSalaryCents,
+      note: previous ? "Updated on the employee card" : "Starting salary",
+      createdById: actorId,
+    });
+  }
   return saved;
+}
+
+// ------------------------------------------------------- salary history
+//
+// Ledger of base-salary changes per employee. Entries are recorded
+// automatically by saveHREmployeeProfile; older changes can also be backfilled
+// by hand. The profile's base salary stays the single value payroll drafts
+// snapshot — this table never feeds payroll directly.
+
+export async function listSalaryHistory(userValue: unknown) {
+  const userId = positiveId(userValue, "Employee");
+  await ensureHrSchema();
+  await checkedEmployee(userId);
+  return db.select({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+    note: hrSalaryHistory.note,
+    createdAt: hrSalaryHistory.createdAt,
+  })
+    .from(hrSalaryHistory)
+    .where(eq(hrSalaryHistory.userId, userId))
+    .orderBy(desc(hrSalaryHistory.effectiveDate), desc(hrSalaryHistory.id));
+}
+
+export async function addSalaryHistoryEntry(input: unknown, actorId: number) {
+  const values = parseSalaryHistoryEntry(input);
+  await ensureHrSchema();
+  await checkedEmployee(values.userId);
+  const [row] = await db.insert(hrSalaryHistory).values({
+    ...values,
+    createdById: actorId,
+  }).returning({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+    note: hrSalaryHistory.note,
+    createdAt: hrSalaryHistory.createdAt,
+  });
+  return row;
+}
+
+export async function deleteSalaryHistoryEntry(entryValue: unknown) {
+  const id = positiveId(entryValue, "Salary entry");
+  await ensureHrSchema();
+  const [row] = await db.select({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+  }).from(hrSalaryHistory).where(eq(hrSalaryHistory.id, id)).limit(1);
+  if (!row) throw new HRPayrollError("Salary entry not found.", 404);
+  await db.delete(hrSalaryHistory).where(eq(hrSalaryHistory.id, id));
+  return row;
 }
 
 // ------------------------------------------- HR-only (no-login) employees

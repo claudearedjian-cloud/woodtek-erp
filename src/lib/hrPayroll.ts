@@ -11,6 +11,7 @@ export const LEAVE_STATUSES = ["Pending", "Approved", "Declined"] as const;
 // job-description list (Manager-editable via HR > Employees > Job titles).
 export const HR_GENDERS = ["Male", "Female"] as const;
 export const HR_MARITAL_STATUSES = ["Single", "Married", "Divorced", "Widowed"] as const;
+export const HR_BLOOD_TYPES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
 export const HR_EMPLOYMENT_STATUSES = ["Active", "Probation", "On Leave", "Inactive", "Terminated"] as const;
 export const HR_DOCUMENT_TYPES = [
   "Identity Card",
@@ -147,6 +148,11 @@ export interface EmployeeProfileInput {
   // --- Employee card: emergency & notes ---
   emergencyContactName: string;
   emergencyContactPhone: string;
+  bloodType: string;
+  religion: string;
+  socialSecurityNumber: string;
+  bankName: string;
+  iban: string;
   notes: string;
 }
 
@@ -201,8 +207,36 @@ export function parseEmployeeProfile(input: unknown): EmployeeProfileInput {
     residencyExpiry: optionalYmd(raw.residencyExpiry, "Residency expiry"),
     emergencyContactName: cappedText(raw.emergencyContactName, 80, "Emergency contact"),
     emergencyContactPhone: cappedText(raw.emergencyContactPhone, 30, "Emergency phone"),
+    bloodType: optionalEnum(raw.bloodType, HR_BLOOD_TYPES, "Blood type"),
+    religion: cappedText(raw.religion, 60, "Religion"),
+    socialSecurityNumber: cappedText(raw.socialSecurityNumber, 40, "Social security number"),
+    bankName: cappedText(raw.bankName, 80, "Bank name"),
+    iban: cappedText(raw.iban, 40, "IBAN / account number"),
     notes: cappedText(raw.notes, 1000, "HR notes"),
   };
+}
+
+/** One salary-history ledger row: what the monthly salary became, and since when. */
+export interface SalaryHistoryInput {
+  userId: number;
+  effectiveDate: string;
+  monthlyAmountCents: number;
+  note: string;
+}
+
+export function parseSalaryHistoryEntry(input: unknown): SalaryHistoryInput {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Enter the salary change details.");
+  const userId = positiveId(raw.userId, "Employee");
+  const effectiveDate = String(raw.effectiveDate ?? "").trim();
+  if (!isValidYmd(effectiveDate)) {
+    throw new HRPayrollError("Effective date must be a real date in YYYY-MM-DD format.");
+  }
+  const monthlyAmountCents = Number(raw.monthlyAmountCents);
+  if (!Number.isSafeInteger(monthlyAmountCents) || monthlyAmountCents < 0 || monthlyAmountCents > MAX_PAY_CENTS) {
+    throw new HRPayrollError("Monthly salary must be between $0.00 and $999,999.99.");
+  }
+  return { userId, effectiveDate, monthlyAmountCents, note: cappedText(raw.note, 200, "Note") };
 }
 
 /** Placeholder domain for HR-only employees created without an e-mail. */

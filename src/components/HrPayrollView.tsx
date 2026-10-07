@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import {
   COMMON_NATIONALITIES,
+  HR_BLOOD_TYPES,
   HR_DEPARTMENTS,
   HR_DOCUMENT_TYPES,
   HR_EMPLOYMENT_STATUSES,
@@ -68,8 +69,22 @@ interface HrEmployee {
   residencyExpiry: string | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
+  bloodType: string | null;
+  religion: string | null;
+  socialSecurityNumber: string | null;
+  bankName: string | null;
+  iban: string | null;
   notes: string | null;
   photoFile: string | null;
+}
+
+interface SalaryEntry {
+  id: number;
+  userId: number;
+  effectiveDate: string;
+  monthlyAmountCents: number;
+  note: string | null;
+  createdAt: string;
 }
 
 interface HrDocument {
@@ -248,6 +263,11 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
     residencyExpiry: "",
     emergencyContactName: "",
     emergencyContactPhone: "",
+    bloodType: "",
+    religion: "",
+    socialSecurityNumber: "",
+    bankName: "",
+    iban: "",
     notes: "",
   });
   // --- Employee card: system roles, editable job titles, photo & documents ---
@@ -263,6 +283,11 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const [docForm, setDocForm] = useState({ docType: "Identity Card" as HrDocumentType | string, title: "", expiryDate: "" });
   const [docBusy, setDocBusy] = useState(false);
   const docInputRef = useRef<HTMLInputElement | null>(null);
+  // --- Salary history (auto-recorded ledger + manual backfill) -----------------
+  const [salaryHistory, setSalaryHistory] = useState<SalaryEntry[]>([]);
+  const [salaryLoading, setSalaryLoading] = useState(false);
+  const [salaryBusy, setSalaryBusy] = useState(false);
+  const [salaryForm, setSalaryForm] = useState({ effectiveDate: localYmd(), amount: "", note: "" });
   const [titlesOpen, setTitlesOpen] = useState(false);
   const [titlesDraft, setTitlesDraft] = useState("");
   const [titlesBusy, setTitlesBusy] = useState(false);
@@ -354,6 +379,20 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
       setCardDocs([]);
     } finally {
       setCardDocsLoading(false);
+    }
+  }, []);
+
+  const loadSalaryHistory = useCallback(async (userId: number) => {
+    setSalaryLoading(true);
+    try {
+      const response = await fetch(`/api/hr/salary-history?userId=${userId}`, { cache: "no-store" });
+      const entries = await payloadOf<SalaryEntry[]>(response, "Failed to load the salary history.");
+      setSalaryHistory(entries);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load the salary history.");
+      setSalaryHistory([]);
+    } finally {
+      setSalaryLoading(false);
     }
   }, []);
 
@@ -450,10 +489,17 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
       residencyExpiry: employee.residencyExpiry ?? "",
       emergencyContactName: employee.emergencyContactName ?? "",
       emergencyContactPhone: employee.emergencyContactPhone ?? "",
+      bloodType: employee.bloodType ?? "",
+      religion: employee.religion ?? "",
+      socialSecurityNumber: employee.socialSecurityNumber ?? "",
+      bankName: employee.bankName ?? "",
+      iban: employee.iban ?? "",
       notes: employee.notes ?? "",
     });
     setError("");
+    setSalaryForm({ effectiveDate: localYmd(), amount: "", note: "" });
     void loadCardDocs(employee.id);
+    void loadSalaryHistory(employee.id);
   };
 
   const saveEmployeeProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -491,6 +537,11 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
           residencyExpiry: profileForm.residencyExpiry || null,
           emergencyContactName: profileForm.emergencyContactName,
           emergencyContactPhone: profileForm.emergencyContactPhone,
+          bloodType: profileForm.bloodType,
+          religion: profileForm.religion,
+          socialSecurityNumber: profileForm.socialSecurityNumber,
+          bankName: profileForm.bankName,
+          iban: profileForm.iban,
           notes: profileForm.notes,
         }),
       });
@@ -508,8 +559,63 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
   const openEmployeeCard = (employee: HrEmployee) => {
     setCardEmployee(employee);
     setCardDocs([]);
+    setSalaryHistory([]);
     setError("");
     void loadCardDocs(employee.id);
+    void loadSalaryHistory(employee.id);
+  };
+
+  // --- Salary history ---------------------------------------------------------
+  const addSalaryEntry = async () => {
+    const target = editingEmployee ?? cardEmployee;
+    if (!target) return;
+    const amount = Number(salaryForm.amount);
+    if (!salaryForm.effectiveDate) {
+      setError("Choose the effective date of the salary change.");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 0 || amount > 999999.99) {
+      setError("Enter a monthly salary from $0.00 to $999,999.99.");
+      return;
+    }
+    setSalaryBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/hr/salary-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: target.id,
+          effectiveDate: salaryForm.effectiveDate,
+          monthlyAmountCents: Math.round(amount * 100),
+          note: salaryForm.note,
+        }),
+      });
+      await payloadOf(response, "Failed to record the salary change.");
+      setSalaryForm({ effectiveDate: localYmd(), amount: "", note: "" });
+      flashMsg("Salary change recorded.");
+      await loadSalaryHistory(target.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not record the salary change.");
+    } finally {
+      setSalaryBusy(false);
+    }
+  };
+
+  const deleteSalaryEntry = async (entry: SalaryEntry) => {
+    if (!window.confirm(`Delete the salary entry of ${entry.effectiveDate}? This only removes the history line — the card's current salary stays.`)) return;
+    setSalaryBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/hr/salary-history?id=${entry.id}`, { method: "DELETE" });
+      await payloadOf(response, "Failed to delete the salary entry.");
+      flashMsg("Salary entry deleted.");
+      await loadSalaryHistory(entry.userId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the salary entry.");
+    } finally {
+      setSalaryBusy(false);
+    }
   };
 
   // --- Personal photo ------------------------------------------------------
@@ -1085,6 +1191,31 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
               <label><span className={SMALL_LABEL}>Monthly base salary (USD)</span><span className="relative block max-w-xs"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">$</span><input required type="number" min="0" max="999999.99" step="0.01" value={profileForm.monthlySalary} onChange={(event) => setProfileForm((current) => ({ ...current, monthlySalary: event.target.value }))} placeholder="0.00" className={`${INPUT} pl-7`} /></span></label>
             </fieldset>
 
+            <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-amber-300"><CircleDollarSign className="h-3.5 w-3.5" />Salary history</h3>
+                <span className="text-[10px] font-bold text-slate-500">{salaryHistory.length} change(s) · recorded automatically</span>
+              </div>
+              {salaryLoading ? <p className="text-[11px] font-bold text-slate-500">Loading salary history…</p> : salaryHistory.length === 0 ? <p className="text-[11px] font-semibold text-slate-600">No salary changes recorded yet — saving a new monthly salary above adds the first entry.</p> : (
+                <ul className="divide-y divide-slate-800/70 rounded-xl border border-slate-800 bg-slate-950/60">
+                  {salaryHistory.map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                      <span className="rounded-md bg-emerald-500/10 px-2 py-1 font-mono text-[10px] font-black text-emerald-300">{entry.effectiveDate}</span>
+                      <span className="min-w-0 flex-1"><span className="block text-[11px] font-black text-white">{money(entry.monthlyAmountCents)} /month</span>{entry.note && <span className="block truncate text-[10px] font-semibold text-slate-500">{entry.note}</span>}</span>
+                      <button type="button" disabled={salaryBusy} onClick={() => void deleteSalaryEntry(entry)} className="rounded-lg border border-slate-700 px-2 py-1.5 text-slate-500 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-50" title="Delete entry"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.4fr)_auto]">
+                <input aria-label="Effective date" type="date" value={salaryForm.effectiveDate} onChange={(event) => setSalaryForm((current) => ({ ...current, effectiveDate: event.target.value }))} className="rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white" />
+                <input aria-label="Monthly amount in USD" type="number" min="0" max="999999.99" step="0.01" value={salaryForm.amount} onChange={(event) => setSalaryForm((current) => ({ ...current, amount: event.target.value }))} placeholder="Amount ($)" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500" />
+                <input aria-label="Note" value={salaryForm.note} onChange={(event) => setSalaryForm((current) => ({ ...current, note: event.target.value }))} maxLength={200} placeholder="Note (optional)" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500" />
+                <button type="button" disabled={salaryBusy} onClick={() => void addSalaryEntry()} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50"><Plus className="h-3.5 w-3.5" />{salaryBusy ? "…" : "Record"}</button>
+              </div>
+              <p className="text-[10px] font-semibold leading-relaxed text-slate-500">Changing the monthly salary above records a new entry automatically when the card is saved. Add entries here only to backfill older changes — payroll always uses the card&apos;s current salary.</p>
+            </div>
+
             <fieldset className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
               <legend className="px-1 text-[10px] font-black uppercase tracking-wider text-amber-300">Personal details</legend>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1092,6 +1223,8 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                 <label><span className={SMALL_LABEL}>Date of birth</span><input type="date" value={profileForm.dateOfBirth} onChange={(event) => setProfileForm((current) => ({ ...current, dateOfBirth: event.target.value }))} className={INPUT} /></label>
                 <label><span className={SMALL_LABEL}>Gender</span><select value={profileForm.gender} onChange={(event) => setProfileForm((current) => ({ ...current, gender: event.target.value }))} className={INPUT}><option value="">—</option>{HR_GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}</select></label>
                 <label><span className={SMALL_LABEL}>Marital status</span><select value={profileForm.maritalStatus} onChange={(event) => setProfileForm((current) => ({ ...current, maritalStatus: event.target.value }))} className={INPUT}><option value="">—</option>{HR_MARITAL_STATUSES.map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
+                <label><span className={SMALL_LABEL}>Blood type</span><select value={profileForm.bloodType} onChange={(event) => setProfileForm((current) => ({ ...current, bloodType: event.target.value }))} className={INPUT}><option value="">—</option>{HR_BLOOD_TYPES.map((b) => <option key={b} value={b}>{b}</option>)}</select></label>
+                <label><span className={SMALL_LABEL}>Religion</span><input maxLength={60} value={profileForm.religion} onChange={(event) => setProfileForm((current) => ({ ...current, religion: event.target.value }))} placeholder="—" className={INPUT} /></label>
               </div>
               <datalist id="hr-nationality-options">{COMMON_NATIONALITIES.map((n) => <option key={n} value={n} />)}</datalist>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1112,6 +1245,15 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                 <label><span className={SMALL_LABEL}>Visa number</span><input maxLength={60} value={profileForm.visaNumber} onChange={(event) => setProfileForm((current) => ({ ...current, visaNumber: event.target.value }))} className={INPUT} /></label>
                 <label><span className={SMALL_LABEL}>Residency number</span><input maxLength={60} value={profileForm.residencyNumber} onChange={(event) => setProfileForm((current) => ({ ...current, residencyNumber: event.target.value }))} placeholder="Iqama / permit" className={INPUT} /></label>
                 <label><span className={SMALL_LABEL}>Residency expiry</span><input type="date" value={profileForm.residencyExpiry} onChange={(event) => setProfileForm((current) => ({ ...current, residencyExpiry: event.target.value }))} className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>Social security number</span><input maxLength={40} value={profileForm.socialSecurityNumber} onChange={(event) => setProfileForm((current) => ({ ...current, socialSecurityNumber: event.target.value }))} placeholder="NSSF / social security" className={INPUT} /></label>
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <legend className="px-1 text-[10px] font-black uppercase tracking-wider text-amber-300">Bank details</legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label><span className={SMALL_LABEL}>Bank name</span><input maxLength={80} value={profileForm.bankName} onChange={(event) => setProfileForm((current) => ({ ...current, bankName: event.target.value }))} placeholder="Bank name" className={INPUT} /></label>
+                <label><span className={SMALL_LABEL}>IBAN / account number</span><input maxLength={40} value={profileForm.iban} onChange={(event) => setProfileForm((current) => ({ ...current, iban: event.target.value }))} placeholder="LB …" className={`${INPUT} font-mono`} /></label>
               </div>
             </fieldset>
 
@@ -1192,15 +1334,27 @@ export default function HrPayrollView({ currentUser }: HrPayrollViewProps) {
                 <div className="text-right"><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</div><div className="mt-1 text-sm font-black">{textOr(cardEmployee.employmentStatus, cardEmployee.active ? "Active" : "Inactive")}</div>{cardEmployee.employeeCode && <div className="mt-1 font-mono text-[11px] text-slate-500">{cardEmployee.employeeCode}</div>}</div>
               </div>
               <div className="grid grid-cols-1 gap-x-8 gap-y-3 border-b border-slate-200 py-5 sm:grid-cols-2 lg:grid-cols-3">
-                {[["System role", cardEmployee.role], ["Job description", textOr(cardEmployee.jobTitle, cardEmployee.role)], ["Department", textOr(cardEmployee.department)], ["Nationality", textOr(cardEmployee.nationality)], ["Date of birth", dateLabel(cardEmployee.dateOfBirth)], ["Gender", textOr(cardEmployee.gender)], ["Marital status", textOr(cardEmployee.maritalStatus)], ["Phone", textOr(cardEmployee.phone)], ["Email", displayEmail(cardEmployee) || "—"], ["Address", textOr(cardEmployee.address)], ["Hire date", dateLabel(cardEmployee.hireDate)], ["Monthly salary", cardEmployee.baseSalaryCents == null ? "—" : money(cardEmployee.baseSalaryCents)]].map(([label, value]) => (
+                {[["System role", cardEmployee.role], ["Job description", textOr(cardEmployee.jobTitle, cardEmployee.role)], ["Department", textOr(cardEmployee.department)], ["Nationality", textOr(cardEmployee.nationality)], ["Date of birth", dateLabel(cardEmployee.dateOfBirth)], ["Gender", textOr(cardEmployee.gender)], ["Marital status", textOr(cardEmployee.maritalStatus)], ["Blood type", textOr(cardEmployee.bloodType)], ["Religion", textOr(cardEmployee.religion)], ["Phone", textOr(cardEmployee.phone)], ["Email", displayEmail(cardEmployee) || "—"], ["Address", textOr(cardEmployee.address)], ["Hire date", dateLabel(cardEmployee.hireDate)], ["Monthly salary", cardEmployee.baseSalaryCents == null ? "—" : money(cardEmployee.baseSalaryCents)], ["Bank name", textOr(cardEmployee.bankName)], ["IBAN / account", textOr(cardEmployee.iban)]].map(([label, value]) => (
                   <div key={label}><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-0.5 text-sm font-bold">{value}</div></div>
                 ))}
               </div>
               <div className="grid grid-cols-1 gap-x-8 gap-y-3 border-b border-slate-200 py-5 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="sm:col-span-2 lg:col-span-3 text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Identity &amp; residency</div>
-                {[["ID number", textOr(cardEmployee.idNumber)], ["Passport number", textOr(cardEmployee.passportNumber)], ["Visa number", textOr(cardEmployee.visaNumber)], ["Residency number", textOr(cardEmployee.residencyNumber)], ["Residency expiry", dateLabel(cardEmployee.residencyExpiry)], ["Emergency contact", cardEmployee.emergencyContactName ? `${cardEmployee.emergencyContactName}${cardEmployee.emergencyContactPhone ? ` · ${cardEmployee.emergencyContactPhone}` : ""}` : "—"]].map(([label, value]) => (
+                {[["ID number", textOr(cardEmployee.idNumber)], ["Passport number", textOr(cardEmployee.passportNumber)], ["Visa number", textOr(cardEmployee.visaNumber)], ["Residency number", textOr(cardEmployee.residencyNumber)], ["Residency expiry", dateLabel(cardEmployee.residencyExpiry)], ["Social security no.", textOr(cardEmployee.socialSecurityNumber)], ["Emergency contact", cardEmployee.emergencyContactName ? `${cardEmployee.emergencyContactName}${cardEmployee.emergencyContactPhone ? ` · ${cardEmployee.emergencyContactPhone}` : ""}` : "—"]].map(([label, value]) => (
                   <div key={label}><div className="text-[9px] font-black uppercase tracking-wider text-slate-500">{label}</div><div className="mt-0.5 text-sm font-bold">{value}</div></div>
                 ))}
+              </div>
+              <div className="border-b border-slate-200 py-5">
+                <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Salary history ({salaryHistory.length})</div>
+                {salaryLoading ? <p className="mt-2 text-xs font-semibold text-slate-500">Loading…</p> : salaryHistory.length === 0 ? <p className="mt-2 text-xs font-semibold text-slate-500">No salary changes recorded.</p> : (
+                  <ul className="mt-2 space-y-1.5">
+                    {salaryHistory.map((entry) => (
+                      <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                        <span><span className="font-black">{money(entry.monthlyAmountCents)}</span><span className="text-slate-500"> /month · since {dateLabel(entry.effectiveDate)}{entry.note ? ` · ${entry.note}` : ""}</span></span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div className="py-5">
                 <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">Attached documents ({cardDocs.length})</div>

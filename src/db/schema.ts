@@ -654,6 +654,11 @@ export const hrEmployeeProfiles = pgTable("hr_employee_profiles", {
   residencyExpiry: date("residency_expiry", { mode: "string" }),
   emergencyContactName: text("emergency_contact_name").notNull().default(""),
   emergencyContactPhone: text("emergency_contact_phone").notNull().default(""),
+  bloodType: text("blood_type").notNull().default(""),
+  religion: text("religion").notNull().default(""),
+  socialSecurityNumber: text("social_security_number").notNull().default(""),
+  bankName: text("bank_name").notNull().default(""),
+  iban: text("iban").notNull().default(""),
   notes: text("notes").notNull().default(""),
   photoFile: text("photo_file").notNull().default(""),
   updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
@@ -678,6 +683,22 @@ export const hrEmployeeDocuments = pgTable("hr_employee_documents", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
   index("hr_employee_documents_user_idx").on(t.userId),
+]);
+
+// Salary history: every base-salary change on the card appends a dated entry
+// (effective date + monthly amount + note); older changes can be backfilled
+// by hand. A ledger only — the profile's base salary stays the value new
+// payroll drafts snapshot. Deleting the account cascades the rows.
+export const hrSalaryHistory = pgTable("hr_salary_history", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  effectiveDate: date("effective_date", { mode: "string" }).notNull(),
+  monthlyAmountCents: integer("monthly_amount_cents").notNull().default(0),
+  note: text("note").notNull().default(""),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("hr_salary_history_user_idx").on(t.userId),
 ]);
 
 export const hrLeaveRequests = pgTable("hr_leave_requests", {

@@ -775,7 +775,7 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
-const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_)/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_|hr_salary_history_)/g) || []).length;
 check(
   schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
   "dbx: schema.ts keeps every planned index, plus purchasing, payables and invoicing-only indexes",
