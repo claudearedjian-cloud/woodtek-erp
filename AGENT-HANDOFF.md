@@ -6,7 +6,7 @@ _Last updated 2026-10-07. Read this first. The owner is NOT a developer — give
 1. **NEVER merge a PR without asking the owner first.** Open the PR, verify it, then wait for the owner's explicit OK. The owner merges, or tells the agent to merge.
 2. **Push before ending each session.** Commit and push completed work to the session branch, open/update its PR, and report the PR URL and verification results. A local-only commit is not a handoff. Do not merge without the owner's OK.
 
-## HR & Payroll (2026-10-07, session `arena/032c17f7` — review branch, not deployed)
+## HR & Payroll (2026-10-07, session `arena/032c17f7` — [PR #23 OPEN](https://github.com/claudearedjian-cloud/woodtek-erp/pull/23), not deployed)
 - **Owner asked:** “Read AGENT-HANDOFF.md first. then continue setting the HR part”.
 - **Workspace:** added a separate **HR & Payroll** screen under the Workforce installer add-on, with a payroll optional-module grant. Managers keep access when Workforce is installed; other users need the master switch plus a role or personal grant in **Settings → System Settings → Optional modules**. Sidebar, menu designer, page guard, Arabic/French labels and installer screen ownership are wired; each HR API enforces `authorizeModule("payroll")` and marks success, error and authorization responses `Cache-Control: no-store`.
 - **Employee profiles:** reuses existing login accounts; job title, hire date and base salary are stored in `hr_employee_profiles`, not the shared users/bootstrap API. New runs include only active accounts with profiles. Payroll items snapshot the employee name, role and base salary; deleting a user account nulls its item FK without erasing the historical payslip. No salary values are written into audit details.
