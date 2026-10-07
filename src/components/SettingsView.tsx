@@ -21,7 +21,8 @@ import {
   MapPin,
   History,
   Download,
-  Palette
+  Palette,
+  SlidersHorizontal
 } from "lucide-react";
 import { ROLES, registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
 import { MODULE_LABELS, MODULES_BY_ROLE, type ModuleId } from "@/lib/moduleAccess";
@@ -49,8 +50,15 @@ interface SettingsViewProps {
 
 const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-purple-600", "bg-slate-600", "bg-indigo-600", "bg-teal-600"];
 
+/**
+ * Sections inside the "System Settings" tab. Appearance is open to every
+ * signed-in role (the look is the app's own), the rest are Manager tools.
+ */
+type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "device";
+
 export default function SettingsView({ currentUser }: SettingsViewProps) {
-  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "appearance">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "system">("users");
+  const [systemSection, setSystemSection] = useState<SystemSectionId>("appearance");
   const [entities, setEntities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -906,6 +914,24 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     return "All Users";
   };
 
+  // ---- System Settings tab: one home for the factory-wide settings ----
+  const systemSections: { id: SystemSectionId; label: string; icon: React.ElementType; managerOnly: boolean }[] = [
+    { id: "appearance", label: "Appearance & Branding", icon: Palette, managerOnly: false },
+    ...(isManager
+      ? ([
+          { id: "email", label: "SMTP Email", icon: Mail, managerOnly: true },
+          { id: "qc", label: "Packing QC checklist", icon: ListChecks, managerOnly: true },
+          { id: "audit", label: "Audit log", icon: History, managerOnly: true },
+        ] as const)
+      : []),
+    { id: "device", label: "This device", icon: Timer, managerOnly: false },
+  ];
+  // A section the signed-in role may not open (e.g. after a role change) falls
+  // back to Appearance instead of rendering an empty panel.
+  const activeSystemSection: SystemSectionId = systemSections.some((s) => s.id === systemSection)
+    ? systemSection
+    : "appearance";
+
   const TabIcon = getTabIcon();
 
   return (
@@ -918,7 +944,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
               <Settings className="w-6 h-6 text-amber-400" />
               <span>General Settings</span>
             </h1>
-            <p className="text-sm text-slate-400 mt-1">Manage users, clients, operators, and technicians.</p>
+            <p className="text-sm text-slate-400 mt-1">
+              Manage users, clients, operators and technicians — plus the app look, email, packing QC and the audit trail
+              under System Settings.
+            </p>
           </div>
           {(error || notice) && (
             <div className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold ${error ? "border-rose-500/40 bg-rose-500/10 text-rose-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>
@@ -946,24 +975,62 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             </button>
           ))}
           <button
-            onClick={() => setActiveTab("appearance")}
+            onClick={() => setActiveTab("system")}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
-              activeTab === "appearance"
+              activeTab === "system"
                 ? "bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30"
                 : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
             }`}
           >
-            <Palette className="w-4 h-4" />
-            <span>Appearance &amp; Branding</span>
+            <SlidersHorizontal className="w-4 h-4" />
+            <span>System Settings</span>
           </button>
         </div>
       </div>
 
-      {/* Appearance & Branding — its own screen, no entity list */}
-      {activeTab === "appearance" && <AppearanceSettings />}
+      {/* System Settings — appearance, SMTP email, packing QC, audit log and this device */}
+      {activeTab === "system" && (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-2">
+            {systemSections.map((section) => {
+              const SectionIcon = section.icon;
+              const active = activeSystemSection === section.id;
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => {
+                    setSystemSection(section.id);
+                    // The audit section exists to show the trail — load it on open.
+                    if (section.id === "audit") {
+                      setAuditOpen(true);
+                      if (auditEntries.length === 0) void loadAudit("");
+                    }
+                  }}
+                  className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+                    active
+                      ? "bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30"
+                      : "text-slate-300 hover:bg-slate-800"
+                  }`}
+                >
+                  <SectionIcon className="w-4 h-4" />
+                  <span>{section.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {!isManager && (
+            <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-[11px] leading-relaxed text-slate-400">
+              Only a Manager can change the factory-wide settings on this tab. Everyone can still pick the app look
+              and set the auto-lock timer for this computer.
+            </p>
+          )}
+          {activeSystemSection === "appearance" && <AppearanceSettings />}
+        </div>
+      )}
 
       {/* Search & Add */}
-      {activeTab !== "appearance" && (
+      {activeTab !== "system" && (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1012,7 +1079,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       )}
 
       {/* Entity List */}
-      {activeTab !== "appearance" && (loading ? (
+      {activeTab !== "system" && (loading ? (
         <div className="p-12 text-center text-slate-400 animate-pulse">Loading...</div>
       ) : filteredEntities.length === 0 ? (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-16 text-center">
@@ -1080,8 +1147,8 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
       ))}
 
-      {/* Modal Form */}
-      {/* Auto-lock this device */}
+      {/* Auto-lock this device — System Settings → This device */}
+      {activeTab === "system" && activeSystemSection === "device" && (
       <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-2 text-sm font-black text-white">
@@ -1104,9 +1171,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           a warning appears 60 seconds before. This setting applies to THIS computer only.
         </p>
       </div>
+      )}
 
-      {/* Packing QC checklist (Manager only) */}
-      {isManager && (
+      {/* Packing QC checklist (Manager only) — System Settings → Packing QC checklist */}
+      {activeTab === "system" && activeSystemSection === "qc" && isManager && (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
           <h3 className="flex items-center gap-2 text-sm font-black text-white">
             <ListChecks className="h-4 w-4 text-amber-400" /> Packing QC checklist
@@ -1162,8 +1230,8 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
       )}
 
-      {/* SMTP email settings (Manager only) — powers "Email Docs" on the order screen */}
-      {isManager && (
+      {/* SMTP email settings (Manager only) — System Settings → SMTP Email */}
+      {activeTab === "system" && activeSystemSection === "email" && isManager && (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
           <h3 className="flex items-center gap-2 text-sm font-black text-white">
             <Mail className="h-4 w-4 text-sky-400" /> SMTP email — dispatch documents
@@ -1272,15 +1340,15 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
       )}
 
-      {/* Build stamp (Manager only) — which version is running on THIS computer */}
-      {isManager && (
+      {/* Build stamp (Manager only) — footer of the System Settings tab */}
+      {activeTab === "system" && isManager && (
         <div className="text-center text-[10px] font-bold text-slate-600">
           Build: {process.env.NEXT_PUBLIC_WOODTEK_BUILD || "dev"} — tell this number to support when something looks wrong.
         </div>
       )}
 
-      {/* Audit log (Manager only) */}
-      {isManager && (
+      {/* Audit log (Manager only) — System Settings → Audit log */}
+      {activeTab === "system" && activeSystemSection === "audit" && isManager && (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="flex items-center gap-2 text-sm font-black text-white">

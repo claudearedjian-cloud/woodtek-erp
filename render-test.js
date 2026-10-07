@@ -163,9 +163,16 @@ check(
 check(
   scheduleSource.includes("dispatchOrderFilter")
     && scheduleSource.includes("dispatchOrderOptions")
-    && scheduleSource.includes('All orders — {dispatchOrders.length}')
+    && scheduleSource.includes('All orders — {scopedDispatchOrders.length}')
     && scheduleSource.includes('value={String(o.orderId)}'),
-  "dispatch filter: order selector lists every order in the queue and isolates one order at a time",
+  "dispatch filter: order selector lists the orders in the current scope and isolates one order at a time",
+);
+check(
+  scheduleSource.includes('useState<"todo" | "delivered" | "all">("todo")')
+    && scheduleSource.includes("deliveredDispatchCount")
+    && scheduleSource.includes('o.stage !== "delivered"')
+    && scheduleSource.includes("kept out of the working queue"),
+  "dispatch focus: delivered batches stay out of the working queue until the user picks Delivered or All",
 );
 check(
   scheduleSource.includes("visibleDispatchOrders.map((o: any)")
@@ -2100,6 +2107,16 @@ check(emailDispatchApiSource.includes("customerAddress: customers.address"), "em
 
 check(settingsViewSource.includes("/api/email-config") && settingsViewSource.includes("emailCfg") && settingsViewSource.includes("emailHasPass") && settingsViewSource.includes("SMTP"), "email: settings view has the Manager-only SMTP panel wired to /api/email-config");
 check(settingsViewSource.includes("saveEmailConfig") && settingsViewSource.includes("testEmailConfig") && settingsViewSource.includes('action: "test"'), "email: settings view saves the config and can send a test email");
+check(
+  settingsViewSource.includes("SystemSectionId")
+    && settingsViewSource.includes('activeTab === "system" && activeSystemSection === "email"')
+    && settingsViewSource.includes('activeSystemSection === "qc"')
+    && settingsViewSource.includes('activeSystemSection === "audit"')
+    && settingsViewSource.includes('activeSystemSection === "appearance"')
+    && settingsViewSource.includes('activeSystemSection === "device"')
+    && !settingsViewSource.includes('activeTab === "appearance"'),
+  "settings tabs: one System Settings tab gathers appearance & branding, SMTP email, packing QC, audit log and this-device settings",
+);
 check(orderWorkflowSource.includes("openEmailModal") && orderWorkflowSource.includes("Email Docs") && orderWorkflowSource.includes("bg-sky-500"), "email: order workflow exposes the Email Docs button (Mail icon, sky-500)");
 check(orderWorkflowSource.includes("sendEmailDispatch") && orderWorkflowSource.includes("/api/email-dispatch") && orderWorkflowSource.includes("includeDispatchPack"), "email: order workflow posts the dispatch with the document checkboxes");
 check(orderWorkflowSource.includes("emailResult") && orderWorkflowSource.includes("setEmailOpen(false)"), "email: order workflow shows a result banner and auto-closes the modal");
