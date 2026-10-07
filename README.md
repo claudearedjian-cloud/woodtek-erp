@@ -35,7 +35,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 
 ## Purchasing & Suppliers (POs/GRNs shipped in PR #10; supplier A/P follow-up added 2026-10-01)
 - Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
-  Settings → Users → Optional modules and grant the role or person. **Invoicing &
+  Settings → System Settings → Optional modules and grant the role or person. **Invoicing &
   Money** is a separate grant for PO prices, material unit costs and machine
   hourly rates; without it, staff can still create quantity-only POs and GRNs.
   Supplier bills, payments and A/P aging require **both** grants.
@@ -58,7 +58,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 
 ## Invoicing & A/R (shipped in PR #10, merged 2026-10-01)
 - Manager always has access. For anyone else, turn on **Invoicing & Money** in
-  Settings → Users → Optional modules and grant the role or person — the same
+  Settings → System Settings → Optional modules and grant the role or person — the same
   switch that reveals money everywhere else now also owns the **Invoicing & A/R**
   screen. Nothing on this screen (prices, totals, payments) is visible without it.
 - Create a **quotation** (VAT rate defaults to 11% Lebanon, editable per
@@ -112,7 +112,7 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
 ## Job Costing & Profit (Phase B item 3, PR #12 — merged 2026-10-01)
 - New **Job Costing & Profit** screen answers "which jobs and clients actually make
   money?". It is behind the same **Invoicing & Money** switch as Invoicing & A/R
-  (Manager always; others via Settings → Users → Optional modules). A Sales
+  (Manager always; others via Settings → System Settings → Optional modules). A Sales
   Coordinator who holds the grant sees only their own orders.
 - Per order: **order value − materials − machine time − operator labor − overhead**.
   Materials come from the order's stock allocation (consumed + reserved; released
@@ -154,7 +154,7 @@ build-installer.bat
     2. **Purchasing & Suppliers** (`purchasing`, POs, GRNs, and Supplier Bills & A/P)
     3. **Asset CMMS** (`cmms` — Generators, Power Telemetry & Preventative Maintenance)
     4. **Workforce, Shifts & HR** (`workforce` — Shift Calendar, Time & Attendance, HR/Payroll)
-  - The installer writes your selection to `data\installed-edition.json`. Any add-on **not** ticked during setup is **hard-locked** on that PC (hidden from the sidebar, blocked with 403 on all API routes even for Manager, and locked as `NOT INSTALLED` in Settings → Optional modules). To add or remove modules later, simply re-run `WoodTek-ERP-Setup.exe` (or run `powershell -ExecutionPolicy Bypass -File installer\configure-edition.ps1 -Addons "invoicing,cmms"`).
+  - The installer writes your selection to `data\installed-edition.json`. Any add-on **not** ticked during setup is **hard-locked** on that PC (hidden from the sidebar, blocked with 403 on all API routes even for Manager, and locked as `NOT INSTALLED` in Settings → System Settings → Optional modules). To add or remove modules later, simply re-run `WoodTek-ERP-Setup.exe` (or run `powershell -ExecutionPolicy Bypass -File installer\configure-edition.ps1 -Addons "invoicing,cmms"`).
   - Existing factory PCs without `data\installed-edition.json` default to the **Full Edition** (all 4 add-ons installed).
 
 ## Role behaviour (since 2026-09-07)

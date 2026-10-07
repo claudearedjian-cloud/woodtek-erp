@@ -51,10 +51,10 @@ interface SettingsViewProps {
 const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-purple-600", "bg-slate-600", "bg-indigo-600", "bg-teal-600"];
 
 /**
- * Sections inside the "System Settings" tab. Appearance is open to every
- * signed-in role (the look is the app's own), the rest are Manager tools.
+ * Sections inside the "System Settings" tab. Appearance and the auto-lock
+ * timer are open to every signed-in role; the rest are Manager tools.
  */
-type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "device";
+type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device";
 
 export default function SettingsView({ currentUser }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "system">("users");
@@ -334,7 +334,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
     roles: { "Sales Coordinator": ["invoicing"] },
     users: {},
   });
-  const [showModuleMgr, setShowModuleMgr] = useState(false);
   const [moduleMsg, setModuleMsg] = useState("");
 
   const shapeModules = (d: any): OptionalModulesConfig => ({
@@ -922,9 +921,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           { id: "email", label: "SMTP Email", icon: Mail, managerOnly: true },
           { id: "qc", label: "Packing QC checklist", icon: ListChecks, managerOnly: true },
           { id: "audit", label: "Audit log", icon: History, managerOnly: true },
+          { id: "modules", label: "Optional modules", icon: Blocks, managerOnly: true },
         ] as const)
       : []),
-    { id: "device", label: "This device", icon: Timer, managerOnly: false },
+    { id: "device", label: "Auto-lock & device", icon: Timer, managerOnly: false },
   ];
   // A section the signed-in role may not open (e.g. after a role change) falls
   // back to Appearance instead of rendering an empty panel.
@@ -1026,6 +1026,9 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             </p>
           )}
           {activeSystemSection === "appearance" && <AppearanceSettings />}
+          {activeSystemSection === "modules" && isManager && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{optionalModulesPanel}</div>
+          )}
         </div>
       )}
 
@@ -1042,15 +1045,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
           />
         </div>
-        {activeTab === "users" && isManager && (
-          <button
-            type="button"
-            onClick={() => setShowModuleMgr((v) => !v)}
-            className="flex items-center gap-2 border border-amber-700 bg-amber-500/10 text-amber-300 font-black px-4 py-2.5 rounded-xl text-xs transition hover:bg-amber-500/20"
-          >
-            <Blocks className="w-4 h-4" /> Optional modules
-          </button>
-        )}
         {activeTab === "users" && (
           <button
             type="button"
@@ -1068,10 +1062,6 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           <span>Add {activeTab === "clients" ? "Client" : activeTab === "technicians" ? "Technician" : activeTab === "operators" ? "Operator" : "User"}</span>
         </button>
       </div>
-      )}
-
-      {activeTab === "users" && isManager && showModuleMgr && !showModal && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{optionalModulesPanel}</div>
       )}
 
       {activeTab === "users" && showRoleMgr && !showModal && (
@@ -1147,7 +1137,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
         </div>
       ))}
 
-      {/* Auto-lock this device — System Settings → This device */}
+      {/* Auto-lock this device — System Settings → Auto-lock & device */}
       {activeTab === "system" && activeSystemSection === "device" && (
       <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

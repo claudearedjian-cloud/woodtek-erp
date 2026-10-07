@@ -39,7 +39,7 @@ export async function GET(request: Request) {
       // existed. Never return its stored money columns to a non-money reader.
       if (isMoneyOnlyReport(report.type) && !money) {
         return NextResponse.json(
-          { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > Optional modules." },
+          { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > System Settings > Optional modules." },
           { status: 403 },
         );
       }
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     const money = canSeeMoney(user, readOptionalModules());
     if (isMoneyOnlyReport(type) && !money) {
       return NextResponse.json(
-        { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > Optional modules." },
+        { error: "That report contains money figures. Ask a Manager to grant Invoicing & Money in Settings > System Settings > Optional modules." },
         { status: 403 },
       );
     }

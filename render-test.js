@@ -2114,6 +2114,7 @@ check(
     && settingsViewSource.includes('activeSystemSection === "audit"')
     && settingsViewSource.includes('activeSystemSection === "appearance"')
     && settingsViewSource.includes('activeSystemSection === "device"')
+    && settingsViewSource.includes("Auto-lock & device")
     && !settingsViewSource.includes('activeTab === "appearance"'),
   "settings tabs: one System Settings tab gathers appearance & branding, SMTP email, packing QC, audit log and this-device settings",
 );
@@ -2188,6 +2189,12 @@ check(authSrc.includes("subjectHasModule(") && authSrc.includes("readOptionalMod
 check(authSrc.includes("status: 403") && authSrc.includes("Settings > Optional modules"), "auth: authorizeModule returns 403 with guidance on failure");
 
 check(settingsViewSource.includes("optionalModulesPanel") && settingsViewSource.includes("/api/optional-modules"), "settings: SettingsView includes optionalModulesPanel wired to /api/optional-modules");
+check(
+  settingsViewSource.includes('activeSystemSection === "modules"')
+    && settingsViewSource.includes('{ id: "modules", label: "Optional modules", icon: Blocks, managerOnly: true }')
+    && !settingsViewSource.includes("showModuleMgr"),
+  "settings tabs: Optional modules lives in the System Settings tab (no toggled panel on the Users list)",
+);
 check(settingsViewSource.includes("toggleModuleEnabled") && settingsViewSource.includes("toggleRoleModule") && settingsViewSource.includes("toggleUserModule"), "settings: SettingsView provides toggle handlers for master/role/user");
 check(settingsViewSource.includes("Blocks") && settingsViewSource.includes("Optional modules"), "settings: SettingsView renders Optional modules button and icon");
 

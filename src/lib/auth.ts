@@ -288,7 +288,7 @@ export async function authorizeModule(
       user: null,
       error: NextResponse.json(
         {
-          error: `${moduleLabel(id)} is not switched on for your account. Ask a Manager to grant it in Settings > Optional modules.`,
+          error: `${moduleLabel(id)} is not switched on for your account. Ask a Manager to grant it in Settings > System Settings > Optional modules.`,
         },
         { status: 403 },
       ),
@@ -311,7 +311,7 @@ export async function authorizePayables(): Promise<
     return {
       user: null,
       error: NextResponse.json(
-        { error: "Supplier bills and payments require both Purchasing and Invoicing & Money access. Ask a Manager to grant both in Settings > Optional modules." },
+        { error: "Supplier bills and payments require both Purchasing and Invoicing & Money access. Ask a Manager to grant both in Settings > System Settings > Optional modules." },
         { status: 403 },
       ),
     };
