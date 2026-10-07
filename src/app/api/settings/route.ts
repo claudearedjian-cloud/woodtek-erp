@@ -30,7 +30,9 @@ export async function GET(request: Request) {
     const entityId = url.searchParams.get("entityId");
 
     if (entityType === "users" || entityType === "operators" || entityType === "technicians") {
-      let allUsers = await db.select(SAFE_USER_COLUMNS).from(users).orderBy(asc(users.name));
+      // HR-only employees (can_login = false) are managed in the HR
+      // workspace; Settings lists the accounts that can actually sign in.
+      let allUsers = await db.select(SAFE_USER_COLUMNS).from(users).where(eq(users.canLogin, true)).orderBy(asc(users.name));
       
       if (entityType === "operators") {
         allUsers = allUsers.filter(u => baseRoleOf(u.role) === "Machine Operator");
@@ -60,7 +62,7 @@ export async function GET(request: Request) {
     }
 
     // Default: return summary
-    const allUsers = await db.select(SAFE_USER_COLUMNS).from(users);
+    const allUsers = await db.select(SAFE_USER_COLUMNS).from(users).where(eq(users.canLogin, true));
     const allClients = await db.select().from(customers);
     return NextResponse.json({
       users: allUsers,
@@ -119,6 +121,7 @@ export async function POST(request: Request) {
           avatarColor: avatarColor || "bg-slate-600",
           pin: await hashPin(String(pin)),
           active: active !== false,
+          canLogin: true,
           phone,
           notes,
         }).returning(SAFE_USER_COLUMNS);

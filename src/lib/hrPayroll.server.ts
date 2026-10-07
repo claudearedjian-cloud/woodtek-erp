@@ -1,25 +1,35 @@
 // Server-side HR/payroll persistence. Every caller must first enforce the
 // optional payroll grant; this module only owns scoped SQL and transaction rules.
+import { randomBytes } from "node:crypto";
 import { alias } from "drizzle-orm/pg-core";
 import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  hrEmployeeDocuments,
   hrEmployeeProfiles,
   hrLeaveRequests,
   hrPayrollItems,
   hrPayrollRuns,
+  hrSalaryHistory,
+  orderOperations,
   users,
 } from "@/db/schema";
 import {
   calculateNetPay,
   HRPayrollError,
+  NO_LOGIN_EMAIL_DOMAIN,
   parseEmployeeProfile,
   parseLeaveRequest,
+  parseNoLoginIdentity,
   parsePayrollAdjustments,
   parsePayrollPeriod,
+  parseSalaryHistoryEntry,
   type LeaveStatus,
 } from "@/lib/hrPayroll";
 import { ensureHrSchema } from "@/lib/hrSchema.server";
+import { hashPin } from "@/lib/auth";
+import { allRoles, baseRoleOf } from "@/lib/permissions";
+import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -47,11 +57,35 @@ export async function listHREmployees() {
     email: users.email,
     role: users.role,
     active: users.active,
+    canLogin: users.canLogin,
     avatarColor: users.avatarColor,
     profileId: hrEmployeeProfiles.id,
     jobTitle: hrEmployeeProfiles.jobTitle,
     hireDate: hrEmployeeProfiles.hireDate,
     baseSalaryCents: hrEmployeeProfiles.baseSalaryCents,
+    employeeCode: hrEmployeeProfiles.employeeCode,
+    department: hrEmployeeProfiles.department,
+    employmentStatus: hrEmployeeProfiles.employmentStatus,
+    nationality: hrEmployeeProfiles.nationality,
+    dateOfBirth: hrEmployeeProfiles.dateOfBirth,
+    gender: hrEmployeeProfiles.gender,
+    maritalStatus: hrEmployeeProfiles.maritalStatus,
+    phone: hrEmployeeProfiles.phone,
+    address: hrEmployeeProfiles.address,
+    idNumber: hrEmployeeProfiles.idNumber,
+    passportNumber: hrEmployeeProfiles.passportNumber,
+    visaNumber: hrEmployeeProfiles.visaNumber,
+    residencyNumber: hrEmployeeProfiles.residencyNumber,
+    residencyExpiry: hrEmployeeProfiles.residencyExpiry,
+    emergencyContactName: hrEmployeeProfiles.emergencyContactName,
+    emergencyContactPhone: hrEmployeeProfiles.emergencyContactPhone,
+    bloodType: hrEmployeeProfiles.bloodType,
+    religion: hrEmployeeProfiles.religion,
+    socialSecurityNumber: hrEmployeeProfiles.socialSecurityNumber,
+    bankName: hrEmployeeProfiles.bankName,
+    iban: hrEmployeeProfiles.iban,
+    notes: hrEmployeeProfiles.notes,
+    photoFile: hrEmployeeProfiles.photoFile,
     profileUpdatedAt: hrEmployeeProfiles.updatedAt,
   })
     .from(users)
@@ -70,22 +104,433 @@ export async function saveHREmployeeProfile(input: unknown, actorId: number) {
   const [employee] = await db.select({ id: users.id })
     .from(users).where(eq(users.id, values.userId)).limit(1);
   if (!employee) throw new HRPayrollError("Employee account not found.", 404);
-  const [saved] = await db.insert(hrEmployeeProfiles).values({
+  // Previous salary, read before the upsert: a change appends a salary-history
+  // entry automatically (below), an untouched amount appends nothing.
+  const [previous] = await db.select({ baseSalaryCents: hrEmployeeProfiles.baseSalaryCents })
+    .from(hrEmployeeProfiles).where(eq(hrEmployeeProfiles.userId, values.userId)).limit(1);
+  const profileValues = {
     userId: values.userId,
     jobTitle: values.jobTitle,
     hireDate: values.hireDate,
     baseSalaryCents: values.baseSalaryCents,
+    employeeCode: values.employeeCode,
+    department: values.department,
+    employmentStatus: values.employmentStatus || "Active",
+    nationality: values.nationality,
+    dateOfBirth: values.dateOfBirth,
+    gender: values.gender,
+    maritalStatus: values.maritalStatus,
+    phone: values.phone,
+    address: values.address,
+    idNumber: values.idNumber,
+    passportNumber: values.passportNumber,
+    visaNumber: values.visaNumber,
+    residencyNumber: values.residencyNumber,
+    residencyExpiry: values.residencyExpiry,
+    emergencyContactName: values.emergencyContactName,
+    emergencyContactPhone: values.emergencyContactPhone,
+    bloodType: values.bloodType,
+    religion: values.religion,
+    socialSecurityNumber: values.socialSecurityNumber,
+    bankName: values.bankName,
+    iban: values.iban,
+    notes: values.notes,
+    updatedById: actorId,
+    updatedAt: new Date(),
+  };
+  const [saved] = await db.insert(hrEmployeeProfiles).values(profileValues).onConflictDoUpdate({
+    target: hrEmployeeProfiles.userId,
+    set: {
+      jobTitle: profileValues.jobTitle,
+      hireDate: profileValues.hireDate,
+      baseSalaryCents: profileValues.baseSalaryCents,
+      employeeCode: profileValues.employeeCode,
+      department: profileValues.department,
+      employmentStatus: profileValues.employmentStatus,
+      nationality: profileValues.nationality,
+      dateOfBirth: profileValues.dateOfBirth,
+      gender: profileValues.gender,
+      maritalStatus: profileValues.maritalStatus,
+      phone: profileValues.phone,
+      address: profileValues.address,
+      idNumber: profileValues.idNumber,
+      passportNumber: profileValues.passportNumber,
+      visaNumber: profileValues.visaNumber,
+      residencyNumber: profileValues.residencyNumber,
+      residencyExpiry: profileValues.residencyExpiry,
+      emergencyContactName: profileValues.emergencyContactName,
+      emergencyContactPhone: profileValues.emergencyContactPhone,
+      bloodType: profileValues.bloodType,
+      religion: profileValues.religion,
+      socialSecurityNumber: profileValues.socialSecurityNumber,
+      bankName: profileValues.bankName,
+      iban: profileValues.iban,
+      notes: profileValues.notes,
+      updatedById: actorId,
+      updatedAt: new Date(),
+    },
+  }).returning();
+  // Every base-salary change appends a dated history entry automatically, so
+  // the timeline stays complete even when HR only edits the card amount. A
+  // brand-new card seeds its starting salary (hire date when known, skipped
+  // when the starting salary is $0); later changes take effect today.
+  const salaryChanged = previous
+    ? previous.baseSalaryCents !== values.baseSalaryCents
+    : values.baseSalaryCents > 0;
+  if (salaryChanged) {
+    await db.insert(hrSalaryHistory).values({
+      userId: values.userId,
+      effectiveDate: previous ? new Date().toISOString().slice(0, 10) : (values.hireDate ?? new Date().toISOString().slice(0, 10)),
+      monthlyAmountCents: values.baseSalaryCents,
+      note: previous ? "Updated on the employee card" : "Starting salary",
+      createdById: actorId,
+    });
+  }
+  return saved;
+}
+
+// ------------------------------------------------------- salary history
+//
+// Ledger of base-salary changes per employee. Entries are recorded
+// automatically by saveHREmployeeProfile; older changes can also be backfilled
+// by hand. The profile's base salary stays the single value payroll drafts
+// snapshot — this table never feeds payroll directly.
+
+export async function listSalaryHistory(userValue: unknown) {
+  const userId = positiveId(userValue, "Employee");
+  await ensureHrSchema();
+  await checkedEmployee(userId);
+  return db.select({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+    note: hrSalaryHistory.note,
+    createdAt: hrSalaryHistory.createdAt,
+  })
+    .from(hrSalaryHistory)
+    .where(eq(hrSalaryHistory.userId, userId))
+    .orderBy(desc(hrSalaryHistory.effectiveDate), desc(hrSalaryHistory.id));
+}
+
+export async function addSalaryHistoryEntry(input: unknown, actorId: number) {
+  const values = parseSalaryHistoryEntry(input);
+  await ensureHrSchema();
+  await checkedEmployee(values.userId);
+  const [row] = await db.insert(hrSalaryHistory).values({
+    ...values,
+    createdById: actorId,
+  }).returning({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+    note: hrSalaryHistory.note,
+    createdAt: hrSalaryHistory.createdAt,
+  });
+  return row;
+}
+
+export async function deleteSalaryHistoryEntry(entryValue: unknown) {
+  const id = positiveId(entryValue, "Salary entry");
+  await ensureHrSchema();
+  const [row] = await db.select({
+    id: hrSalaryHistory.id,
+    userId: hrSalaryHistory.userId,
+    effectiveDate: hrSalaryHistory.effectiveDate,
+    monthlyAmountCents: hrSalaryHistory.monthlyAmountCents,
+  }).from(hrSalaryHistory).where(eq(hrSalaryHistory.id, id)).limit(1);
+  if (!row) throw new HRPayrollError("Salary entry not found.", 404);
+  await db.delete(hrSalaryHistory).where(eq(hrSalaryHistory.id, id));
+  return row;
+}
+
+// ------------------------------------------- HR-only (no-login) employees
+//
+// Staff without a sign-in (Worker, Cleaner, …) live in the same users table
+// so the employee card, leave and payroll keep working untouched. The
+// can_login flag is the only difference: the roster hides them,
+// getSessionUser rejects them and the login POST never resolves them.
+
+async function checkedEmployee(userId: number) {
+  const [employee] = await db.select({
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    role: users.role,
+    active: users.active,
+    canLogin: users.canLogin,
+  }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  return employee;
+}
+
+/** True when another active login Manager exists besides `excludeId`. */
+async function anotherLoginManagerExists(excludeId: number): Promise<boolean> {
+  ensureRolesRegistered();
+  const rows = await db.select({ id: users.id, role: users.role })
+    .from(users)
+    .where(and(eq(users.active, true), eq(users.canLogin, true)));
+  return rows.some((row) => row.id !== excludeId && (baseRoleOf(row.role) || row.role) === "Manager");
+}
+
+async function guardAccountStillManaged(targetUserId: number): Promise<void> {
+  const target = await checkedEmployee(targetUserId);
+  ensureRolesRegistered();
+  const targetIsManager = (baseRoleOf(target.role) || target.role) === "Manager";
+  if (target.active && target.canLogin && targetIsManager && !(await anotherLoginManagerExists(targetUserId))) {
+    throw new HRPayrollError("This is the last active Manager sign-in; it cannot be switched off.", 409);
+  }
+}
+
+function uniqueNoLoginEmail(): string {
+  return `hr-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}@${NO_LOGIN_EMAIL_DOMAIN}`;
+}
+
+/**
+ * Creates an HR-only employee (no sign-in) with its card shell. The stored
+ * users.role is the inert job-description text until a Manager enables a
+ * login with a real system role. Callers must enforce the payroll grant.
+ */
+export async function createNoLoginEmployee(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Enter the employee's name.");
+  const identity = parseNoLoginIdentity(raw);
+  // Validate every card field BEFORE inserting, so a bad date never leaves
+  // a half-created employee behind.
+  parseEmployeeProfile({ ...(raw as Record<string, unknown>), userId: 1 });
+  await ensureHrSchema();
+
+  const jobTitle = String(raw.jobTitle ?? "").trim().replace(/\s+/g, " ").slice(0, 80) || "Worker";
+  let email = identity.email;
+  if (!email) {
+    email = uniqueNoLoginEmail();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const [clash] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      if (!clash) break;
+      email = uniqueNoLoginEmail();
+    }
+  }
+  try {
+    const [created] = await db.insert(users).values({
+      name: identity.name,
+      email,
+      role: jobTitle,
+      avatarColor: "bg-slate-600",
+      pin: await hashPin(randomBytes(16).toString("hex")),
+      active: true,
+      canLogin: false,
+      phone: String(raw.phone ?? "").trim().slice(0, 30) || null,
+      notes: null,
+    }).returning({ id: users.id, name: users.name, email: users.email, role: users.role });
+    await saveHREmployeeProfile({ ...(raw as Record<string, unknown>), userId: created.id }, actorId);
+    return created;
+  } catch (error) {
+    if (error instanceof HRPayrollError) throw error;
+    if (postgresCode(error) === "23505") {
+      throw new HRPayrollError("This e-mail address is already used by another employee.", 409);
+    }
+    throw error;
+  }
+}
+
+export interface EmployeeLoginInput {
+  userId: number;
+  enable: boolean;
+  role?: unknown;
+  pin?: unknown;
+}
+
+/**
+ * Enables or disables an employee's sign-in. Enabling requires a real
+ * system role and a fresh 4-digit PIN. Callers must enforce users:manage —
+ * only a Manager hands out or revokes access.
+ */
+export async function setEmployeeLogin(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Choose an employee.");
+  const userId = positiveId(raw.userId, "Employee");
+  const enable = raw.enable === true;
+  await ensureHrSchema();
+  const target = await checkedEmployee(userId);
+
+  if (enable) {
+    ensureRolesRegistered();
+    const role = String(raw.role ?? "").trim();
+    if (!allRoles().includes(role)) {
+      throw new HRPayrollError(`Unknown role "${role || "—"}". Pick a system role for the new login.`);
+    }
+    const pin = String(raw.pin ?? "").trim();
+    if (!/^\d{4}$/.test(pin)) throw new HRPayrollError("A four-digit PIN is required to enable the login.");
+    const [updated] = await db.update(users).set({
+      role,
+      pin: await hashPin(pin),
+      canLogin: true,
+    }).where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, role: users.role, canLogin: users.canLogin,
+    });
+    return updated;
+  }
+
+  if (userId === actorId) throw new HRPayrollError("You cannot disable your own sign-in.", 403);
+  await guardAccountStillManaged(userId);
+  const [updated] = await db.update(users).set({ canLogin: false })
+    .where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, role: users.role, canLogin: users.canLogin,
+    });
+  void target;
+  return updated;
+}
+
+/**
+ * Activates or deactivates an employee account. Inactive staff leave the
+ * sign-in roster and stop entering new payroll drafts; their card, leave
+ * history and posted payslips stay untouched. Callers enforce payroll grant.
+ */
+export async function setEmployeeActive(input: unknown, actorId: number) {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Choose an employee.");
+  const userId = positiveId(raw.userId, "Employee");
+  const active = raw.active === true;
+  await ensureHrSchema();
+  await checkedEmployee(userId);
+  if (!active) {
+    if (userId === actorId) throw new HRPayrollError("You cannot deactivate your own account.", 403);
+    await guardAccountStillManaged(userId);
+  }
+  const [updated] = await db.update(users).set({ active })
+    .where(eq(users.id, userId)).returning({
+      id: users.id, name: users.name, active: users.active, canLogin: users.canLogin,
+    });
+  return updated;
+}
+
+/**
+ * Deletes an HR-only employee record. Login users are refused here — their
+ * deletion stays a Manager action in Settings. Cascades the card and its
+ * attachments; leave and payroll history keep their snapshots. Callers
+ * enforce the payroll grant.
+ */
+export async function deleteNoLoginEmployee(userValue: unknown, actorId: number) {
+  const userId = positiveId(userValue, "Employee");
+  await ensureHrSchema();
+  const target = await checkedEmployee(userId);
+  if (userId === actorId) throw new HRPayrollError("You cannot delete your own account.", 403);
+  if (target.canLogin) {
+    throw new HRPayrollError("This employee has a login — delete the account in Settings instead.", 409);
+  }
+  const assigned = await db.select({ id: orderOperations.id })
+    .from(orderOperations).where(eq(orderOperations.operatorId, userId)).limit(1);
+  if (assigned.length > 0) {
+    throw new HRPayrollError("Cannot delete an employee with assigned operations. Deactivate instead.", 409);
+  }
+  await db.delete(users).where(eq(users.id, userId));
+  // Orphaned photo/document files (if any) are ignored by every reader, the
+  // same as other file-backed stores — metadata deletion is authoritative.
+  return { id: userId, name: target.name };
+}
+
+// ------------------------------------------------- employee card attachments
+
+export interface EmployeeDocumentInput {
+  userId: number;
+  docType: string;
+  title: string;
+  fileName: string;
+  originalName: string;
+  mime: string;
+  size: number;
+  expiryDate: string | null;
+}
+
+export async function listEmployeeDocuments(userId: number) {
+  await ensureHrSchema();
+  return db.select({
+    id: hrEmployeeDocuments.id,
+    userId: hrEmployeeDocuments.userId,
+    docType: hrEmployeeDocuments.docType,
+    title: hrEmployeeDocuments.title,
+    fileName: hrEmployeeDocuments.fileName,
+    originalName: hrEmployeeDocuments.originalName,
+    mime: hrEmployeeDocuments.mime,
+    size: hrEmployeeDocuments.size,
+    expiryDate: hrEmployeeDocuments.expiryDate,
+    createdAt: hrEmployeeDocuments.createdAt,
+  })
+    .from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.userId, userId))
+    .orderBy(desc(hrEmployeeDocuments.createdAt), desc(hrEmployeeDocuments.id));
+}
+
+export async function countEmployeeDocuments(userId: number): Promise<number> {
+  await ensureHrSchema();
+  const [row] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.userId, userId));
+  return Number(row?.n ?? 0);
+}
+
+export async function createEmployeeDocument(input: EmployeeDocumentInput, actorId: number) {
+  await ensureHrSchema();
+  const [employee] = await db.select({ id: users.id })
+    .from(users).where(eq(users.id, input.userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  const [created] = await db.insert(hrEmployeeDocuments).values({
+    userId: input.userId,
+    docType: input.docType,
+    title: input.title,
+    fileName: input.fileName,
+    originalName: input.originalName,
+    mime: input.mime,
+    size: input.size,
+    expiryDate: input.expiryDate,
+    uploadedById: actorId,
+  }).returning();
+  return created;
+}
+
+export async function getEmployeeDocument(id: number) {
+  await ensureHrSchema();
+  const [row] = await db.select().from(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function deleteEmployeeDocument(id: number) {
+  await ensureHrSchema();
+  const [removed] = await db.delete(hrEmployeeDocuments)
+    .where(eq(hrEmployeeDocuments.id, id)).returning();
+  return removed ?? null;
+}
+
+/** Personal photo file name stored on the profile ("" = none). */
+export async function getEmployeePhotoFile(userId: number): Promise<string> {
+  await ensureHrSchema();
+  const [row] = await db.select({ photoFile: hrEmployeeProfiles.photoFile })
+    .from(hrEmployeeProfiles).where(eq(hrEmployeeProfiles.userId, userId)).limit(1);
+  return row?.photoFile ?? "";
+}
+
+/**
+ * Points the profile at a new personal photo, creating the shell profile row
+ * when HR has not filled the card yet (photo first, pay details later).
+ */
+export async function setEmployeePhotoFile(userId: number, fileName: string, actorId: number) {
+  await ensureHrSchema();
+  const [employee] = await db.select({ id: users.id })
+    .from(users).where(eq(users.id, userId)).limit(1);
+  if (!employee) throw new HRPayrollError("Employee account not found.", 404);
+  const [saved] = await db.insert(hrEmployeeProfiles).values({
+    userId,
+    jobTitle: "",
+    hireDate: null,
+    baseSalaryCents: 0,
+    photoFile: fileName,
     updatedById: actorId,
     updatedAt: new Date(),
   }).onConflictDoUpdate({
     target: hrEmployeeProfiles.userId,
-    set: {
-      jobTitle: values.jobTitle,
-      hireDate: values.hireDate,
-      baseSalaryCents: values.baseSalaryCents,
-      updatedById: actorId,
-      updatedAt: new Date(),
-    },
+    set: { photoFile: fileName, updatedById: actorId, updatedAt: new Date() },
   }).returning();
   return saved;
 }

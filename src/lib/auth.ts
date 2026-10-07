@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { baseRoleOf, can, deniedMessage, type Action } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import { ensureUsersLoginColumn } from "@/lib/usersSchema.server";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 import { canSeeMoney, moduleLabel, subjectHasModule, type OptionalModuleId } from "@/lib/optionalModules";
 import {
@@ -174,12 +175,15 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       role: users.role,
       avatarColor: users.avatarColor,
       active: users.active,
+      canLogin: users.canLogin,
     })
     .from(users)
     .where(eq(users.id, uid));
 
   const found = rows[0];
-  if (!found || !found.active) return null;
+  // HR-only staff (can_login = false) and deactivated accounts resolve no
+  // session, so disabling a login kills existing sessions immediately.
+  if (!found || !found.active || !found.canLogin) return null;
   // Custom roles resolve to the built-in role they inherit: every permission,
   // module and data-scope check downstream keeps working on the base name,
   // while `displayRole` carries the custom label for the UI.
