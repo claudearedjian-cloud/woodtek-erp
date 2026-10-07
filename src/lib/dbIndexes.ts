@@ -10,7 +10,7 @@
 //
 // Deployment follows the no-migrations rule (same channel the inventory
 // schema repair uses, bundle 40f): the Manager clicks "Create missing
-// indexes" in Wood & Edge Stock → Schema Check and the app runs one
+// indexes" in Inventory → Schema Check and the app runs one
 // idempotent `CREATE INDEX IF NOT EXISTS` per definition below. The same
 // indexes are ALSO declared in src/db/schema.ts so a fresh `drizzle-kit
 // push` install creates them automatically. Identifiers here are hard-coded

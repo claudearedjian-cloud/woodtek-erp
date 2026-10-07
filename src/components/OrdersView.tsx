@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { STAGE_LABELS, type DispatchStage } from "@/lib/dispatch";
 import { useT } from "@/lib/langContext";
+import ViewToggle, { useViewMode } from "@/components/ViewToggle";
 import {
   Archive,
   Calendar,
@@ -11,8 +12,6 @@ import {
   ClipboardList,
   Cpu,
   Filter,
-  LayoutGrid,
-  List,
   User,
 } from "lucide-react";
 const NewOrderWizard = dynamic(() => import("@/components/NewOrderWizard"), {
@@ -62,7 +61,8 @@ export default function OrdersView({
 }: OrdersViewProps) {
   // Label language (top-bar EN / AR / FR) — English by default.
   const t = useT();
-  const [viewMode, setViewMode] = useState<"kanban" | "list">("list");
+  // Cards (= the Kanban board), List or Table — remembered per device.
+  const [viewMode, setViewMode] = useViewMode("orders", "list");
   const [statusFilter, setStatusFilter] = useState(presetStatus ?? "All");
   // Dashboard status buttons: apply the requested filter whenever it changes.
   useEffect(() => {
@@ -237,27 +237,13 @@ export default function OrdersView({
             <option value="Normal">{t("Priority: Normal")}</option>
           </select>
 
-          {/* View Toggle */}
-          <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950 p-1">
-            <button
-              onClick={() => setViewMode("list")}
-              className={`flex items-center gap-1 rounded-lg p-1.5 text-xs font-bold transition ${
-                viewMode === "list" ? "bg-slate-800 text-amber-400" : "text-slate-400 hover:text-white"
-              }`}
-              title="List View"
-            >
-              <List className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("kanban")}
-              className={`flex items-center gap-1 rounded-lg p-1.5 text-xs font-bold transition ${
-                viewMode === "kanban" ? "bg-slate-800 text-amber-400" : "text-slate-400 hover:text-white"
-              }`}
-              title="Kanban Board"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </button>
-          </div>
+          {/* View Toggle — the Kanban board is the "cards" mode */}
+          <ViewToggle
+            mode={viewMode}
+            onChange={setViewMode}
+            title="Kanban board, list or table view of the orders"
+            labels={{ cards: "Kanban", list: "List", table: "Table" }}
+          />
 
           {/* Results count */}
           <span className="rounded-full border border-slate-700/70 bg-slate-800/50 px-3 py-1 text-[11px] font-bold text-slate-300">
@@ -394,6 +380,73 @@ export default function OrdersView({
               </div>
             </div>
           ))}
+        </div>
+      ) : viewMode === "table" ? (
+        /* TABLE VIEW — one dense row per order */
+        <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/90">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  <th className="px-4 py-3">{t("Order")}</th>
+                  <th className="px-4 py-3">{t("Clients")}</th>
+                  <th className="px-4 py-3">{t("Project")}</th>
+                  <th className="px-4 py-3">{t("Status")}</th>
+                  <th className="px-4 py-3">{t("Priority")}</th>
+                  <th className="px-4 py-3">{t("Station")}</th>
+                  <th className="px-4 py-3 w-40">{t("Progress")}</th>
+                  <th className="px-4 py-3">{t("Due")}</th>
+                  <th className="px-4 py-3 text-right">{t("Value")}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 text-xs text-slate-200">
+                {filteredOrders.map((order) => (
+                  <tr key={order.id} onClick={() => onSelectOrder(order.id)} className="cursor-pointer transition hover:bg-slate-800/50">
+                    <td className="px-4 py-2.5 font-mono font-black text-amber-400">
+                      {order.orderNumber}
+                      {archivedSet.has(order.id) && (
+                        <span className="ml-2 rounded border border-slate-600/50 bg-slate-700/60 px-1.5 py-0.5 text-[9px] font-extrabold uppercase text-slate-300">Archived</span>
+                      )}
+                    </td>
+                    <td className="max-w-[180px] truncate px-4 py-2.5 text-slate-300">{order.customerCompany || order.customerName}</td>
+                    <td className="max-w-[220px] truncate px-4 py-2.5">
+                      <span className="block truncate font-bold text-white">{order.title}</span>
+                      <span className="block truncate text-[10px] text-slate-500">{order.projectType}</span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`rounded px-2 py-0.5 text-[10px] font-extrabold uppercase ${getStatusBadge(order.status)}`}>{t(order.status)}</span>
+                      {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
+                        <span className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-extrabold uppercase text-sky-300">
+                          {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${getPriorityBadge(order.priority)}`}>{order.priority}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-300">{order.currentStation ? order.currentStation.machineCode : "Scheduled"}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full border border-slate-800 bg-slate-950">
+                          <div
+                            className={`h-full rounded-full ${order.progressPercent === 100 ? "bg-emerald-500" : "bg-gradient-to-r from-amber-600 to-amber-400"}`}
+                            style={{ width: `${order.progressPercent || 0}%` }}
+                          />
+                        </div>
+                        <span className="font-mono text-[10px] font-bold text-slate-400">{order.completedSteps}/{order.totalSteps}</span>
+                      </div>
+                    </td>
+                    <td className={`px-4 py-2.5 ${isOverdue(order) ? "font-bold text-rose-300" : "text-slate-400"}`}>
+                      {new Date(order.dueDate).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono font-black text-white">
+                      {order.totalValue != null ? `$${Number(order.totalValue).toLocaleString()}` : <span className="text-slate-600 italic text-[10px]">restricted</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         /* KANBAN BOARD VIEW */

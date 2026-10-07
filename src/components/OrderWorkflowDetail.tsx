@@ -1483,7 +1483,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                 ) : inventoryItems.length === 0 ? (
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-6 text-center text-xs text-slate-400">
                     <Package className="w-8 h-8 mx-auto mb-2 text-slate-600 stroke-[1.5]" />
-                    No stock items are registered yet — add materials in the Wood &amp; Edge Stock tab first.
+                    No stock items are registered yet — add materials in the Inventory tab first.
                   </div>
                 ) : !canManageBom ? (
                   <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">

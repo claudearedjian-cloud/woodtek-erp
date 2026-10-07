@@ -1,5 +1,5 @@
 // ============================================================================
-// Warehouse & BOM board.
+// Warehouse board.
 //   GET  — every open order with its BOM lines, fulfilment status and the
 //          machines of its operations (for "send to machine").
 //   PUT  — move a BOM line through Requested -> Prepared -> Delivered.
@@ -301,7 +301,7 @@ export async function PUT(request: Request) {
         consumedBy: user.id,
       });
       if (result.auditError) {
-        sendWarning = `Stock updated, but the consumption audit could not be recorded: ${result.auditError}. Fix with Wood & Edge Stock -> Schema Check -> Add Missing Columns.`;
+        sendWarning = `Stock updated, but the consumption audit could not be recorded: ${result.auditError}. Fix with Inventory -> Schema Check -> Add Missing Columns.`;
       }
     }
 

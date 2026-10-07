@@ -13,6 +13,7 @@ import {
   Activity,
   Pencil
 } from "lucide-react";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface MachinesViewProps {
   machines: any[];
@@ -73,7 +74,17 @@ export default function MachinesView({
   }, []);
   const categories = ["All", ...Array.from(new Set([...categoryList, ...machines.map((m: any) => m.category).filter(Boolean)]))];
   
-  const filteredMachines = categoryFilter === "All" ? machines : machines.filter(m => m.category === categoryFilter);
+  // Search + cards/list/table view (per device).
+  const [search, setSearch] = useState("");
+  const [view, setView] = useViewMode("machines", "cards");
+  const filteredMachines = machines.filter((m) => {
+    if (categoryFilter !== "All" && m.category !== categoryFilter) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [m.code, m.name, m.category, m.location]
+      .some((v) => String(v ?? "").toLowerCase().includes(q));
+  });
+  const filtersActive = categoryFilter !== "All" || Boolean(search.trim());
 
   const handleStatusChange = async (machineId: number, newStatus: string) => {
     try {
@@ -226,19 +237,139 @@ export default function MachinesView({
           ))}
         </div>
 
-        {canManage && (
-          <button
-            onClick={openAddModal}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2 rounded-xl shadow-lg shadow-blue-600/20 transition text-xs whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>Register Machine</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search machines…"
+            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none sm:w-56"
+          />
+          <ViewToggle mode={view} onChange={setView} title="Cards, list or table view of the machines" />
+          <ResultCount shown={filteredMachines.length} total={machines.length} noun="machine" filtered={filtersActive} />
+          {canManage && (
+            <button
+              onClick={openAddModal}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold px-4 py-2 rounded-xl shadow-lg shadow-blue-600/20 transition text-xs whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              <span>Register Machine</span>
+            </button>
+          )}
+        </div>
       </div>
 
+      {view === "list" && (
+        <div className="space-y-2">
+          {filteredMachines.map((m) => (
+            <div key={m.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+              <span className="font-mono text-xs font-black text-amber-400">{m.code}</span>
+              <span className="min-w-[170px] flex-1">
+                <span className="block truncate text-sm font-extrabold text-white">{m.name}</span>
+                <span className="block truncate text-[11px] text-slate-400">{m.category} · {m.location}</span>
+              </span>
+              <span className="text-[11px] font-bold text-slate-300">{m.queueCount} queued ({m.totalQueueMinutes}m)</span>
+              <select
+                value={m.status}
+                onChange={(e) => handleStatusChange(m.id, e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-200"
+                title="Machine status"
+              >
+                <option value="Active">Active</option>
+                <option value="In-Use">In-Use</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Offline">Offline</option>
+              </select>
+              {m.activeJob && (
+                <button onClick={() => onSelectOrder(m.activeJob.orderId)} className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 font-mono text-[11px] font-bold text-amber-300">
+                  {m.activeJob.orderNumber}
+                </button>
+              )}
+              {canManage && (
+                <span className="flex items-center gap-1">
+                  <button onClick={() => openEditModal(m)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white" title="Edit Machine">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => handleDeleteMachine(m.id, m.name)} className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/20 hover:text-rose-400" title="Remove Equipment">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view === "table" && (
+        <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/90">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  <th className="px-4 py-3">Code</th>
+                  <th className="px-4 py-3">Machine</th>
+                  <th className="px-4 py-3">Category</th>
+                  <th className="px-4 py-3">Location</th>
+                  <th className="px-4 py-3 text-center">Queue</th>
+                  <th className="px-4 py-3">Current job</th>
+                  <th className="px-4 py-3 text-right">Rate</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 text-xs text-slate-200">
+                {filteredMachines.map((m) => (
+                  <tr key={m.id} className="transition hover:bg-slate-800/50">
+                    <td className="px-4 py-2.5 font-mono font-black text-amber-400">{m.code}</td>
+                    <td className="px-4 py-2.5 font-bold text-white">{m.name}</td>
+                    <td className="px-4 py-2.5 text-slate-300">{m.category}</td>
+                    <td className="px-4 py-2.5 text-slate-400">{m.location}</td>
+                    <td className="px-4 py-2.5 text-center text-slate-300">{m.queueCount} ({m.totalQueueMinutes}m)</td>
+                    <td className="px-4 py-2.5">
+                      {m.activeJob ? (
+                        <button onClick={() => onSelectOrder(m.activeJob.orderId)} className="font-mono text-[11px] font-bold text-amber-300 hover:text-amber-200">
+                          {m.activeJob.orderNumber}
+                        </button>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono text-slate-300">
+                      {m.hourlyCost == null ? <span className="italic text-slate-600 text-[10px]">restricted</span> : `$${m.hourlyCost}/hr`}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <select
+                        value={m.status}
+                        onChange={(e) => handleStatusChange(m.id, e.target.value)}
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-200"
+                      >
+                        <option value="Active">Active</option>
+                        <option value="In-Use">In-Use</option>
+                        <option value="Maintenance">Maintenance</option>
+                        <option value="Offline">Offline</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {canManage && (
+                        <span className="inline-flex items-center gap-1">
+                          <button onClick={() => openEditModal(m)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white" title="Edit Machine">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteMachine(m.id, m.name)} className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/20 hover:text-rose-400" title="Remove Equipment">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Machine Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 ${view === "cards" ? "" : "hidden"}`}>
         {filteredMachines.map((m) => {
           const isMaintenance = m.status === "Maintenance";
           const isInUse = m.status === "In-Use" || (m.status === "Active" && m.activeJob);

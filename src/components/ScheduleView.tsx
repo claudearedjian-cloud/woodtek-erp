@@ -86,15 +86,33 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
   // search across order number, batch name, customer and SKU.
   const [dispatchOrderFilter, setDispatchOrderFilter] = useState("");
   const [dispatchSearch, setDispatchSearch] = useState("");
+  // Delivered batches are history, not work. The queue opens on the batches
+  // that still need action, so a fully delivered order can no longer crowd the
+  // board — "Delivered" and "All" stay one click away.
+  const [dispatchScope, setDispatchScope] = useState<"todo" | "delivered" | "all">("todo");
 
+  const deliveredDispatchCount = useMemo(
+    () => dispatchOrders.filter((o) => o.stage === "delivered").length,
+    [dispatchOrders],
+  );
+  const todoDispatchCount = dispatchOrders.length - deliveredDispatchCount;
+
+  const scopedDispatchOrders = useMemo(() => {
+    if (dispatchScope === "delivered") return dispatchOrders.filter((o) => o.stage === "delivered");
+    if (dispatchScope === "all") return dispatchOrders;
+    return dispatchOrders.filter((o) => o.stage !== "delivered");
+  }, [dispatchOrders, dispatchScope]);
+
+  // The order selector only lists orders that still have rows in this scope —
+  // a fully delivered order never appears as a dead end.
   const dispatchOrderOptions = useMemo(() => {
     const byId = new Map<string, any>();
-    for (const o of dispatchOrders) {
+    for (const o of scopedDispatchOrders) {
       const key = String(o.orderId);
       if (!byId.has(key)) byId.set(key, o);
     }
     return [...byId.values()];
-  }, [dispatchOrders]);
+  }, [scopedDispatchOrders]);
 
   // Drop a stale filter if the picked order left the queue (refresh/complete).
   const activeDispatchOrderFilter = dispatchOrderOptions.some((o: any) => String(o.orderId) === dispatchOrderFilter)
@@ -103,13 +121,13 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
 
   const visibleDispatchOrders = useMemo(() => {
     const q = dispatchSearch.trim().toLowerCase();
-    return dispatchOrders.filter((o) => {
+    return scopedDispatchOrders.filter((o) => {
       if (activeDispatchOrderFilter && String(o.orderId) !== activeDispatchOrderFilter) return false;
       if (!q) return true;
       return [o.orderNumber, o.title, o.customerCompany, o.batchName, o.itemSku]
         .some((v) => String(v ?? "").toLowerCase().includes(q));
     });
-  }, [dispatchOrders, activeDispatchOrderFilter, dispatchSearch]);
+  }, [scopedDispatchOrders, activeDispatchOrderFilter, dispatchSearch]);
 
   // ---- Packing QC: legacy order checks + independent material-batch checks ----
   const [qcTemplate, setQcTemplate] = useState<string[]>([]);
@@ -263,6 +281,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
     if (!proofFor) return;
     setDispatchBusy(dispatchRowKey(proofFor));
     setDispatchError("");
+    const deliveredLabel = [proofFor.orderNumber, proofFor.batchName].filter(Boolean).join(" · ");
     try {
       const res = await fetch("/api/dispatch", {
         method: "PUT",
@@ -284,6 +303,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       await fetchDispatch();
       fetchQc();
       onRefresh();
+      setNotice(`${deliveredLabel} delivered — it moved to the Delivered list.`);
     } catch {
       setDispatchError("Could not confirm the batch delivery.");
     } finally {
@@ -706,6 +726,13 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 text-sm font-black text-white">
             <Truck className="h-4 w-4 text-emerald-400" /> {t("Delivery Dispatch queue — material batches")}
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${todoDispatchCount > 0 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>
+              {todoDispatchCount > 0
+                ? `${todoDispatchCount} to deliver`
+                : dispatchOrders.length > 0
+                  ? "Everything delivered"
+                  : "Queue empty"}
+            </span>
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -723,13 +750,36 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
         </div>
         {dispatchOrders.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/70 p-1" title="Delivered batches are history — switch to Delivered to review them">
+              {([
+                { id: "todo", label: t("Not delivered"), count: todoDispatchCount },
+                { id: "delivered", label: t("Delivered"), count: deliveredDispatchCount },
+                { id: "all", label: t("All"), count: dispatchOrders.length },
+              ] as const).map((scope) => (
+                <button
+                  key={scope.id}
+                  type="button"
+                  onClick={() => setDispatchScope(scope.id)}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-black transition ${
+                    dispatchScope === scope.id
+                      ? "bg-emerald-500 text-slate-950 shadow"
+                      : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                  }`}
+                >
+                  {scope.label}
+                  <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${dispatchScope === scope.id ? "bg-slate-950/20 text-slate-900" : "bg-slate-800 text-slate-400"}`}>
+                    {scope.count}
+                  </span>
+                </button>
+              ))}
+            </div>
             <select
               value={activeDispatchOrderFilter}
               onChange={(e) => setDispatchOrderFilter(e.target.value)}
               title="Show one order's batches only — separate the queue per order"
               className="max-w-72 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 outline-none focus:border-emerald-500"
             >
-              <option value="">All orders — {dispatchOrders.length} batch{dispatchOrders.length === 1 ? "" : "es"}</option>
+              <option value="">All orders — {scopedDispatchOrders.length} batch{scopedDispatchOrders.length === 1 ? "" : "es"}</option>
               {dispatchOrderOptions.map((o: any) => (
                 <option key={String(o.orderId)} value={String(o.orderId)}>
                   {o.orderNumber} — {o.customerCompany || o.title || `Order ${o.orderId}`}
@@ -755,9 +805,14 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                   <X className="h-3 w-3" /> Clear filter
                 </button>
                 <span className="text-[11px] font-bold text-emerald-400">
-                  Showing {visibleDispatchOrders.length} of {dispatchOrders.length} batches
+                  Showing {visibleDispatchOrders.length} of {scopedDispatchOrders.length} batches in this list
                 </span>
               </>
+            )}
+            {dispatchScope === "todo" && deliveredDispatchCount > 0 && (
+              <span className="text-[11px] font-bold text-slate-500">
+                {deliveredDispatchCount} delivered batch{deliveredDispatchCount === 1 ? "" : "es"} kept out of the working queue — pick Delivered or All to review them.
+              </span>
             )}
           </div>
         )}
@@ -768,7 +823,22 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           <div className="py-6 text-center text-xs text-slate-500">No issued material batches are available for Dispatch.</div>
         ) : visibleDispatchOrders.length === 0 ? (
           <div className="py-6 text-center text-xs text-slate-500">
-            No batches match this filter — clear it or pick another order.
+            {dispatchScope === "todo" && todoDispatchCount === 0 ? (
+              <>
+                Every issued batch is delivered — nothing is waiting on Dispatch.{" "}
+                <button
+                  type="button"
+                  onClick={() => setDispatchScope("delivered")}
+                  className="font-black text-emerald-400 underline decoration-dotted underline-offset-2 hover:text-emerald-300"
+                >
+                  Review delivered batches
+                </button>
+              </>
+            ) : dispatchScope === "delivered" && deliveredDispatchCount === 0 ? (
+              <>No batches have been marked delivered yet.</>
+            ) : (
+              <>No batches match this filter — clear it or pick another order.</>
+            )}
           </div>
         ) : (
           <div className="space-y-2.5">

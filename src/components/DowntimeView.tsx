@@ -17,6 +17,7 @@ import {
   buildPareto,
   paretoToCsv,
 } from "@/lib/downtimeReasons";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface DowntimeViewProps {
   currentUser: any;
@@ -42,6 +43,10 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
   const [reason, setReason] = useState<string>(DOWNTIME_REASONS[0]);
   const [orderId, setOrderId] = useState("");
   const [notes, setNotes] = useState("");
+  // History filters + cards/list/table view (per device).
+  const [histSearch, setHistSearch] = useState("");
+  const [histReason, setHistReason] = useState("All");
+  const [histView, setHistView] = useViewMode("downtime-history", "table");
 
   const fetchEvents = async () => {
     try {
@@ -141,7 +146,14 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
   };
 
   const openEvents = events.filter(e => !e.endedAt);
-  const closedEvents = events.filter(e => e.endedAt);
+  const closedEventsAll = events.filter(e => e.endedAt);
+  const closedEvents = closedEventsAll.filter((e: any) => {
+    if (histReason !== "All" && e.reason !== histReason) return false;
+    const q = histSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [e.machineCode, e.machineName, e.reason, e.orderNumber, e.operatorName, e.notes]
+      .some((v) => String(v ?? "").toLowerCase().includes(q));
+  });
   const now = tick;
   const totalTodayMinutes = closedEvents
     .filter(e => new Date(e.startedAt).toDateString() === new Date().toDateString())
@@ -272,11 +284,71 @@ export default function DowntimeView({ currentUser }: DowntimeViewProps) {
 
           {/* History */}
           <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-sm">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider mb-3">Downtime History</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider">Downtime History</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={histSearch}
+                  onChange={(e) => setHistSearch(e.target.value)}
+                  placeholder="Search history…"
+                  className="w-full sm:w-44 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                />
+                <select
+                  value={histReason}
+                  onChange={(e) => setHistReason(e.target.value)}
+                  title="Filter history by reason"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="All">All reasons</option>
+                  {DOWNTIME_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <ViewToggle mode={histView} onChange={setHistView} title="Cards, list or table view of the downtime history" />
+                <ResultCount shown={closedEvents.length} total={closedEventsAll.length} noun="stoppage" filtered={histReason !== "All" || Boolean(histSearch.trim())} />
+              </div>
+            </div>
             {loading ? (
               <div className="text-slate-400 animate-pulse font-medium">Loading...</div>
             ) : closedEvents.length === 0 ? (
               <div className="text-center py-6 text-xs text-slate-500">No closed stoppages yet.</div>
+            ) : histView === "cards" ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {closedEvents.map((e: any) => (
+                  <div key={e.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs font-black text-amber-400">{e.machineCode}</span>
+                      <span className="font-mono text-xs font-bold text-white">{fmtDur(e.durationMinutes || 0)}</span>
+                    </div>
+                    <div className="truncate text-xs font-bold text-slate-200">{e.reason}</div>
+                    <div className="truncate text-[11px] text-slate-500">{e.machineName}</div>
+                    <div className="mt-2 space-y-0.5 text-[11px] text-slate-400">
+                      <div>Started: {new Date(e.startedAt).toLocaleString()}</div>
+                      <div>Ended: {new Date(e.endedAt).toLocaleString()}</div>
+                      <div className="flex justify-between"><span>{e.orderNumber ? `Order ${e.orderNumber}` : "No order"}</span><span>{e.operatorName || "—"}</span></div>
+                    </div>
+                    {currentUser?.role === "Manager" && (
+                      <div className="mt-2 flex justify-end">
+                        <button onClick={() => handleDelete(e.id)} className="rounded p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : histView === "list" ? (
+              <div className="space-y-2">
+                {closedEvents.map((e: any) => (
+                  <div key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2.5">
+                    <span className="font-mono text-xs font-black text-amber-400">{e.machineCode}</span>
+                    <span className="min-w-[140px] flex-1 truncate text-xs text-slate-300">{e.reason}</span>
+                    <span className="font-mono text-xs font-bold text-white">{fmtDur(e.durationMinutes || 0)}</span>
+                    <span className="text-[10px] text-slate-500">{new Date(e.startedAt).toLocaleDateString()}</span>
+                    {e.orderNumber && <span className="font-mono text-[11px] text-slate-400">{e.orderNumber}</span>}
+                    <span className="text-[11px] text-slate-400">{e.operatorName || "—"}</span>
+                    {currentUser?.role === "Manager" && (
+                      <button onClick={() => handleDelete(e.id)} className="rounded p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

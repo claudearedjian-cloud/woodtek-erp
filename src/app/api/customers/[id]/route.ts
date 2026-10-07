@@ -48,7 +48,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if ((body.creditLimit !== undefined || body.currentBalance !== undefined)
       && !canSeeMoney(user, readOptionalModules())) {
       return NextResponse.json(
-        { error: "Credit limit and balance belong to Invoicing & Money. Ask a Manager to grant it in Settings > Optional modules." },
+        { error: "Credit limit and balance belong to Invoicing & Money. Ask a Manager to grant it in Settings > System Settings > Optional modules." },
         { status: 403 },
       );
     }

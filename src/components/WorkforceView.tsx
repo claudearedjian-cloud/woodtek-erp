@@ -17,6 +17,7 @@ import {
   CalendarClock,
   Sparkles,
 } from "lucide-react";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface WorkforceViewProps {
   currentUser: any;
@@ -82,6 +83,10 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
 
   // ---- Attendance ----
   const [todayRows, setTodayRows] = useState<any[]>([]);
+  // Attendance filters + cards/list/table view (per device).
+  const [attSearch, setAttSearch] = useState("");
+  const [attStatus, setAttStatus] = useState("All");
+  const [attView, setAttView] = useViewMode("workforce-attendance", "table");
   const [weekRows, setWeekRows] = useState<any[]>([]);
   const [myOpen, setMyOpen] = useState<any | null>(null);
 
@@ -273,6 +278,15 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
   }, [weekRows]);
 
   const isToday = (d: Date) => toYMD(d) === toYMD(new Date());
+
+  const attRows = (todayRows as any[]).filter((r) => {
+    const onShift = r.clockOut ? "Done" : r.status;
+    if (attStatus !== "All" && onShift !== attStatus) return false;
+    const q = attSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [r.userName, r.userRole, r.shiftName]
+      .some((v) => String(v ?? "").toLowerCase().includes(q));
+  });
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -572,11 +586,72 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
 
           {/* Today's attendance */}
           <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2 mb-4">
-              <Clock className="w-4 h-4 text-amber-400" /> Today&apos;s Attendance
-            </h3>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-400" /> Today&apos;s Attendance
+              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={attSearch}
+                  onChange={(e) => setAttSearch(e.target.value)}
+                  placeholder="Search employees…"
+                  className="w-full sm:w-44 rounded-xl border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                />
+                <select
+                  value={attStatus}
+                  onChange={(e) => setAttStatus(e.target.value)}
+                  title="Filter by attendance status"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+                >
+                  <option value="All">All statuses</option>
+                  <option value="Present">Present</option>
+                  <option value="Done">Done</option>
+                </select>
+                <ViewToggle mode={attView} onChange={setAttView} title="Cards, list or table view of today&apos;s attendance" />
+                <ResultCount shown={attRows.length} total={todayRows.length} noun="record" filtered={attStatus !== "All" || Boolean(attSearch.trim())} />
+              </div>
+            </div>
             {todayRows.length === 0 ? (
               <div className="text-xs text-slate-500 font-semibold py-6 text-center">No clock records for today yet.</div>
+            ) : attView === "cards" ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {attRows.map((r) => (
+                  <div key={r.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${r.avatarColor || "bg-slate-600"} text-xs font-black text-white`}>{(r.userName || "?").charAt(0)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-bold text-white">{r.userName}</span>
+                        <span className="block truncate text-[10px] font-semibold text-slate-500">{r.userRole} · {r.shiftName || "No shift"}</span>
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${r.status === "Present" && !r.clockOut ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>
+                        {r.clockOut ? "Done" : r.status}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+                      <span><span className="block text-[9px] font-bold uppercase text-slate-500">In</span><span className="font-mono font-bold text-emerald-300">{fmtTime(r.clockIn)}</span></span>
+                      <span><span className="block text-[9px] font-bold uppercase text-slate-500">Out</span><span className="font-mono font-bold text-rose-300">{fmtTime(r.clockOut)}</span></span>
+                      <span><span className="block text-[9px] font-bold uppercase text-slate-500">Worked</span><span className="font-bold text-amber-300">{fmtDur(r.workedMinutes)}</span></span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : attView === "list" ? (
+              <div className="space-y-2">
+                {attRows.map((r) => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2.5">
+                    <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${r.avatarColor || "bg-slate-600"} text-[11px] font-black text-white`}>{(r.userName || "?").charAt(0)}</span>
+                    <span className="min-w-[150px] flex-1">
+                      <span className="block truncate text-xs font-bold text-white">{r.userName}</span>
+                      <span className="block truncate text-[10px] font-semibold text-slate-500">{r.userRole}</span>
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-400">{r.shiftName || "—"}</span>
+                    <span className="font-mono text-[11px] font-bold text-emerald-300">{fmtTime(r.clockIn)}</span>
+                    <span className="font-mono text-[11px] font-bold text-rose-300">{fmtTime(r.clockOut)}</span>
+                    <span className="text-[11px] font-bold text-amber-300">{fmtDur(r.workedMinutes)}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${r.status === "Present" && !r.clockOut ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>{r.clockOut ? "Done" : r.status}</span>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -591,7 +666,7 @@ export default function WorkforceView({ currentUser, machines = [] }: WorkforceV
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
-                    {(todayRows as any[]).map((r) => (
+                    {attRows.map((r) => (
                       <tr key={r.id} className="text-slate-200">
                         <td className="py-2.5 pr-3">
                           <span className={`inline-flex h-6 w-6 items-center justify-center rounded-lg ${r.avatarColor || "bg-slate-600"} text-[10px] font-black text-white mr-2`}>

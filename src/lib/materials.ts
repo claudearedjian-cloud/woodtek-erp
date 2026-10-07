@@ -321,7 +321,7 @@ export async function checkAvailabilityForAllocation(
 
 // -------------------------------------------------------------------- BOM sends
 /**
- * Consume (or restore) stock when a Warehouse & BOM line's sent tally changes.
+ * Consume (or restore) stock when a Warehouse line's sent tally changes.
  * The warehouse keeper's Send button moves units from warehouse stock to the
  * production floor - that is when stock is actually consumed, not when the
  * order is marked Completed.

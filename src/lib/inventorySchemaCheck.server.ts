@@ -1,5 +1,5 @@
 // ============================================================================
-// Live-database schema check for the Wood & Edge Stock tables (SERVER ONLY).
+// Live-database schema check for the Inventory tables (SERVER ONLY).
 //
 // The owner's live PostgreSQL database predates the current schema: e.g. its
 // material_consumptions table is missing the item_id column, which makes

@@ -43,7 +43,7 @@ export const CORE_EDITION_SUMMARY = {
   id: "core" as const,
   label: "Core Production & Stock",
   description:
-    "Orders & Routing, Shop Floor Monitor, Operator Station, Live WIP, Material Reception, Warehouse & BOM, Wood & Edge Stock, Dispatch Schedule, Gantt Chart, Production Report, Clients & Architects, Scrap & Rework, Downtime Log, Routing Recipes, PIMS Import, Plant Performance, System Reports, Menu Designer & Settings.",
+    "Orders & Routing, Shop Floor Monitor, Operator Station, Live WIP, Material Reception, Warehouse, Inventory, Dispatch Schedule, Gantt Chart, Production Report, Clients & Architects, Scrap & Rework, Downtime Log, Routing Recipes, PIMS Import, Plant Performance, System Reports, Menu Designer & Settings.",
 };
 
 export const INSTALLER_ADDONS: readonly InstallerAddonDef[] = [

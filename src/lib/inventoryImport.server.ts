@@ -90,7 +90,7 @@ export async function buildInventoryImportTemplate(): Promise<Uint8Array> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "WoodTek ERP";
   workbook.company = "WoodTek";
-  workbook.subject = "Wood & Edge Stock bulk import";
+  workbook.subject = "Inventory bulk import";
   workbook.title = "WoodTek Stock Import Template";
   workbook.created = new Date();
 

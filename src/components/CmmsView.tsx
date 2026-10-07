@@ -31,6 +31,7 @@ import PowerGeneratorsView from "@/components/cmms/PowerGeneratorsView";
 import CmmsReportsView from "@/components/cmms/CmmsReportsView";
 import CmmsSettingsView from "@/components/cmms/CmmsSettingsView";
 import AssetDetailView from "@/components/cmms/AssetDetailView";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface CmmsViewProps {
   currentUser: any;
@@ -64,6 +65,8 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
 
   const [localSearch, setLocalSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("All Types");
+  // Cards / list / table for the Plant Asset Registry (per device).
+  const [registryView, setRegistryView] = useViewMode("cmms-assets", "cards");
 
   const [assetModal, setAssetModal] = useState<"closed" | "create" | "edit">("closed");
   const [form, setForm] = useState<any>(null);
@@ -501,6 +504,8 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                   <option>All Types</option>
                   {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <ViewToggle mode={registryView} onChange={setRegistryView} title="Cards, list or table view of the asset registry" />
+                <ResultCount shown={filteredAssets.length} total={allAssets.length} noun="asset" filtered={Boolean((localSearch || searchQuery).trim()) || typeFilter !== "All Types"} />
               </div>
             </div>
 
@@ -514,6 +519,73 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                 {canManage && allAssets.length === 0 && (
                   <button onClick={openCreate} className="mt-4 rounded-xl bg-emerald-500 px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-400">+ Register Asset</button>
                 )}
+              </div>
+            ) : registryView === "list" ? (
+              <div className="space-y-2">
+                {filteredAssets.map((a) => (
+                  <div key={a.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3">
+                    <span className={`rounded px-2 py-1 text-[10px] font-black uppercase tracking-wider ${stateBadge(a.serviceState)}`}>{a.serviceState}</span>
+                    <button type="button" onClick={() => setDetailAssetId(a.id)} className="min-w-[180px] flex-1 text-left">
+                      <span className="block truncate text-sm font-black text-white hover:text-emerald-300">{a.name}</span>
+                      <span className="block truncate text-[11px] text-slate-400">{a.brand} • {a.assetType} • {a.site}</span>
+                    </button>
+                    <span className="font-mono text-[10px] font-bold text-emerald-400">{a.assetTag}</span>
+                    <span className={`font-mono text-[11px] font-bold ${a.isOverdue ? "text-rose-400" : "text-slate-300"}`}>{a.sinceService} / {a.serviceIntervalHours} hrs</span>
+                    <span className="text-[11px] text-slate-400">{Number(a.runtimeHours).toLocaleString()} total hrs</span>
+                    <span className="flex items-center gap-1">
+                      <button onClick={() => setDetailAssetId(a.id)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-bold text-slate-200 transition hover:bg-slate-700">Inspect &amp; Log</button>
+                      {canManage && (
+                        <>
+                          <button onClick={() => openEdit(a)} title="Edit" className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-emerald-400"><Edit className="h-4 w-4" /></button>
+                          <button onClick={() => deleteAsset(a)} title="Delete" className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : registryView === "table" ? (
+              <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/60 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-3">State</th>
+                      <th className="px-4 py-3">Asset</th>
+                      <th className="px-4 py-3">Tag</th>
+                      <th className="px-4 py-3">Brand / type</th>
+                      <th className="px-4 py-3">Site</th>
+                      <th className="px-4 py-3 text-right">Meter</th>
+                      <th className="px-4 py-3 text-right">Runtime</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/80 text-slate-200">
+                    {filteredAssets.map((a) => (
+                      <tr key={a.id} className="transition hover:bg-slate-800/40">
+                        <td className="px-4 py-2.5"><span className={`rounded px-2 py-1 text-[10px] font-black uppercase tracking-wider ${stateBadge(a.serviceState)}`}>{a.serviceState}</span></td>
+                        <td className="px-4 py-2.5">
+                          <button type="button" onClick={() => setDetailAssetId(a.id)} className="font-bold text-white hover:text-emerald-300">{a.name}</button>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[10px] font-bold text-emerald-400">{a.assetTag}</td>
+                        <td className="px-4 py-2.5 text-slate-400">{a.brand} • {a.assetType}</td>
+                        <td className="px-4 py-2.5 text-slate-400">{a.site}</td>
+                        <td className={`px-4 py-2.5 text-right font-mono font-bold ${a.isOverdue ? "text-rose-400" : "text-slate-200"}`}>{a.sinceService} / {a.serviceIntervalHours} hrs</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-slate-300">{Number(a.runtimeHours).toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className="inline-flex items-center gap-1">
+                            <button onClick={() => setDetailAssetId(a.id)} className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-200 transition hover:bg-slate-700">Inspect</button>
+                            {canManage && (
+                              <>
+                                <button onClick={() => openEdit(a)} title="Edit" className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-800 hover:text-emerald-400"><Edit className="h-4 w-4" /></button>
+                                <button onClick={() => deleteAsset(a)} title="Delete" className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+                              </>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

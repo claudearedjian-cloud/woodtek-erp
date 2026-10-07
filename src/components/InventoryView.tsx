@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Package, Plus, AlertTriangle, CheckCircle2, Layers, Trash2, X, Lock, ChevronRight, FileSpreadsheet, Download, Upload, Loader2, Pencil, Database } from "lucide-react";
 import { can } from "@/lib/permissions";
@@ -8,6 +8,101 @@ import type { InventoryImportValidation } from "@/lib/inventoryImport";
 import { isPanelCategory, validateDimensions } from "@/lib/inventoryDimensions";
 import { DEFAULT_INVENTORY_CATEGORIES } from "@/lib/inventoryCategories";
 import type { DbIndexDef } from "@/lib/dbIndexes";
+import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
+
+/** Warehouse register row (GET /api/warehouses). */
+type WarehouseOption = { id: string; name: string; code: string; itemCount: number };
+
+/** The fields of /api/inventory rows this screen renders (no `any`). */
+interface StockItem {
+  id: number;
+  sku?: string | null;
+  name?: string | null;
+  category?: string | null;
+  location?: string | null;
+  dimensions?: string | null;
+  stockQuantity?: number | string | null;
+  reservedQuantity?: number | string | null;
+  availableQuantity?: number | string | null;
+  reorderLevel?: number | string | null;
+  unit?: string | null;
+  unitCost?: string | number | null;
+}
+
+/** Shared per-item action row — the same buttons in cards, list and table. */
+function StockItemActions({
+  item,
+  canEditStock,
+  onOpenOrders,
+  onEdit,
+  onDelete,
+  compact = false,
+}: {
+  item: StockItem;
+  canEditStock: boolean;
+  onOpenOrders: (item: StockItem) => void;
+  onEdit: (item: StockItem) => void;
+  onDelete: (item: StockItem) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`flex flex-wrap items-center ${compact ? "gap-1" : "justify-end gap-1.5"}`}>
+      <button
+        onClick={() => onOpenOrders(item)}
+        className="flex items-center gap-1 rounded-lg bg-slate-800 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-300 transition hover:bg-slate-700 hover:text-amber-300"
+        title="See which orders are using this material"
+      >
+        Orders
+        <ChevronRight className="h-3 w-3" />
+      </button>
+      {canEditStock && (
+        <button
+          onClick={() => onEdit(item)}
+          className="rounded-lg p-1.5 text-slate-600 transition hover:bg-sky-500/20 hover:text-sky-300"
+          title="Edit item"
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
+      )}
+      <button
+        onClick={() => onDelete(item)}
+        className="rounded-lg p-1.5 text-slate-600 transition hover:bg-rose-500/20 hover:text-rose-400"
+        title="Delete item"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/** Low-stock / healthy pill, used by all three views. */
+function StockStatusPill({ item, onCreatePurchaseOrder }: { item: StockItem; onCreatePurchaseOrder?: (itemId: number) => void }) {
+  // Same rule the legacy table used: available (from the API when present) vs the
+  // reorder level, both coerced with the API's string-number tolerance.
+  const stock = Number(item.stockQuantity) || 0;
+  const available = Number(item.availableQuantity ?? stock) || 0;
+  const reorderLevel = Number(item.reorderLevel ?? 0) || 0;
+  const isLow = available <= reorderLevel;
+  if (!isLow) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-1 text-[10px] font-extrabold uppercase text-emerald-300">
+        <CheckCircle2 className="h-3 w-3 text-emerald-400" /> Optimal Stock
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/20 px-2.5 py-1 text-[10px] font-extrabold uppercase text-rose-300">
+        <AlertTriangle className="h-3 w-3 text-rose-400" /> Reorder Needed
+      </span>
+      {onCreatePurchaseOrder && (
+        <button onClick={() => onCreatePurchaseOrder(item.id)} className="text-[10px] font-black text-amber-400 underline underline-offset-2 hover:text-amber-300">
+          + Create PO
+        </button>
+      )}
+    </div>
+  );
+}
 
 interface InventoryViewProps {
   items: any[];
@@ -88,7 +183,40 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
 
   const categories = ["All", ...stockCategories];
 
-  const filtered = categoryFilter === "All" ? items : items.filter((i) => i.category === categoryFilter);
+  // ---- warehouse register (places stock lives) + filters -------------------
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [warehouseFilter, setWarehouseFilter] = useState("All");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [view, setView] = useViewMode("inventory", "table");
+
+  useEffect(() => {
+    fetch("/api/warehouses", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (Array.isArray(d?.warehouses)) setWarehouses(d.warehouses);
+      })
+      .catch(() => {});
+  }, []);
+  const warehouseNamesInUse = Array.from(new Set(items.map((i) => String(i.location ?? "").trim()).filter(Boolean)));
+  const warehouseFilterOptions = Array.from(new Set([...warehouses.map((w) => w.name), ...warehouseNamesInUse])).sort((a, b) => a.localeCompare(b));
+
+  const filtered = useMemo(() => {
+    const q = searchFilter.trim().toLowerCase();
+    return items.filter((i) => {
+      if (categoryFilter !== "All" && i.category !== categoryFilter) return false;
+      if (warehouseFilter !== "All" && String(i.location ?? "").trim() !== warehouseFilter) return false;
+      if (!q) return true;
+      return [i.sku, i.name, i.category, i.location, i.dimensions]
+        .some((v) => String(v ?? "").toLowerCase().includes(q));
+    });
+  }, [items, categoryFilter, warehouseFilter, searchFilter]);
+
+  const filtersActive = categoryFilter !== "All" || warehouseFilter !== "All" || Boolean(searchFilter.trim());
+  const clearStockFilters = () => {
+    setCategoryFilter("All");
+    setWarehouseFilter("All");
+    setSearchFilter("");
+  };
 
   // Summary metrics
   const totalItems = items.length;
@@ -564,15 +692,151 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
         </div>
       </div>
 
-      {/* Items Table */}
-      <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-sm">
+      {/* Search + warehouse + view switch */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">⌕</span>
+            <input
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              placeholder="Search SKU, item, category, warehouse…"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-8 pr-8 text-xs text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none sm:w-72"
+            />
+            {searchFilter && (
+              <button
+                onClick={() => setSearchFilter("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:text-white"
+                title="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <select
+            value={warehouseFilter}
+            onChange={(e) => setWarehouseFilter(e.target.value)}
+            title="Show one warehouse only"
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+          >
+            <option value="All">All warehouses</option>
+            {warehouseFilterOptions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          {filtersActive && (
+            <button
+              onClick={clearStockFilters}
+              className="flex items-center gap-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800"
+            >
+              <X className="h-3 w-3" /> Clear filters
+            </button>
+          )}
+          <ResultCount shown={filtered.length} total={items.length} noun="stock item" filtered={filtersActive} />
+        </div>
+        <div className="flex items-center gap-2">
+          <ViewToggle mode={view} onChange={setView} title="Cards, list or table view of the stock" />
+        </div>
+      </div>
+
+      {view === "cards" && filtered.length > 0 && (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((item) => {
+            const stock = Number(item.stockQuantity) || 0;
+            const reserved = Number(item.reservedQuantity) || 0;
+            const available = Number(item.availableQuantity ?? stock) || 0;
+            return (
+              <div key={item.id} className="flex flex-col gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/90 p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-mono text-[11px] font-black text-amber-400">{item.sku}</div>
+                    <div className="mt-0.5 truncate text-sm font-extrabold text-white">{item.name}</div>
+                    <div className="mt-0.5 text-[11px] font-semibold text-slate-400">{item.category}</div>
+                    {item.dimensions ? <div className="font-mono text-[10px] text-sky-300/90">{item.dimensions}</div> : null}
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-lg font-black text-white">{stock.toLocaleString()}</div>
+                    <div className="text-[10px] font-bold uppercase text-slate-500">{item.unit}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] font-bold">
+                  <span className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-slate-300">
+                    Warehouse: <span className="font-mono text-slate-200">{item.location || "—"}</span>
+                  </span>
+                  {reserved > 0 && (
+                    <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-amber-300">Reserved {reserved}</span>
+                  )}
+                  <span className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-slate-300">Available {available}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-3">
+                  <StockStatusPill item={item} onCreatePurchaseOrder={onCreatePurchaseOrder} />
+                  <StockItemActions
+                    item={item}
+                    canEditStock={canEditStock}
+                    onOpenOrders={openOrdersForItem}
+                    onEdit={openEditItem}
+                    onDelete={(row) => { setDeleteError(""); setConfirmDelete({ id: row.id, name: String(row.name ?? "") }); }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "list" && filtered.length > 0 && (
+        <div className="space-y-2">
+          {filtered.map((item) => {
+            const stock = Number(item.stockQuantity) || 0;
+            const reserved = Number(item.reservedQuantity) || 0;
+            const available = Number(item.availableQuantity ?? stock) || 0;
+            const isLow = available <= item.reorderLevel;
+            return (
+              <div key={item.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+                <span className="min-w-[220px] flex-1">
+                  <span className="block font-mono text-[11px] font-black text-amber-400">{item.sku}</span>
+                  <span className="block truncate text-sm font-extrabold text-white">{item.name}</span>
+                </span>
+                <span className="min-w-[150px] flex-1 truncate text-[11px] font-semibold text-slate-400">{item.category}</span>
+                <span className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-300">{item.location || "—"}</span>
+                <span className="w-40 text-right font-mono text-xs text-slate-300">
+                  <span className="font-black text-white">{stock.toLocaleString()}</span>
+                  <span className="text-slate-500"> / {reserved} res / {available} avail</span>
+                </span>
+                <span className={`h-2.5 w-2.5 rounded-full ${isLow ? "bg-rose-500" : "bg-emerald-500"}`} title={isLow ? "Reorder needed" : "Optimal stock"} />
+                <StockItemActions
+                  compact
+                  item={item}
+                  canEditStock={canEditStock}
+                  onOpenOrders={openOrdersForItem}
+                  onEdit={openEditItem}
+                  onDelete={(row) => { setDeleteError(""); setConfirmDelete({ id: row.id, name: String(row.name ?? "") }); }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view !== "table" && filtered.length === 0 && (
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-14 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-950/60">
+            <Package className="h-7 w-7 text-amber-500/80 stroke-[1.5]" />
+          </div>
+          <h3 className="text-base font-bold text-white">No Stock Items Found</h3>
+          <p className="mt-1 text-xs text-slate-400">No materials match these filters. Adjust them or receive new stock.</p>
+        </div>
+      )}
+
+      {/* Items table */}
+      <div className={`bg-slate-900/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-sm ${view === "table" ? "" : "hidden"}`}>
         {filtered.length === 0 ? (
           <div className="p-14 text-center">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-950/60">
               <Package className="h-7 w-7 text-amber-500/80 stroke-[1.5]" />
             </div>
             <h3 className="text-base font-bold text-white">No Stock Items Found</h3>
-            <p className="mt-1 text-xs text-slate-400">No materials match this category. Adjust the filter or receive new stock.</p>
+            <p className="mt-1 text-xs text-slate-400">No materials match these filters. Adjust them or receive new stock.</p>
           </div>
         ) : (
         <div className="overflow-x-auto">
@@ -581,7 +845,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
               <tr className="border-b border-slate-800 bg-slate-950/50 text-slate-400 font-bold text-xs uppercase tracking-wider">
                 <th className="py-3.5 px-5">SKU & Item Name</th>
                 <th className="py-3.5 px-4">Category</th>
-                <th className="py-3.5 px-4">Shop Location</th>
+                <th className="py-3.5 px-4">Warehouse</th>
                 <th className="py-3.5 px-4 text-right">Unit Cost</th>
                 <th className="py-3.5 px-4 text-center">Stock / Reserved / Available</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
@@ -593,7 +857,6 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                 const stock = Number(item.stockQuantity) || 0;
                 const reserved = Number(item.reservedQuantity) || 0;
                 const available = Number(item.availableQuantity ?? stock) || 0;
-                const isLow = available <= item.reorderLevel;
                 const hasReservations = reserved > 0;
                 return (
                   <tr key={item.id} className="transition hover:bg-slate-800/50">
@@ -639,46 +902,16 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                       </div>
                     </td>
                     <td className="py-4 px-4 text-center">
-                      {isLow ? (
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="inline-flex items-center gap-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase">
-                            <AlertTriangle className="w-3 h-3 text-rose-400" /> Reorder Needed
-                          </span>
-                          {onCreatePurchaseOrder && <button onClick={() => onCreatePurchaseOrder(item.id)} className="text-[10px] font-black text-amber-400 underline underline-offset-2 hover:text-amber-300">+ Create PO</button>}
-                        </div>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Optimal Stock
-                        </span>
-                      )}
+                      <StockStatusPill item={item} onCreatePurchaseOrder={onCreatePurchaseOrder} />
                     </td>
                     <td className="py-4 px-5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => openOrdersForItem(item)}
-                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-300 rounded-lg transition text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"
-                          title="See which orders are using this material"
-                        >
-                          Orders
-                          <ChevronRight className="w-3 h-3" />
-                        </button>
-                        {canEditStock && (
-                          <button
-                            onClick={() => openEditItem(item)}
-                            className="p-1.5 hover:bg-sky-500/20 text-slate-600 hover:text-sky-300 rounded-lg transition"
-                            title="Edit item"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => { setDeleteError(""); setConfirmDelete({ id: item.id, name: item.name }); }}
-                          className="p-1.5 hover:bg-rose-500/20 text-slate-600 hover:text-rose-400 rounded-lg transition"
-                          title="Delete item"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      <StockItemActions
+                        item={item}
+                        canEditStock={canEditStock}
+                        onOpenOrders={openOrdersForItem}
+                        onEdit={openEditItem}
+                        onDelete={(row) => { setDeleteError(""); setConfirmDelete({ id: row.id, name: String(row.name ?? "") }); }}
+                      />
                     </td>
                   </tr>
                 );
@@ -699,7 +932,7 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                   <FileSpreadsheet className="h-6 w-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-white">Import Wood & Edge Stock from Excel</h3>
+                  <h3 className="text-lg font-black text-white">Import Inventory from Excel</h3>
                   <p className="mt-1 text-xs text-slate-400">Upload → validate every row → review creates and updates → import atomically.</p>
                 </div>
               </div>
@@ -957,8 +1190,24 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
                   <input type="number" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">Shop Location</label>
-                  <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Warehouse</label>
+                  <input
+                    type="text"
+                    list="woodtek-warehouse-options"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="Pick a warehouse or type a new name"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                  <datalist id="woodtek-warehouse-options">
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.name}>{w.code ? `${w.code} — ${w.name}` : w.name}</option>
+                    ))}
+                  </datalist>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Pick one of the warehouses registered on the <span className="font-bold text-slate-400">Warehouse</span> screen
+                    (open it → <span className="font-bold text-slate-400">Warehouses</span> to add, rename or remove them).
+                  </p>
                 </div>
               </div>
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
