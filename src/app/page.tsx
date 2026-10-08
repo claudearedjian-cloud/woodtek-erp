@@ -48,6 +48,7 @@ const WipBoardView = dynamic(() => import("@/components/WipBoardView"), { loadin
 const QualityView = dynamic(() => import("@/components/QualityView"), { loading: ScreenLoading });
 const DowntimeView = dynamic(() => import("@/components/DowntimeView"), { loading: ScreenLoading });
 const RecipeManagerView = dynamic(() => import("@/components/RecipeManagerView"), { loading: ScreenLoading });
+const AssemblyView = dynamic(() => import("@/components/AssemblyView"), { loading: ScreenLoading });
 const PimsImportView = dynamic(() => import("@/components/PimsImportView"), { loading: ScreenLoading });
 const MenuDesignerView = dynamic(() => import("@/components/MenuDesignerView"), { loading: ScreenLoading });
 const MachineDowntimeLoginAlert = dynamic(() => import("@/components/MachineDowntimeLoginAlert"));
@@ -603,7 +604,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "hr", "wip", "quality", "downtime", "recipes", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "hr", "wip", "quality", "downtime", "recipes", "assembly", "pims", "designer", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -750,6 +751,7 @@ export default function WoodTekERP() {
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}
           {activeTab === "recipes" && <RecipeManagerView onRefresh={refreshTemplateData} />}
+          {activeTab === "assembly" && <AssemblyView />}
           {activeTab === "pims" && <PimsImportView onSelectOrder={handleSelectOrder} />}
           {activeTab === "designer" && (
             <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />

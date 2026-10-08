@@ -24,7 +24,7 @@ export const MENU_ICON_KEYS: string[] = [
   "dashboard", "wip", "orders", "recipes", "schedule", "gantt", "production", "machines",
   "cmms", "downtime", "quality", "workforce", "hr", "station", "customers",
   "inventory", "purchasing", "invoicing", "jobcosting", "pims", "reports", "settings", "designer", "warehouse",
-  "reception", "plant",
+  "reception", "plant", "assembly",
   // generic factory/office icons for custom entries
   "box", "boxes", "hammer", "wrench", "truck", "hard-hat", "clipboard-check",
   "archive", "banknote", "receipt", "bar-chart", "line-chart", "pie-chart",
@@ -64,6 +64,7 @@ export const MENU_REGISTRY: MenuRegistryItem[] = [
   { id: "station", label: "Operator Station Mode", badge: "Touch", group: "top" },
   { id: "customers", label: "Clients & Architects", badge: "", group: "top" },
   { id: "warehouse", label: "Warehouse", badge: "BOM", group: "top" },
+  { id: "assembly", label: "Cabinet Assembly", badge: "3D", group: "top" },
   { id: "reception", label: "Material Reception", badge: "RX", group: "top" },
   { id: "inventory", label: "Inventory", badge: "", group: "settings" },
   { id: "purchasing", label: "Purchasing & Suppliers", badge: "PO", group: "top" },

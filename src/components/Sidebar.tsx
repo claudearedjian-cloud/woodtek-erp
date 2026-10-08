@@ -91,6 +91,7 @@ const ICONS: Record<string, any> = {
   purchasing: Truck,
   invoicing: Receipt,
   jobcosting: PieChart,
+  assembly: Boxes,
   pims: Import,
   reports: FileText,
   settings: SettingsIcon,
