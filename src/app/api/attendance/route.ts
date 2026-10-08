@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { attendance, users, shifts } from "@/db/schema";
 import { eq, and, gte, lte, isNull, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { workLeaveBlock } from "@/lib/hrLeaveGate.server";
 
 /**
  * Time & attendance.
@@ -89,6 +90,13 @@ export async function POST(request: Request) {
       .limit(1);
     if (open) {
       return NextResponse.json({ error: "This user is already clocked in. Clock out first." }, { status: 409 });
+    }
+
+    // Leave gate: an employee on approved leave is not at work, so they cannot
+    // be clocked in — not by themselves and not by a Manager on their behalf.
+    const onLeave = await workLeaveBlock(targetUserId, undefined, "process");
+    if (onLeave) {
+      return NextResponse.json({ error: onLeave.message, onLeave: onLeave.onLeave }, { status: 409 });
     }
 
     const [created] = await db

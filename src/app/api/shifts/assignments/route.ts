@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { shiftAssignments, shifts, users, machines } from "@/db/schema";
 import { eq, and, gte, lte, asc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { workLeaveBlock } from "@/lib/hrLeaveGate.server";
 
 /**
  * Shift assignments = the production calendar: who works which shift
@@ -67,6 +68,14 @@ export async function POST(request: Request) {
     const workDate = String(body.workDate ?? "");
     if (!userId || !shiftId) return NextResponse.json({ error: "userId and shiftId are required." }, { status: 400 });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) return NextResponse.json({ error: "workDate must be YYYY-MM-DD." }, { status: 400 });
+
+    // Leave gate: nobody is rostered onto a shift while on approved leave. The
+    // refusal carries the same sentence the sign-in screen shows, and the
+    // workDate decides the day (planning next week checks next week).
+    const onLeave = await workLeaveBlock(userId, workDate, "assign");
+    if (onLeave) {
+      return NextResponse.json({ error: onLeave.message, onLeave: onLeave.onLeave }, { status: 409 });
+    }
 
     const [existing] = await db
       .select({ id: shiftAssignments.id })

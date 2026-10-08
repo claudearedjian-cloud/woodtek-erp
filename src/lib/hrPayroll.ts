@@ -378,3 +378,101 @@ export function payrollPeriodLabel(year: number, month: number): string {
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return "Invalid period";
   return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
+
+// ------------------------------------------------------------- overtime
+//
+// Overtime is recorded per employee per day: how long they stayed, the rate
+// per hour that applies (the HR screen suggests one from the working-calendar
+// policy and the employee's salary; HR may type any rate), and the resulting
+// amount in integer cents. Approved entries become one labelled earnings line
+// on that month's payroll draft — the amount is snapshotted, so a later change
+// to the calendar or the salary never rewrites a payslip.
+
+export const OVERTIME_STATUSES = ["Pending", "Approved", "Rejected"] as const;
+export type OvertimeStatus = (typeof OVERTIME_STATUSES)[number];
+
+/** One overtime entry: at most one working day, at most 24 h. */
+export const MAX_OVERTIME_MINUTES = 1440;
+export const MIN_OVERTIME_MINUTES = 5;
+/** $99,999.99 per hour is the sanity ceiling for a typed rate. */
+export const MAX_HOURLY_RATE_CENTS = 9_999_999;
+
+export interface OvertimeEntryInput {
+  userId: number;
+  /** Day the overtime was worked, YYYY-MM-DD. */
+  workDate: string;
+  /** Paid overtime minutes (5…1440, capped by the calendar policy). */
+  minutes: number;
+  /** Optional clock times kept for the record ("17:00"–"20:30"). */
+  startTime: string;
+  endTime: string;
+  /**
+   * Final rate per hour in cents. 0 means "resolve it from the working-calendar
+   * policy" (company rate, else salary ÷ standard hours × the day multiplier).
+   */
+  rateCentsPerHour: number;
+  notes: string;
+}
+
+function isValidHhmmText(value: string): boolean {
+  if (!/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
+/** Validates one overtime entry from the API body (no calendar maths here). */
+export function parseOvertimeEntry(input: unknown): OvertimeEntryInput {
+  const raw = recordOf(input);
+  if (!raw) throw new HRPayrollError("Enter the overtime details.");
+  const userId = positiveId(raw.userId, "Employee");
+  const workDate = String(raw.workDate ?? "").trim();
+  if (!isValidYmd(workDate)) {
+    throw new HRPayrollError("Overtime date must be a real date in YYYY-MM-DD format.");
+  }
+  const startTime = String(raw.startTime ?? "").trim();
+  const endTime = String(raw.endTime ?? "").trim();
+  if (startTime && !isValidHhmmText(startTime)) throw new HRPayrollError("Overtime start time must be HH:MM.");
+  if (endTime && !isValidHhmmText(endTime)) throw new HRPayrollError("Overtime end time must be HH:MM.");
+  if (startTime && endTime && endTime <= startTime) {
+    throw new HRPayrollError("The overtime end time must be later than the start time.");
+  }
+  const minutes = Number(raw.minutes);
+  if (!Number.isSafeInteger(minutes) || minutes < MIN_OVERTIME_MINUTES || minutes > MAX_OVERTIME_MINUTES) {
+    throw new HRPayrollError(`Overtime must be between ${MIN_OVERTIME_MINUTES} minutes and 24 hours.`);
+  }
+  const rateCentsPerHour = Number(raw.rateCentsPerHour ?? 0);
+  if (!Number.isSafeInteger(rateCentsPerHour) || rateCentsPerHour < 0 || rateCentsPerHour > MAX_HOURLY_RATE_CENTS) {
+    throw new HRPayrollError("The overtime rate per hour must be between $0.00 and $99,999.99.");
+  }
+  return {
+    userId,
+    workDate,
+    minutes,
+    startTime,
+    endTime,
+    rateCentsPerHour,
+    notes: cappedText(raw.notes, 300, "Overtime notes"),
+  };
+}
+
+/** Total cents of a list of overtime entries (integer maths only). */
+export function totalOvertimeCents(entries: ReadonlyArray<{ amountCents: number }>): number {
+  return entries.reduce((sum, entry) => sum + (Number(entry.amountCents) || 0), 0);
+}
+
+/** Total minutes of a list of overtime entries. */
+export function totalOvertimeMinutes(entries: ReadonlyArray<{ minutes: number }>): number {
+  return entries.reduce((sum, entry) => sum + (Number(entry.minutes) || 0), 0);
+}
+
+/**
+ * The earnings line a payroll draft receives for one employee's approved
+ * overtime: label + amount, ready for `additionsJson`.
+ */
+export function overtimePayrollLine(totalMinutes: number, totalCents: number, periodLabel: string): PayAdjustment | null {
+  if (totalMinutes <= 0 || totalCents <= 0) return null;
+  const hours = Math.floor(totalMinutes / 60);
+  const rest = totalMinutes % 60;
+  const hoursText = rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+  return { label: `Overtime ${periodLabel} (${hoursText})`, amountCents: totalCents };
+}

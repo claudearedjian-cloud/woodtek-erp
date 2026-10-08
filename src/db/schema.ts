@@ -753,6 +753,40 @@ export const hrPayrollItems = pgTable("hr_payroll_items", {
   index("hr_payroll_items_run_idx").on(t.runId),
 ]);
 
+// Overtime register: one row per employee per extra-hours stint. The day kind
+// (Working / Holiday / Day off) and the rate per hour are SNAPSHOTS taken from
+// the working calendar at save time, so a later change to the calendar, the
+// multipliers or the salary never rewrites recorded overtime. `payroll_run_id`
+// marks the entries a payroll draft already paid, which keeps a deleted and
+// re-created draft from counting the same hours twice.
+export const hrOvertimeEntries = pgTable("hr_overtime_entries", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  employeeName: text("employee_name").notNull().default(""),
+  workDate: date("work_date", { mode: "string" }).notNull(),
+  dayKind: text("day_kind").notNull().default("Working"),
+  startTime: text("start_time").notNull().default(""),
+  endTime: text("end_time").notNull().default(""),
+  minutes: integer("minutes").notNull(),
+  baseRateCentsPerHour: integer("base_rate_cents_per_hour").notNull().default(0),
+  multiplierPercent: integer("multiplier_percent").notNull().default(100),
+  rateCentsPerHour: integer("rate_cents_per_hour").notNull().default(0),
+  amountCents: integer("amount_cents").notNull().default(0),
+  status: text("status").notNull().default("Pending"),
+  notes: text("notes").notNull().default(""),
+  payrollRunId: integer("payroll_run_id").references(() => hrPayrollRuns.id, { onDelete: "set null" }),
+  reviewedById: integer("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at"),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("hr_overtime_entries_user_date_idx").on(t.userId, t.workDate),
+  index("hr_overtime_entries_work_date_idx").on(t.workDate),
+  index("hr_overtime_entries_status_idx").on(t.status),
+  index("hr_overtime_entries_payroll_run_idx").on(t.payrollRunId),
+]);
+
 // ----------------------------------------------------------------------------
 // Quality: scrap & rework tracking.
 // Every defect is logged as an event. The Operator Station creates these

@@ -3,6 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { ensureUsersLoginColumn } from "@/lib/usersSchema.server";
+import { approvedLeaveMap, loginBlockingEnabled } from "@/lib/hrLeaveGate.server";
 
 /**
  * PUBLIC — the sign-in screen needs to render the employee picker before a
@@ -24,7 +25,20 @@ export async function GET() {
       .where(and(eq(users.active, true), eq(users.canLogin, true)))
       .orderBy(asc(users.role), asc(users.name));
 
-    return NextResponse.json(roster);
+    // Mark (never explain) employees whose sign-in is blocked by approved
+    // leave, so the picker can warn before a PIN is typed. The leave TYPE stays
+    // off this public endpoint — it is only disclosed by the 403 the sign-in
+    // itself returns, i.e. to someone who already knows the PIN.
+    const onLeave = loginBlockingEnabled()
+      ? await approvedLeaveMap(roster.map((entry) => entry.id), undefined, "login")
+      : new Map();
+    return NextResponse.json(
+      roster.map((entry) => ({
+        ...entry,
+        onLeave: onLeave.has(entry.id),
+        leaveUntil: onLeave.get(entry.id)?.endDate ?? null,
+      })),
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load roster";
     console.error("GET roster error:", error);

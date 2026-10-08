@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import {
   ArrowRight,
+  CalendarOff,
   Delete,
   ShieldCheck,
   X,
@@ -14,6 +15,15 @@ import {
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 import { currentAppearance } from "@/lib/appearance";
+
+/** Deterministic "12 Oct 2026" for the leave prompt (no locale surprises). */
+function leaveDateLabel(value: string): string {
+  const text = String(value ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const [year, month, day] = text.split("-").map(Number);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${String(day).padStart(2, "0")} ${months[month - 1]} ${year}`;
+}
 
 interface AuthGateProps {
   users: any[];
@@ -52,6 +62,10 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
   }, [initialUser, users, selectedId]);
 
   const selected = users.find(user => user.id === selectedId) || users[0];
+  // Approved leave: the account is signed out and cannot sign back in until the
+  // leave ends (or HR declines it). The pad is disabled and the server refuses
+  // the same request independently — hiding the button is not the guard.
+  const selectedOnLeave = Boolean(selected?.onLeave);
 
   const authenticateWithPin = useCallback(async (targetPin: string, targetUserId?: number | null) => {
     if (targetPin.length !== 4) {
@@ -83,7 +97,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
     if (users.length === 0) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (submitting) return;
+      if (submitting || selectedOnLeave) return;
       if (e.key >= "0" && e.key <= "9") {
         setPin(prev => {
           const next = (prev + e.key).slice(0, 4);
@@ -105,9 +119,10 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [submitting, pin, selectedId, authenticateWithPin, required, onCancel, users.length]);
+  }, [submitting, pin, selectedId, selectedOnLeave, authenticateWithPin, required, onCancel, users.length]);
 
   const addDigit = (digit: string) => {
+    if (selectedOnLeave) return;
     if (pin.length < 4) {
       const next = pin + digit;
       setPin(next);
@@ -295,13 +310,20 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
                 <button
                   key={user.id}
                   onClick={() => { setSelectedId(user.id); setPin(""); setError(""); }}
-                  className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${selectedId === user.id ? "border-amber-500 bg-amber-500/10 shadow-md shadow-amber-950/30" : "border-slate-800 bg-slate-950/60 hover:border-slate-700"}`}
+                  className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${selectedId === user.id ? (user.onLeave ? "border-sky-500 bg-sky-500/10 shadow-md shadow-sky-950/30" : "border-amber-500 bg-amber-500/10 shadow-md shadow-amber-950/30") : "border-slate-800 bg-slate-950/60 hover:border-slate-700"} ${user.onLeave ? "opacity-80" : ""}`}
                 >
                   <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${user.avatarColor} font-black text-white`}>
                     {user.name.charAt(0)}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold text-white">{user.name}</span>
+                    <span className="block truncate text-sm font-bold text-white">
+                      {user.name}
+                      {user.onLeave && (
+                        <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 align-middle text-[9px] font-black uppercase tracking-wide text-sky-300">
+                          <CalendarOff className="h-3 w-3" />{tt(lang, "On leave")}
+                        </span>
+                      )}
+                    </span>
                     <span className="block truncate text-[11px] font-semibold text-slate-400">{user.role}</span>
                   </span>
                 </button>
@@ -324,6 +346,20 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
               <div className="text-sm font-black text-white">{selected?.name || "Select employee"}</div>
               <div className="text-[11px] font-semibold text-amber-400">{selected?.role || "No role selected"}</div>
             </div>
+            {/* Approved leave blocks the sign-in: the prompt says why, and the
+                PIN pad is disabled so nobody types four digits for nothing. The
+                server refuses the same request independently. */}
+            {selected?.onLeave && (
+              <div className="mb-3 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3 text-center">
+                <div className="flex items-center justify-center gap-2 text-[11px] font-black uppercase tracking-wide text-sky-200">
+                  <CalendarOff className="h-4 w-4" />{tt(lang, "On approved leave")}
+                </div>
+                <p className="mt-1 text-[11px] font-semibold leading-relaxed text-sky-100/90">
+                  {tt(lang, "Sign-in is blocked while this employee is on leave.")}
+                  {selected?.leaveUntil ? ` ${tt(lang, "Back on")} ${leaveDateLabel(selected.leaveUntil)}.` : ""}
+                </p>
+              </div>
+            )}
             <div className="mb-4 flex justify-center gap-3" aria-label={`${pin.length} PIN digits entered`}>
               {[0, 1, 2, 3].map(index => <span key={index} className={`h-3 w-3 rounded-full border ${index < pin.length ? "border-amber-400 bg-amber-400" : "border-slate-600 bg-slate-900"}`} />)}
             </div>
@@ -338,7 +374,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
             {error && <div className="mt-3 rounded-lg bg-rose-500/10 p-2 text-center text-[11px] font-bold text-rose-300">{error}</div>}
             <button
               onClick={() => authenticateWithPin(pin, selectedId)}
-              disabled={submitting || pin.length !== 4 || !selectedId}
+              disabled={submitting || selectedOnLeave || pin.length !== 4 || !selectedId}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ShieldCheck className="h-4 w-4" />

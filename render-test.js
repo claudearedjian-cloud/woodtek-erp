@@ -72,6 +72,9 @@ compile("src/lib/payables.ts", "lib/payables.js");
 compile("src/lib/invoicing.ts", "lib/invoicing.js");
 compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
 compile("src/lib/hrPayroll.ts", "lib/hrPayroll.js");
+compile("src/lib/hrCalendar.ts", "lib/hrCalendar.js");
+compile("src/lib/hrCalendar.server.ts", "lib/hrCalendar.server.js");
+compile("src/lib/leaveAvailability.ts", "lib/leaveAvailability.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
@@ -775,7 +778,7 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
-const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_|hr_salary_history_)/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_|hr_salary_history_|hr_overtime_entries_)/g) || []).length;
 check(
   schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
   "dbx: schema.ts keeps every planned index, plus purchasing, payables and invoicing-only indexes",
@@ -3059,6 +3062,487 @@ check(
     clientsViewSrc41.includes("projectsFilter") && clientsViewSrc41.includes("sortBy"),
     "filters: Clients & Architects gained project-type filter and sort on top of search",
   );
+}
+
+
+// ---- bundle 45: HR working calendar, holidays, overtime and the leave gate ----
+{
+  const cal = require("./compiled/lib/hrCalendar.js");
+  const hrPay45 = require("./compiled/lib/hrPayroll.js");
+  const leaveAvail = require("./compiled/lib/leaveAvailability.js");
+
+  // -- working week + daily hours -------------------------------------------
+  const base = cal.defaultHrCalendar();
+  check(
+    base.workDays.join(",") === "1,2,3,4,5" && base.workdayStart === "08:00" && base.workdayEnd === "17:00" && base.breakMinutes === 60,
+    "HR calendar: the factory default is Monday–Friday, 08:00–17:00 with a 60-minute break",
+  );
+  check(
+    cal.standardDailyMinutes(base) === 480 && cal.standardDailyHours(base) === 8 && cal.formatMinutes(480) === "8 h",
+    "HR calendar: daily hours are derived from the start/end times minus the unpaid break",
+  );
+  check(
+    cal.isWorkingDay("2026-10-05", base) === true && cal.isWorkingDay("2026-10-03", base) === false && cal.dayKind("2026-10-03", base) === "Day off",
+    "HR calendar: Monday is a working day and Saturday is a day off",
+  );
+  check(
+    cal.workingDaysInMonth(2026, 10, base) === 22 && cal.standardMonthlyHours(2026, 10, base) === 176,
+    "HR calendar: October 2026 holds 22 working days = 176 standard hours",
+  );
+  check(
+    cal.describeCalendar(base) === "Mon–Fri · 08:00–17:00 (8 h/day)",
+    "HR calendar: the saved rules render as one readable summary line",
+  );
+
+  // -- national / religious holidays ----------------------------------------
+  const withHolidays = cal.sanitizeHrCalendar({
+    ...base,
+    holidays: [
+      { name: "Independence Day", type: "National", startDate: "2026-11-22", endDate: "", recurring: true, paid: true },
+      { name: "Eid al-Fitr", type: "Religious", startDate: "2026-03-20", endDate: "2026-03-22", recurring: false, paid: true },
+      { name: "Factory shutdown", type: "Company", startDate: "2026-08-15", endDate: "2026-08-16", recurring: false, paid: false },
+    ],
+  });
+  check(
+    withHolidays.holidays.length === 3 && withHolidays.holidays[0].name === "Eid al-Fitr",
+    "HR calendar: holidays are cleaned, de-duplicated and sorted by date",
+  );
+  check(
+    cal.holidayOn("2026-11-22", withHolidays.holidays)?.name === "Independence Day"
+    && cal.holidayOn("2027-11-22", withHolidays.holidays)?.name === "Independence Day"
+    && cal.holidayOn("2026-11-23", withHolidays.holidays) === null,
+    "HR calendar: a recurring national holiday returns every year on its month/day",
+  );
+  check(
+    cal.dayKind("2026-03-21", withHolidays) === "Holiday"
+    && cal.dayKind("2026-03-23", withHolidays) === "Working"
+    && cal.isWorkingDay("2026-03-20", withHolidays) === false,
+    "HR calendar: a multi-day religious holiday covers its whole span and nothing more",
+  );
+  check(
+    cal.workingDaysBetween("2026-03-16", "2026-03-22", base) === 5
+    && cal.workingDaysBetween("2026-03-16", "2026-03-22", withHolidays) === 4,
+    "HR calendar: working-day counts drop by the holidays inside the range",
+  );
+  check(
+    cal.holidaysInMonth(2026, 3, withHolidays).length === 3 && cal.holidaysInMonth(2026, 1, withHolidays).length === 0,
+    "HR calendar: the month preview lists exactly the holidays that fall inside it",
+  );
+
+  // -- validation ------------------------------------------------------------
+  let badRange = false;
+  try { cal.sanitizeHrCalendar({ ...base, workdayStart: "17:00", workdayEnd: "08:00" }); } catch (e) { badRange = e instanceof hrPay45.HRPayrollError; }
+  check(badRange, "HR calendar: a daily end time before the start time is refused");
+  let badBreak = false;
+  try { cal.sanitizeHrCalendar({ ...base, workdayStart: "08:00", workdayEnd: "09:00", breakMinutes: 120 }); } catch (e) { badBreak = e instanceof hrPay45.HRPayrollError; }
+  check(badBreak, "HR calendar: a break longer than the working day is refused");
+  let noDays = false;
+  try { cal.sanitizeHrCalendar({ ...base, workDays: [] }); } catch (e) { noDays = e instanceof hrPay45.HRPayrollError; }
+  check(noDays, "HR calendar: at least one working day is required (payroll divides by them)");
+  let badHoliday = false;
+  try { cal.sanitizeHrCalendar({ ...base, holidays: [{ name: "Broken", startDate: "2026-02-31" }] }); } catch (e) { badHoliday = e instanceof hrPay45.HRPayrollError; }
+  check(badHoliday, "HR calendar: an impossible holiday date is refused");
+  let longHoliday = false;
+  try { cal.sanitizeHrCalendar({ ...base, holidays: [{ name: "Too long", startDate: "2026-03-01", endDate: "2026-06-01" }] }); } catch (e) { longHoliday = e instanceof hrPay45.HRPayrollError; }
+  check(longHoliday, "HR calendar: a single holiday cannot span more than 30 days");
+  check(
+    cal.sanitizeHrCalendar({ ...base, holidays: [{ name: "No type given", startDate: "2026-05-01" }] }).holidays[0].endDate === "2026-05-01"
+    && cal.sanitizeHrCalendar({ ...base, holidays: [{ name: "Weird", type: "Banana", startDate: "2026-05-01" }] }).holidays[0].type === "Other",
+    "HR calendar: a one-day holiday defaults its end date and an unknown type falls back to Other",
+  );
+
+  // -- overtime maths --------------------------------------------------------
+  check(
+    cal.derivedHourlyRateCents(60000, 2026, 10, base) === 341 && cal.derivedHourlyRateCents(0, 2026, 10, base) === 0,
+    "HR overtime: the hourly rate is monthly salary ÷ that month's standard hours (integer cents)",
+  );
+  check(
+    cal.overtimeMultiplierPercent("Working", base.overtime) === 150
+    && cal.overtimeMultiplierPercent("Holiday", base.overtime) === 200
+    && cal.overtimeMultiplierPercent("Day off", base.overtime) === 150,
+    "HR overtime: the day kind picks the multiplier (150 % weekday, 200 % holiday by default)",
+  );
+  check(
+    cal.overtimeRateCentsPerHour("Working", 341, base.overtime) === 512
+    && cal.overtimeRateCentsPerHour("Holiday", 341, base.overtime) === 682
+    && cal.overtimeRateCentsPerHour("Working", 0, base.overtime) === 0,
+    "HR overtime: the suggested rate per hour is base rate × multiplier, and 0 without a salary",
+  );
+  check(
+    cal.overtimeAmountCents(150, 512) === 1280 && cal.overtimeAmountCents(60, 682) === 682 && cal.overtimeAmountCents(0, 682) === 0,
+    "HR overtime: the amount is minutes ÷ 60 × rate, rounded to integer cents",
+  );
+  check(
+    cal.overtimeMinutesInRange("17:00", "20:00", base) === 180 && cal.overtimeMinutesInRange("08:00", "20:00", base) === 240,
+    "HR overtime: only the hours beyond the standard day count (a full 08:00–20:00 day is 4 h overtime)",
+  );
+  check(
+    cal.overtimeMinutesInRange("20:00", "17:00", base) === 0 && cal.minutesBetweenTimes("17:00", "20:30") === 210,
+    "HR overtime: a reversed time range yields no overtime",
+  );
+
+  // -- overtime entry parsing ------------------------------------------------
+  const otEntry = hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-10-07", minutes: 150, startTime: "17:00", endTime: "19:30", rateCentsPerHour: 512, notes: "Dispatch batch" });
+  check(
+    otEntry.userId === 7 && otEntry.minutes === 150 && otEntry.rateCentsPerHour === 512 && otEntry.notes === "Dispatch batch",
+    "HR overtime: a valid entry parses with its typed rate per hour",
+  );
+  let otShort = false;
+  try { hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-10-07", minutes: 2 }); } catch (e) { otShort = e instanceof hrPay45.HRPayrollError; }
+  check(otShort, "HR overtime: entries shorter than 5 minutes are refused");
+  let otLong = false;
+  try { hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-10-07", minutes: 1500 }); } catch (e) { otLong = e instanceof hrPay45.HRPayrollError; }
+  check(otLong, "HR overtime: more than 24 hours in one entry is refused");
+  let otBadDate = false;
+  try { hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-13-40", minutes: 60 }); } catch (e) { otBadDate = e instanceof hrPay45.HRPayrollError; }
+  check(otBadDate, "HR overtime: an impossible work date is refused");
+  let otBadTimes = false;
+  try { hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-10-07", minutes: 60, startTime: "20:00", endTime: "18:00" }); } catch (e) { otBadTimes = e instanceof hrPay45.HRPayrollError; }
+  check(otBadTimes, "HR overtime: an end time before the start time is refused");
+  let otBadRate = false;
+  try { hrPay45.parseOvertimeEntry({ userId: 7, workDate: "2026-10-07", minutes: 60, rateCentsPerHour: -5 }); } catch (e) { otBadRate = e instanceof hrPay45.HRPayrollError; }
+  check(otBadRate, "HR overtime: a negative rate per hour is refused");
+  const otLine = hrPay45.overtimePayrollLine(150, 1280, "October 2026");
+  check(
+    otLine && otLine.label === "Overtime October 2026 (2 h 30 min)" && otLine.amountCents === 1280,
+    "HR overtime: approved hours become one labelled payroll earnings line",
+  );
+  check(
+    hrPay45.overtimePayrollLine(0, 0, "October 2026") === null
+    && hrPay45.totalOvertimeCents([{ amountCents: 1280 }, { amountCents: 682 }]) === 1962
+    && hrPay45.totalOvertimeMinutes([{ minutes: 150 }, { minutes: 60 }]) === 210,
+    "HR overtime: empty overtime adds no payroll line and totals sum in integer cents",
+  );
+
+  // -- leave prompt wording --------------------------------------------------
+  const blockInfo = { employeeName: "Rami", leaveType: "Annual", startDate: "2026-10-05", endDate: "2026-10-12" };
+  check(
+    cal.leaveBlockMessage(blockInfo, "assign") === "Rami is on annual leave until 12 Oct 2026. Work cannot be assigned to an employee on leave — pick someone else or decline the leave first.",
+    "HR leave gate: the assignment prompt names the employee, the leave type and the return date",
+  );
+  check(
+    cal.leaveBlockMessage(blockInfo, "login").includes("Sign-in is blocked") && cal.leaveBlockMessage({ ...blockInfo, leaveType: "Sick" }, "process").includes("sick leave") && cal.leaveBlockMessage({ ...blockInfo, leaveType: "Other" }, "process").includes("cannot be started, processed or reported"),
+    "HR leave gate: login, assignment and processing each get their own wording for the same leave",
+  );
+  check(
+    leaveAvail.leaveOptionSuffix({ employeeName: "Rami", leaveType: "Annual", startDate: "2026-10-05", endDate: "2026-10-12", message: "", userId: 3 }) === " — on annual leave until 12 Oct 2026"
+    && leaveAvail.leaveOptionSuffix(null) === ""
+    && leaveAvail.leavePrompt(null) === "",
+    "HR leave gate: pickers label an employee on leave before the save is attempted",
+  );
+  check(
+    leaveAvail.leaveEntryFor([{ userId: 3, employeeName: "Rami", leaveType: "Annual", startDate: "", endDate: "", message: "" }], "3")?.employeeName === "Rami"
+    && leaveAvail.leaveEntryFor([{ userId: 3, employeeName: "Rami", leaveType: "Annual", startDate: "", endDate: "", message: "" }], 9) === null,
+    "HR leave gate: the availability lookup matches one employee id and ignores the rest",
+  );
+
+  // -- storage & API wiring --------------------------------------------------
+  const calServerSrc = fs.readFileSync("src/lib/hrCalendar.server.ts", "utf8");
+  check(
+    calServerSrc.includes("hr-calendar.json") && calServerSrc.includes("writeJsonAtomic") && !/create table|alter table|drop table/i.test(calServerSrc),
+    "HR calendar: the working calendar persists to data/hr-calendar.json atomically — no migration",
+  );
+  const calApiSrc = fs.readFileSync("src/app/api/hr/calendar/route.ts", "utf8");
+  check(
+    (calApiSrc.match(/authorizeModule\("payroll"\)/g) || []).length === 2
+    && calApiSrc.includes('Cache-Control": "no-store, max-age=0')
+    && calApiSrc.includes("hr.calendar.save") && calApiSrc.includes("logAudit"),
+    "HR calendar API: GET and PUT both need the payroll grant, never cache, and audit the save",
+  );
+  const otApiSrc = fs.readFileSync("src/app/api/hr/overtime/route.ts", "utf8");
+  check(
+    (otApiSrc.match(/authorizeModule\("payroll"\)/g) || []).length === 5
+    && otApiSrc.includes("export async function GET") && otApiSrc.includes("export async function POST")
+    && otApiSrc.includes("export async function PUT") && otApiSrc.includes("export async function PATCH")
+    && otApiSrc.includes("export async function DELETE"),
+    "HR overtime API: all five verbs sit behind the payroll grant (money-bearing data)",
+  );
+  check(
+    otApiSrc.includes('Cache-Control": "no-store, max-age=0')
+    && ["hr.overtime.create", "hr.overtime.update", "hr.overtime.review", "hr.overtime.delete"].every((action) => otApiSrc.includes(action)),
+    "HR overtime API: responses are private and every change is written to the audit log",
+  );
+  const availApiSrc = fs.readFileSync("src/app/api/hr/availability/route.ts", "utf8");
+  check(
+    availApiSrc.includes("await authorize()") && availApiSrc.includes('Cache-Control": "no-store, max-age=0')
+    && !/baseSalary|salary|notes|reason/i.test(availApiSrc.replace(/no salary, no notes/i, "")),
+    "HR availability API: signed-in only, never cached, and exposes no salary or leave notes",
+  );
+
+  // -- database -------------------------------------------------------------
+  const hrSchema45 = fs.readFileSync("src/lib/hrSchema.server.ts", "utf8");
+  check(
+    hrSchema45.includes("create table if not exists hr_overtime_entries")
+    && hrSchema45.includes("alter table hr_overtime_entries")
+    && hrSchema45.includes("add column if not exists payroll_run_id")
+    && !/DROP\s+(TABLE|COLUMN)|TRUNCATE/i.test(hrSchema45),
+    "HR overtime: the register table is created additively and older installs gain the new columns",
+  );
+  check(
+    hrSchema45.includes("minutes integer not null check (minutes between 5 and 1440)")
+    && hrSchema45.includes("status text not null default 'Pending' check (status in ('Pending', 'Approved', 'Rejected'))")
+    && hrSchema45.includes("references hr_payroll_runs(id) on delete set null"),
+    "HR overtime: database checks bound the minutes and status, and a deleted run frees its entries",
+  );
+  check(
+    fs.readFileSync("installer/schema.sql", "utf8").includes("create table if not exists hr_overtime_entries")
+    && fs.readFileSync("installer/schema.sql", "utf8").includes("hr_overtime_entries_user_date_idx"),
+    "HR overtime installer: a fresh setup creates the same register table and indexes as the lazy path",
+  );
+  const dbSchema45 = fs.readFileSync("src/db/schema.ts", "utf8");
+  check(
+    dbSchema45.includes('pgTable("hr_overtime_entries"')
+    && dbSchema45.includes('rateCentsPerHour: integer("rate_cents_per_hour")')
+    && dbSchema45.includes('payrollRunId: integer("payroll_run_id").references(() => hrPayrollRuns.id, { onDelete: "set null" })'),
+    "HR overtime: the Drizzle schema mirrors the DDL, including the payroll-run link",
+  );
+
+  // -- server rules ---------------------------------------------------------
+  const otServerSrc = fs.readFileSync("src/lib/hrOvertime.server.ts", "utf8");
+  check(
+    otServerSrc.includes("assertDailyCap") && otServerSrc.includes("daily overtime cap")
+    && otServerSrc.includes("This overtime is already recorded for that employee on that day"),
+    "HR overtime server: the daily cap is enforced across the day's entries and a double-click cannot duplicate one",
+  );
+  check(
+    otServerSrc.includes("workLeaveBlock(values.userId, values.workDate")
+    && otServerSrc.includes("dayKind(values.workDate, calendar)")
+    && otServerSrc.includes("derivedHourlyRateCents")
+    && otServerSrc.includes("No overtime rate could be worked out"),
+    "HR overtime server: a leave day is refused, the day kind is snapshotted and the rate falls back to salary ÷ standard hours",
+  );
+  check(
+    otServerSrc.includes("already included in the") && otServerSrc.includes("was paid in the posted")
+    && otServerSrc.includes("isNull(hrOvertimeEntries.payrollRunId)"),
+    "HR overtime server: entries a payroll run has taken are locked, and only unpaid ones are offered to a new draft",
+  );
+  const hrServer45 = fs.readFileSync("src/lib/hrPayroll.server.ts", "utf8");
+  check(
+    hrServer45.includes("approvedOvertimeForPeriod(year, month, tx)")
+    && hrServer45.includes("overtimePayrollLine(ot.minutes, ot.amountCents, payrollPeriodLabel(year, month))")
+    && hrServer45.includes("linkOvertimeToRun(linkedEntryIds, run.id, tx)")
+    && hrServer45.includes("unlinkOvertimeFromRun(runId, tx)"),
+    "HR payroll: a draft pays approved overtime inside its transaction and deleting the draft frees those hours",
+  );
+
+  // -- leave gate ------------------------------------------------------------
+  const gateSrc = fs.readFileSync("src/lib/hrLeaveGate.server.ts", "utf8");
+  check(
+    gateSrc.includes("to_regclass('public.hr_leave_requests')")
+    && gateSrc.includes('eq(hrLeaveRequests.status, "Approved")')
+    && (gateSrc.match(/} catch \{/g) || []).length >= 3,
+    "HR leave gate: only Approved leave blocks, the HR tables may not exist yet, and every failure falls open",
+  );
+  check(
+    gateSrc.includes("isLastLoginManager") && gateSrc.includes("TODAY_CACHE_MS") && gateSrc.includes("todayYmd"),
+    "HR leave gate: the last Manager sign-in is never locked out and the session check is cached per day",
+  );
+  check(
+    gateSrc.includes("blockLogin") && gateSrc.includes("blockWork") && gateSrc.includes("readHrCalendar()"),
+    "HR leave gate: both blocks are switches read from the saved working calendar",
+  );
+  const authSrc45 = fs.readFileSync("src/lib/auth.ts", "utf8");
+  check(
+    authSrc45.includes("if (await loginLeaveBlock(found.id, found.role)) return null;"),
+    "HR leave gate: an approved leave ends the session, so every API and screen drops the employee",
+  );
+  const authApiSrc45 = fs.readFileSync("src/app/api/auth/route.ts", "utf8");
+  check(
+    authApiSrc45.includes("loginLeaveBlock(candidate.id, candidate.role)")
+    && authApiSrc45.includes("{ status: 403 }")
+    && authApiSrc45.includes('"login.blocked"'),
+    "HR leave gate: the sign-in POST refuses an employee on leave with the reason and audits it",
+  );
+  const rosterSrc45 = fs.readFileSync("src/app/api/auth/roster/route.ts", "utf8");
+  check(
+    rosterSrc45.includes("approvedLeaveMap(") && rosterSrc45.includes("loginBlockingEnabled()")
+    && rosterSrc45.includes("onLeave: onLeave.has(entry.id)")
+    && !rosterSrc45.includes("leaveType"),
+    "HR leave gate: the public roster flags a blocked sign-in without disclosing the leave type",
+  );
+  const opsRouteSrc45 = fs.readFileSync("src/app/api/operations/route.ts", "utf8");
+  const opsIdRouteSrc45 = fs.readFileSync("src/app/api/operations/[id]/route.ts", "utf8");
+  const shiftsSrc45 = fs.readFileSync("src/app/api/shifts/assignments/route.ts", "utf8");
+  const attendanceSrc45 = fs.readFileSync("src/app/api/attendance/route.ts", "utf8");
+  check(
+    [opsRouteSrc45, opsIdRouteSrc45, shiftsSrc45, attendanceSrc45].every((src) => src.includes("hrLeaveGate.server"))
+    && [opsRouteSrc45, opsIdRouteSrc45, shiftsSrc45, attendanceSrc45].every((src) => src.includes("onLeave.message") && src.includes("{ status: 409 }")),
+    "HR leave gate: operations, shift assignments and clock-ins all refuse an employee on leave with the prompt",
+  );
+  check(
+    opsIdRouteSrc45.includes('requestedStatus === "In Progress" || requestedStatus === "Completed"')
+    && opsIdRouteSrc45.includes('workLeaveBlock(creditedOperatorId, undefined, "process")')
+    && opsIdRouteSrc45.includes("workBlockingEnabled()"),
+    "HR leave gate: work cannot be started or completed in the name of an employee who is on leave",
+  );
+  check(
+    shiftsSrc45.includes("workLeaveBlock(userId, workDate") && opsIdRouteSrc45.includes("dateToYmd(body.scheduledStart)"),
+    "HR leave gate: the planned day decides the check — a shift date or an operation appointment, else today",
+  );
+
+  // -- HR screen UI ---------------------------------------------------------
+  const hrView45 = fs.readFileSync("src/components/HrPayrollView.tsx", "utf8");
+  check(
+    hrView45.includes('useState<"employees" | "leave" | "overtime" | "calendar" | "payroll">')
+    && hrView45.includes("Working Calendar") && hrView45.includes(">Overtime"),
+    "HR UI: the screen gains Overtime and Working Calendar tabs next to Employees, Leave and Payroll",
+  );
+  check(
+    hrView45.includes('fetch("/api/hr/calendar"') && hrView45.includes('method: "PUT"')
+    && hrView45.includes("toggleWorkDay") && hrView45.includes("workdayStart") && hrView45.includes("breakMinutes")
+    && hrView45.includes("Unsaved changes"),
+    "HR UI: the calendar tab edits work days, daily hours and the break, and saves through PUT /api/hr/calendar",
+  );
+  check(
+    hrView45.includes("HOLIDAY_TYPES") && hrView45.includes("addHoliday") && hrView45.includes("removeHoliday")
+    && hrView45.includes("Repeats every year") && hrView45.includes("Paid holiday"),
+    "HR UI: national, religious and company holidays can be added, repeated yearly and removed",
+  );
+  check(
+    hrView45.includes("weekdayMultiplierPercent") && hrView45.includes("holidayMultiplierPercent")
+    && hrView45.includes("defaultRateCentsPerHour") && hrView45.includes("maxMinutesPerDay")
+    && hrView45.includes("approvalRequired"),
+    "HR UI: the overtime policy exposes the company rate, the three multipliers, the daily cap and the approval rule",
+  );
+  check(
+    hrView45.includes("leaveAccess.blockLogin") && hrView45.includes("leaveAccess.blockWork")
+    && hrView45.includes("Block sign-in during leave") && hrView45.includes("Block assigning and processing work"),
+    "HR UI: the leave rules are two visible switches with an explanation of what they refuse",
+  );
+  check(
+    hrView45.includes('fetch(`/api/hr/overtime?year=${year}&month=${month}`')
+    && hrView45.includes("submitOvertime") && hrView45.includes("reviewOvertime") && hrView45.includes("deleteOvertime")
+    && hrView45.includes("Rate per hour ($)"),
+    "HR UI: the overtime tab records, approves, rejects, edits and deletes entries with an editable rate per hour",
+  );
+  check(
+    hrView45.includes("overtimeRateCentsPerHour") && hrView45.includes("overtimeAmountCents") && hrView45.includes("DayKindPill"),
+    "HR UI: the overtime form previews the day type, the multiplier and the amount before saving",
+  );
+  check(
+    hrView45.includes("workingDaysBetween(leaveForm.startDate, leaveForm.endDate") && hrView45.includes("leaveRangeHolidays"),
+    "HR UI: the leave form shows working days and the public holidays inside the requested range",
+  );
+  check(
+    hrView45.includes("payrollOvertimeUnpaid") && hrView45.includes("payrollOvertimePending")
+    && hrView45.includes("will be added to the draft as an earnings line per employee")
+    && hrView45.includes("approved overtime"),
+    "HR UI: the payroll tab tells HR which overtime the draft will pay and which still waits for approval",
+  );
+
+  // -- sign-in + assignment pickers -----------------------------------------
+  const authGateSrc45 = fs.readFileSync("src/components/AuthGate.tsx", "utf8");
+  check(
+    authGateSrc45.includes("selectedOnLeave") && authGateSrc45.includes("disabled={submitting || selectedOnLeave || pin.length !== 4 || !selectedId}")
+    && authGateSrc45.includes('tt(lang, "On approved leave")') && authGateSrc45.includes("if (submitting || selectedOnLeave) return;"),
+    "sign-in UI: an employee on approved leave is badged, the prompt explains why and the PIN pad is disabled",
+  );
+  const workforceSrc45 = fs.readFileSync("src/components/WorkforceView.tsx", "utf8");
+  check(
+    workforceSrc45.includes("fetchLeaveAvailability(date)") && workforceSrc45.includes("leaveOptionSuffix(away)")
+    && workforceSrc45.includes("leavePrompt(blocked)") && workforceSrc45.includes("window.alert(message)")
+    && workforceSrc45.includes("disabled={Boolean(assignOnLeave)}"),
+    "shift planner: picking an employee on leave pops the prompt and the save button is disabled",
+  );
+  const machinesSrc45 = fs.readFileSync("src/components/MachinesView.tsx", "utf8");
+  check(
+    machinesSrc45.includes("confirmCrewAdd") && machinesSrc45.includes("leaveOptionSuffix(awayOperator(u.id))"),
+    "machine crews: an operator on leave is labelled in the picker and adding one asks for confirmation",
+  );
+  const i18n45 = require("./compiled/lib/i18n.js");
+  check(
+    i18n45.tt("ar", "On leave") !== "On leave" && i18n45.tt("fr", "On leave") === "En congé"
+    && i18n45.tt("ar", "On approved leave") !== "On approved leave" && i18n45.tt("fr", "Back on") === "Retour le",
+    "i18n: the leave sign-in labels ship in Arabic and French",
+  );
+}
+
+
+// ---- bundle 45b: the working-calendar register really persists (runtime) ----
+{
+  const os = require("node:os");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "woodtek-hr-calendar-"));
+  const previousDataDir = process.env.WOODTEK_DATA_DIR;
+  process.env.WOODTEK_DATA_DIR = tmpDir;
+  try {
+    const calServer = require("./compiled/lib/hrCalendar.server.js");
+    const cal45b = require("./compiled/lib/hrCalendar.js");
+    const hrPay45b = require("./compiled/lib/hrPayroll.js");
+
+    check(
+      calServer.readHrCalendarFile() === null
+      && cal45b.describeCalendar(calServer.readHrCalendar()) === "Mon–Fri · 08:00–17:00 (8 h/day)"
+      && calServer.readHrCalendar().leaveAccess.blockLogin === true
+      && calServer.readHrCalendar().leaveAccess.blockWork === true,
+      "HR calendar storage: with no saved file the company starts on the documented defaults (leave blocking on)",
+    );
+
+    const saved = calServer.writeHrCalendar({
+      workDays: [1, 2, 3, 4, 5, 6],
+      workdayStart: "07:30",
+      workdayEnd: "16:30",
+      breakMinutes: 45,
+      holidays: [
+        { name: "Eid al-Fitr", type: "Religious", startDate: "2026-03-20", endDate: "2026-03-22", recurring: false, paid: true },
+        { name: "Independence Day", type: "National", startDate: "2026-11-22", recurring: true, paid: true },
+      ],
+      overtime: { defaultRateCentsPerHour: 950, weekdayMultiplierPercent: 125, weekendMultiplierPercent: 175, holidayMultiplierPercent: 250, maxMinutesPerDay: 240, approvalRequired: false },
+      leaveAccess: { blockLogin: false, blockWork: true },
+    });
+    const onDisk = JSON.parse(fs.readFileSync(path.join(tmpDir, "hr-calendar.json"), "utf8"));
+    check(
+      saved.workdayStart === "07:30" && saved.workDays.length === 6 && saved.overtime.holidayMultiplierPercent === 250
+      && onDisk.version === 1 && onDisk.workdayEnd === "16:30" && onDisk.holidays.length === 2,
+      "HR calendar storage: saving writes data/hr-calendar.json with every rule, holidays included",
+    );
+    check(
+      calServer.readHrCalendarFile()?.breakMinutes === 45
+      && cal45b.standardDailyMinutes(calServer.readHrCalendar()) === 495
+      && cal45b.workingDaysInMonth(2026, 10, calServer.readHrCalendar()) === 27,
+      "HR calendar storage: the saved week is what the overtime and payroll maths then use",
+    );
+    check(
+      calServer.readHrCalendar().leaveAccess.blockLogin === false
+      && calServer.readHrCalendar().leaveAccess.blockWork === true
+      && cal45b.overtimeRateCentsPerHour("Holiday", 950, calServer.readHrCalendar().overtime) === 2375,
+      "HR calendar storage: the leave switches and the company overtime rate come back from disk",
+    );
+
+    let refused = false;
+    try {
+      calServer.writeHrCalendar({ ...saved, workdayStart: "08:00", workdayEnd: "08:00", breakMinutes: 600 });
+    } catch (e) { refused = e instanceof hrPay45b.HRPayrollError; }
+    check(
+      refused && calServer.readHrCalendarFile()?.workdayStart === "07:30",
+      "HR calendar storage: an impossible week is refused and the saved file is left untouched",
+    );
+
+    // A second process (an installer, a restore, an admin with a text editor)
+    // rewriting the file must be picked up without a restart.
+    fs.writeFileSync(path.join(tmpDir, "hr-calendar.json"), JSON.stringify({
+      version: 1,
+      ...saved,
+      workdayStart: "06:00",
+      workdayEnd: "14:00",
+      breakMinutes: 30,
+      holidays: [...saved.holidays, { id: "xmas", name: "Christmas", type: "Other", startDate: "2026-12-25", endDate: "2026-12-25", recurring: true, paid: true, notes: "" }],
+    }));
+    check(
+      calServer.readHrCalendarFile()?.workdayStart === "06:00"
+      && calServer.readHrCalendarFile()?.holidays.length === 3,
+      "HR calendar storage: an out-of-process edit is seen at once (mtime cache, no restart needed)",
+    );
+
+    fs.writeFileSync(path.join(tmpDir, "hr-calendar.json"), "{ this is not json");
+    check(
+      calServer.readHrCalendarFile() === null && calServer.readHrCalendar().workdayStart === "08:00",
+      "HR calendar storage: a damaged file falls back to the defaults instead of breaking HR",
+    );
+  } finally {
+    if (previousDataDir === undefined) delete process.env.WOODTEK_DATA_DIR;
+    else process.env.WOODTEK_DATA_DIR = previousDataDir;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");

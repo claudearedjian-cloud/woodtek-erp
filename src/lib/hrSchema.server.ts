@@ -151,6 +151,51 @@ export async function ensureHrSchema(): Promise<void> {
       )
     `);
     await tx.execute(sql`create index if not exists hr_payroll_items_run_idx on hr_payroll_items (run_id)`);
+    // Overtime register (added with the working-calendar bundle). Created after
+    // hr_payroll_runs because a paid entry points at the run that paid it.
+    await tx.execute(sql`
+      create table if not exists hr_overtime_entries (
+        id serial primary key,
+        user_id integer not null references users(id) on delete cascade,
+        employee_name text not null default '',
+        work_date date not null,
+        day_kind text not null default 'Working' check (day_kind in ('Working', 'Holiday', 'Day off')),
+        start_time text not null default '',
+        end_time text not null default '',
+        minutes integer not null check (minutes between 5 and 1440),
+        base_rate_cents_per_hour integer not null default 0 check (base_rate_cents_per_hour between 0 and 99999999),
+        multiplier_percent integer not null default 100 check (multiplier_percent between 100 and 1000),
+        rate_cents_per_hour integer not null default 0 check (rate_cents_per_hour between 0 and 9999999),
+        amount_cents integer not null default 0 check (amount_cents between 0 and 99999999),
+        status text not null default 'Pending' check (status in ('Pending', 'Approved', 'Rejected')),
+        notes text not null default '',
+        payroll_run_id integer references hr_payroll_runs(id) on delete set null,
+        reviewed_by_id integer references users(id) on delete set null,
+        reviewed_at timestamp,
+        created_by_id integer references users(id) on delete set null,
+        created_at timestamp not null default now(),
+        updated_at timestamp not null default now()
+      )
+    `);
+    // PCs that created the table before the payroll link / review columns
+    // existed keep working: add every newer column idempotently.
+    await tx.execute(sql`
+      alter table hr_overtime_entries
+        add column if not exists employee_name text not null default '',
+        add column if not exists day_kind text not null default 'Working',
+        add column if not exists start_time text not null default '',
+        add column if not exists end_time text not null default '',
+        add column if not exists base_rate_cents_per_hour integer not null default 0,
+        add column if not exists multiplier_percent integer not null default 100,
+        add column if not exists payroll_run_id integer references hr_payroll_runs(id) on delete set null,
+        add column if not exists reviewed_by_id integer references users(id) on delete set null,
+        add column if not exists reviewed_at timestamp,
+        add column if not exists updated_at timestamp not null default now()
+    `);
+    await tx.execute(sql`create index if not exists hr_overtime_entries_user_date_idx on hr_overtime_entries (user_id, work_date)`);
+    await tx.execute(sql`create index if not exists hr_overtime_entries_work_date_idx on hr_overtime_entries (work_date)`);
+    await tx.execute(sql`create index if not exists hr_overtime_entries_status_idx on hr_overtime_entries (status)`);
+    await tx.execute(sql`create index if not exists hr_overtime_entries_payroll_run_idx on hr_overtime_entries (payroll_run_id)`);
   });
   ready = true;
 }

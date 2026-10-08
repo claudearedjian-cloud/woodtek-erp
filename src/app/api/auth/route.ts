@@ -17,6 +17,7 @@ import { logAudit } from "@/lib/audit.server";
 import { baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 import { ensureUsersLoginColumn } from "@/lib/usersSchema.server";
+import { loginLeaveBlock } from "@/lib/hrLeaveGate.server";
 
 /** GET /api/auth — who am I? Used to restore the session after a page refresh. */
 export async function GET() {
@@ -75,6 +76,24 @@ export async function POST(request: Request) {
       recordFailure(rateKey);
       logAudit({ id: candidate.id, name: candidate.name, role: candidate.role }, "login.failed", "user", "Wrong PIN");
       return NextResponse.json({ error: "Incorrect PIN or inactive employee account." }, { status: 401 });
+    }
+
+    // Correct PIN, but the employee is on approved leave today: they are not at
+    // work, so no session is issued. Checked AFTER the PIN so the leave status
+    // is never disclosed to someone who cannot authenticate.
+    const onLeave = await loginLeaveBlock(candidate.id, candidate.role);
+    if (onLeave) {
+      logAudit(
+        { id: candidate.id, name: candidate.name, role: candidate.role },
+        "login.blocked",
+        "user",
+        `Sign-in refused — ${onLeave.leaveType} leave until ${onLeave.endDate}`,
+        candidate.id,
+      );
+      return NextResponse.json(
+        { error: onLeave.message, onLeave: { ...onLeave.onLeave, action: "login" } },
+        { status: 403 },
+      );
     }
 
     clearFailures(rateKey);

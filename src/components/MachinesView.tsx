@@ -14,6 +14,7 @@ import {
   Pencil
 } from "lucide-react";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
+import { fetchLeaveAvailability, leaveEntryFor, leaveOptionSuffix, type LeaveAvailabilityEntry } from "@/lib/leaveAvailability";
 
 interface MachinesViewProps {
   machines: any[];
@@ -60,6 +61,25 @@ export default function MachinesView({
     } catch {
       // Storage can be disabled; Station's short cross-device poll remains the fallback.
     }
+  };
+
+  // Who is on approved leave today: the crew pickers label those names and ask
+  // before adding one, because a crew is a standing skill list (they are still
+  // the right operator for that machine) while dated work is refused outright.
+  const [leaveToday, setLeaveToday] = useState<LeaveAvailabilityEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchLeaveAvailability().then((rows) => { if (!cancelled) setLeaveToday(rows); });
+    return () => { cancelled = true; };
+  }, []);
+  const awayOperator = (userId: unknown): LeaveAvailabilityEntry | null => leaveEntryFor(leaveToday, userId);
+  const confirmCrewAdd = (userId: number): boolean => {
+    const away = awayOperator(userId);
+    if (!away) return true;
+    return window.confirm(
+      `${away.employeeName} is on ${away.leaveType.toLowerCase()} leave until ${away.endDate}. `
+      + "They cannot sign in or be given work until then. Add them to this machine's crew anyway?",
+    );
   };
 
   const [categoryList, setCategoryList] = useState<string[]>(["Beam Saw", "Edge Bander", "CNC Router", "Press", "Panel Saw", "Drill Press", "Spray & Finish", "Assembly Table"]);
@@ -488,7 +508,7 @@ export default function MachinesView({
                   {canManage && (
                     <select
                       value=""
-                      onChange={(e) => { const v = Number(e.target.value); if (v && !opIdsOf(m).includes(v)) handleSetOperators(m.id, [...opIdsOf(m), v]); }}
+                      onChange={(e) => { const v = Number(e.target.value); if (v && !opIdsOf(m).includes(v) && confirmCrewAdd(v)) handleSetOperators(m.id, [...opIdsOf(m), v]); }}
                       className="bg-transparent border-0 text-xs font-semibold text-slate-500 italic cursor-pointer focus:outline-none max-w-[140px]"
                       title="Assign another operator to this machine"
                     >
@@ -497,7 +517,7 @@ export default function MachinesView({
                         .filter((u: any) => ["Machine Operator", "Technician", "Manager"].includes(baseRoleOf(u.role)) && !opIdsOf(m).includes(Number(u.id)))
                         .map((u: any) => (
                           <option key={u.id} value={u.id} className="bg-slate-900 text-white">
-                            {u.name}
+                            {u.name}{leaveOptionSuffix(awayOperator(u.id))}
                           </option>
                         ))}
                     </select>
@@ -624,14 +644,14 @@ export default function MachinesView({
                   })}
                   <select
                     value=""
-                    onChange={(e) => { const v = Number(e.target.value); if (v && !formOperatorIds.includes(v)) setFormOperatorIds([...formOperatorIds, v]); }}
+                    onChange={(e) => { const v = Number(e.target.value); if (v && !formOperatorIds.includes(v) && confirmCrewAdd(v)) setFormOperatorIds([...formOperatorIds, v]); }}
                     className="bg-transparent border-0 text-xs font-semibold text-slate-500 italic cursor-pointer focus:outline-none"
                   >
                     <option value="">+ add operator</option>
                     {users
                       .filter((u: any) => !formOperatorIds.includes(Number(u.id)))
                       .map((u: any) => (
-                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                        <option key={u.id} value={u.id}>{u.name} ({u.role}){leaveOptionSuffix(awayOperator(u.id))}</option>
                       ))}
                   </select>
                 </div>
