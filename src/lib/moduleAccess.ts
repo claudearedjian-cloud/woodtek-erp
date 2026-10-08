@@ -36,6 +36,7 @@ export type ModuleId =
   | "designer"
   | "warehouse"
   | "plant"
+  | "assembly"
   | "reception";
 
 /**
@@ -69,6 +70,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "designer",
     "warehouse",
     "plant",
+    "assembly",
     "reception",
   ],
   "Sales Coordinator": [
@@ -103,6 +105,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "downtime",
     "workforce",
     "plant",
+    "assembly",
   ],
   // Warehouse Supervisor lives in the warehouse: fulfilment board + stock.
   "Warehouse Supervisor": [
@@ -122,6 +125,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "downtime",
     "warehouse",
     "plant",
+    "assembly",
   ],
   Technician: [
     "dashboard",
@@ -163,6 +167,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   designer: "Menu Designer",
   plant: "Plant Performance",
   reception: "Material Reception",
+  assembly: "Cabinet Assembly",
 };
 
 /**

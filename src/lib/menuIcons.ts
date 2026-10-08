@@ -103,6 +103,7 @@ export const MENU_ICON_CHOICES: MenuIconChoice[] = [
   { key: "settings", label: "Gear", Icon: Settings },
   { key: "designer", label: "Sliders", Icon: SlidersHorizontal },
   { key: "plant", label: "Gauge", Icon: Gauge },
+  { key: "assembly", label: "Assembly", Icon: Boxes },
   { key: "box", label: "Box", Icon: Box },
   { key: "boxes", label: "Boxes", Icon: Boxes },
   { key: "hammer", label: "Hammer", Icon: Hammer },

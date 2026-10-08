@@ -37,6 +37,8 @@ export type Action =
   | "wip:read"
   | "recipes:read"
   | "recipes:write"
+  | "assembly:read"
+  | "assembly:write"
   | "pims:read"
   | "pims:write"
   | "users:read"
@@ -74,6 +76,7 @@ const MATRIX: Record<string, Action[]> = {
     "downtime:read", "downtime:write",
     "wip:read",
     "recipes:read", "recipes:write",
+    "assembly:read", "assembly:write",
     "pims:read", "pims:write",
     "users:read", "users:manage",
     "admin:seed",
@@ -158,7 +161,7 @@ export function can(role: string | null | undefined, action: Action): boolean {
 const KNOWN_MODULE_IDS = [
   "dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "hr",
   "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "wip",
-  "quality", "downtime", "recipes", "pims", "warehouse", "plant", "reception",
+  "quality", "downtime", "recipes", "assembly", "pims", "warehouse", "plant", "reception",
 ];
 
 export interface CustomRole {
@@ -283,6 +286,8 @@ const LABELS: Record<Action, string> = {
   "wip:read": "view the live work-in-progress board",
   "recipes:read": "view routing recipes",
   "recipes:write": "create or edit routing recipes",
+  "assembly:read": "view cabinet assembly projects and 3D simulation",
+  "assembly:write": "import Polyboard files and scan parts for assembly",
   "pims:read": "view the PIMS import log and settings",
   "pims:write": "import PIMS invoices or change PIMS settings",
   "users:read": "view staff accounts",

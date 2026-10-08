@@ -3547,3 +3547,16 @@ check(
 
 console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
 process.exitCode = fails === 0 ? 0 : 1;
+
+// Assembly & Polyboard Unit Test
+compile("src/lib/cixParser.ts", "lib/cixParser.js");
+const cixParser = require("./compiled/lib/cixParser");
+const testCix = `BEGIN ID CID3
+BEGIN MAINDATA LPX=800 LPY=550 LPZ=18 CUSTSTR="Test Side" MATERIAL="MFC White" END MAINDATA
+BEGIN MACRO NAME=BG PARAM,NAME=SIDE,VALUE=0 PARAM,NAME=X,VALUE=50 PARAM,NAME=Y,VALUE=37 PARAM,NAME=DIA,VALUE=5 PARAM,NAME=DP,VALUE=13 END MACRO
+BEGIN MACRO NAME=BG PARAM,NAME=SIDE,VALUE=0 PARAM,NAME=X,VALUE=750 PARAM,NAME=Y,VALUE=37 PARAM,NAME=DIA,VALUE=5 PARAM,NAME=DP,VALUE=13 END MACRO
+END ID`;
+const parsedPart = cixParser.parseCix(testCix, "test_side.cix");
+check(parsedPart.length === 800 && parsedPart.width === 550 && parsedPart.thickness === 18, "Polyboard CIX: correctly parses LPX, LPY, LPZ");
+check(parsedPart.borings.length === 2, "Polyboard CIX: correctly parses Rover A BG boring macros");
+
