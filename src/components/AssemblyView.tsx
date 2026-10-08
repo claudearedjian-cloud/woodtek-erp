@@ -75,6 +75,11 @@ export default function AssemblyView() {
   const [pbProjFile, setPbProjFile] = useState<{ name: string; content: string } | null>(null);
   const [cixFilesList, setCixFilesList] = useState<Array<{ filename: string; content: string }>>([]);
   const [importNotes, setImportNotes] = useState("");
+  const [importReport, setImportReport] = useState<{
+    message: string;
+    warnings: string[];
+    details: Array<{ label: string; value: string }>;
+  } | null>(null);
 
   const scanInputRef = useRef<HTMLInputElement>(null);
 
@@ -289,6 +294,49 @@ export default function AssemblyView() {
         setPbProjFile(null);
         setCixFilesList([]);
         setImportProjName("");
+
+        // Read-back report: what the importer understood from the files
+        const csvDiag = data.diagnostics?.csv;
+        const cixDiag = data.diagnostics?.cix;
+        const details: Array<{ label: string; value: string }> = [];
+        if (csvDiag) {
+          details.push({ label: "Separator", value: csvDiag.delimiterLabel });
+          details.push({
+            label: "Header row",
+            value: csvDiag.headerless ? "not found (parsed by content)" : `line ${(csvDiag.headerRowIndex ?? 0) + 1}`,
+          });
+          const cols = Object.entries(csvDiag.detectedColumns || {})
+            .filter(([role]) => !role.startsWith("edge"))
+            .map(([role, label]) => `${role} ← ${label}`);
+          if (cols.length > 0) details.push({ label: "Columns", value: cols.join(" • ") });
+          details.push({
+            label: "Cabinet split",
+            value:
+              csvDiag.cabinetGrouping === "single"
+                ? "single cabinet (no cabinet field in the CSV)"
+                : csvDiag.cabinetGrouping === "column"
+                ? "by cabinet column"
+                : csvDiag.cabinetGrouping === "sections"
+                ? "by section headings"
+                : "by repeated value blocks",
+          });
+          details.push({ label: "Rows", value: `${csvDiag.rowsParsed} parts parsed, ${csvDiag.rowsSkipped} skipped` });
+        }
+        if (cixDiag) {
+          details.push({
+            label: "CIX linking",
+            value: `${cixDiag.matchedCount} part(s) linked to ${cixDiag.totalCix} file(s)${
+              cixDiag.unmatchedCix?.length ? ` • not linked: ${cixDiag.unmatchedCix.length}` : ""
+            }`,
+          });
+        }
+
+        setImportReport({
+          message: data.message || "Project imported.",
+          warnings: data.diagnostics?.warnings || [],
+          details,
+        });
+
         await loadProjects();
         setActiveProject(data.project);
         if (data.project.cabinets?.[0]) {
@@ -421,6 +469,52 @@ export default function AssemblyView() {
           </button>
         </div>
       </div>
+
+      {/* Import Report: what the importer understood from the uploaded files */}
+      {importReport && (
+        <div className="rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4 text-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 flex-1">
+              <Info className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-sm font-bold text-white">{importReport.message}</div>
+
+                {importReport.details.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {importReport.details.map((d) => (
+                      <span
+                        key={d.label}
+                        className="bg-slate-900/80 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-300"
+                      >
+                        <span className="text-slate-500">{d.label}: </span>
+                        <span className="font-mono">{d.value}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {importReport.warnings.length > 0 && (
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {importReport.warnings.map((w, i) => (
+                      <li key={i} className="flex items-start gap-2 text-amber-300">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>{w}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setImportReport(null)}
+              className="text-slate-400 hover:text-white font-bold px-1"
+              title="Dismiss import report"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Workspace Layout */}
       {loading ? (

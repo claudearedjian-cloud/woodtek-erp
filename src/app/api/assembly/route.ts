@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorize } from "@/lib/auth";
 import { readAssemblyStore, saveProject, deleteProject } from "@/lib/assemblyStorage.server";
-import { parsePolyboardCsv, parsePolyboardProjectFile, matchCixToParts, type PolyboardProject } from "@/lib/polyboard";
+import {
+  parsePolyboardCsv,
+  parsePolyboardProjectFile,
+  matchCixToParts,
+  type PolyboardCsvDiagnostics,
+  type PolyboardCixMatchResult,
+  type PolyboardProject,
+} from "@/lib/polyboard";
 import { SAMPLE_PB_PROJ, SAMPLE_CUTLIST_CSV, SAMPLE_CIX_FILES } from "@/lib/samplePolyboardData";
 import { logAudit } from "@/lib/audit.server";
 
@@ -19,7 +26,7 @@ export async function GET(req: NextRequest) {
     const { projectName } = parsePolyboardProjectFile(SAMPLE_PB_PROJ, "Kitchen-Villa-42.pb-proj");
     const { cabinetsMap } = parsePolyboardCsv(SAMPLE_CUTLIST_CSV);
     const cabinets = Array.from(cabinetsMap.values());
-    
+
     // Match CIX files
     const cixList = Object.entries(SAMPLE_CIX_FILES).map(([filename, content]) => ({
       filename,
@@ -80,20 +87,24 @@ export async function POST(req: NextRequest) {
 
     let projectName = rawProjectName?.trim() || "";
     let cabinets: any[] = [];
+    let csvDiagnostics: PolyboardCsvDiagnostics | null = null;
 
-    // Parse CSV
+    // Parse the cutting list (CSV/TXT export)
     if (csvContent) {
-      const { cabinetsMap } = parsePolyboardCsv(csvContent);
-      cabinets = Array.from(cabinetsMap.values());
+      const parsedCsv = parsePolyboardCsv(csvContent);
+      cabinets = Array.from(parsedCsv.cabinetsMap.values());
+      csvDiagnostics = parsedCsv.diagnostics;
     }
 
-    // Parse .pb-proj if provided
+    // Parse .pb-proj if provided (used for the project name and, when the
+    // cutting list has no cabinet breakdown at all, for the cabinet list)
+    let pbProjCabinetCount = 0;
     if (pbProjContent) {
       const parsedProj = parsePolyboardProjectFile(pbProjContent, pbProjFilename || "");
+      pbProjCabinetCount = parsedProj.cabinets.length;
       if (!projectName) {
         projectName = parsedProj.projectName;
       }
-      // If CSV didn't provide cabinets, use pb-proj cabinets
       if (cabinets.length === 0) {
         cabinets = parsedProj.cabinets.map((c, idx) => ({
           id: `cab-${idx + 1}`,
@@ -112,11 +123,20 @@ export async function POST(req: NextRequest) {
       projectName = (csvFilename || pbProjFilename || "Polyboard Project").replace(/\.[^/.]+$/, "");
     }
 
+    // A cutting list without any cabinet identification loads as one cabinet:
+    // name it after the project so the list stays readable.
+    if (cabinets.length === 1 && csvDiagnostics && csvDiagnostics.cabinetGrouping === "single") {
+      cabinets[0].name = projectName || cabinets[0].name;
+    }
+
     // Match CIX files if provided
     const validCixList = Array.isArray(cixFiles) ? cixFiles : [];
+    let cixMatch: PolyboardCixMatchResult | null = null;
     if (validCixList.length > 0) {
-      matchCixToParts(cabinets, validCixList);
+      cixMatch = matchCixToParts(cabinets, validCixList);
     }
+
+    const totalParts = cabinets.reduce((sum: number, c: any) => sum + (c.parts?.length || 0), 0);
 
     const projectId = `proj-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newProject: PolyboardProject = {
@@ -134,12 +154,42 @@ export async function POST(req: NextRequest) {
     };
 
     saveProject(newProject);
-    logAudit(user, "assembly.import", "assembly", `Imported project "${projectName}" with ${cabinets.length} cabinets.`);
+    logAudit(
+      user,
+      "assembly.import",
+      "assembly",
+      `Imported project "${projectName}" with ${cabinets.length} cabinets and ${totalParts} parts.`,
+    );
+
+    const warnings: string[] = [...(csvDiagnostics?.warnings || [])];
+    if (cixMatch && validCixList.length > 0 && cixMatch.matchedCount === 0) {
+      warnings.push(
+        "None of the uploaded .cix files could be linked to a part. " +
+          "Check that the CIX reference column in the cutting list matches the .cix file names (or the part names in the CIX header).",
+      );
+    } else if (cixMatch && cixMatch.unmatchedCix.length > 0) {
+      warnings.push(`Not linked to any part: ${cixMatch.unmatchedCix.slice(0, 8).join(", ")}${cixMatch.unmatchedCix.length > 8 ? "…" : ""}`);
+    }
+    if (validCixList.length === 0) {
+      warnings.push(
+        "No .cix machine file was uploaded: parts can still be scanned with their barcode / CIX reference, but no CNC drilling data is attached.",
+      );
+    }
+    if (cabinets.length === 0) {
+      warnings.push("No parts were found in the cutting list - check the file and its separator (Polyboard: Cutting list > Cutting list options > Format).");
+    }
 
     return NextResponse.json({
       success: true,
       project: newProject,
-      message: `Project "${projectName}" imported with ${cabinets.length} cabinets and ${validCixList.length} CNC CIX files.`,
+      message: `Project "${projectName}" imported with ${cabinets.length} cabinet${cabinets.length === 1 ? "" : "s"}, ${totalParts} parts and ${validCixList.length} CNC CIX file${validCixList.length === 1 ? "" : "s"}.`,
+      diagnostics: {
+        csv: csvDiagnostics,
+        cix: cixMatch,
+        pbProjCabinetCount,
+        totalParts,
+        warnings,
+      },
     });
   } catch (err: any) {
     console.error("Assembly import error:", err);
