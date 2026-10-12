@@ -751,7 +751,7 @@ export default function WoodTekERP() {
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}
           {activeTab === "recipes" && <RecipeManagerView onRefresh={refreshTemplateData} />}
-          {activeTab === "assembly" && <AssemblyView />}
+          {activeTab === "assembly" && <AssemblyView key={currentUser.id} currentUser={currentUser} />}
           {activeTab === "pims" && <PimsImportView onSelectOrder={handleSelectOrder} />}
           {activeTab === "designer" && (
             <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />

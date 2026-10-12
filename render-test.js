@@ -3727,5 +3727,311 @@ check(
   "Polyboard 3D: part types are recognized in EN/FR/DE/ES/IT (and 'Bottom Shelf Deck' is a bottom, not a shelf)",
 );
 
-console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
-process.exitCode = fails === 0 ? 0 : 1;
+// ---- Owner-specified Polyboard CSV positions (one-based 7/12/13/14) ---------
+const woodtekHeader = ["Length", "Width", "Thickness", "Qty", "Edge1", "Grain", "Part", "Material", "Edge2", "Edge3", "Edge4", "Project", "Cabinet", "CIX"];
+const woodtekRows = [
+  [720, 560, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet base", "C:\\CNC\\KB600_LS.CIX"],
+  [564, 100, 18, 2, "", 0, "Top Rail", "MFC White", "", "", "", "", "", "shared-rail"],
+  [600, 320, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet wall", "/exports/WU900_LS.cix"],
+];
+const csvRow = (cells, delimiter = ";") => cells.map((cell) => {
+  const value = String(cell);
+  return value.includes(delimiter) || value.includes('"') ? '"' + value.replace(/"/g, '""') + '"' : value;
+}).join(delimiter);
+const woodtekCsv = [woodtekHeader, ...woodtekRows].map((row) => csvRow(row)).join("\n");
+const woodtekParsed = polyboard.parsePolyboardCsv(woodtekCsv);
+const woodtekCabinets = Array.from(woodtekParsed.cabinetsMap.values());
+check(JSON.stringify(polyboard.WOODTEK_CSV_COLUMNS) === JSON.stringify({ part: 7, project: 12, cabinet: 13, cix: 14 }), "Polyboard fixed columns: positions are one-based 7/12/13/14");
+check(woodtekParsed.projectName === "Project Villa 42" && woodtekParsed.diagnostics.projectNames.length === 1, "Polyboard fixed columns: column 12 supplies the project name, not a cabinet name");
+check(woodtekCabinets.length === 2 && woodtekCabinets[0].name === "Cabinet base" && woodtekCabinets[1].name === "Cabinet wall", "Polyboard fixed columns: column 13 splits the project into its actual cabinets");
+check(woodtekCabinets[0].parts[0].name === "Left Side Panel" && woodtekCabinets[0].parts[1].name === "Top Rail (#1)", "Polyboard fixed columns: column 7 supplies part names, with quantity suffixes only when needed");
+check(woodtekParsed.parts.length === 4 && woodtekCabinets[0].parts[0].length === 720 && woodtekCabinets[0].parts[0].width === 560 && woodtekCabinets[0].parts[0].material === "MFC White", "Polyboard fixed columns: dimensions, quantities and material still use the remaining fields");
+check(woodtekCabinets[0].parts[0].cixFilename === "KB600_LS.CIX" && woodtekCabinets[0].parts[0].barcode === "KB600_LS" && woodtekCabinets[1].parts[0].cixFilename === "WU900_LS.cix", "Polyboard fixed columns: column 14 normalizes paths and uppercase extensions without a duplicate .cix suffix");
+check(woodtekParsed.diagnostics.layout === "woodtek" && woodtekParsed.diagnostics.cabinetGrouping === "column" && woodtekParsed.diagnostics.detectedColumns.cix === "column 14 (CIX filename)", "Polyboard fixed columns: diagnostics report the actual positional mapping instead of guessed blocks");
+const bareWoodtekParsed = polyboard.parsePolyboardCsv(woodtekRows.map((row) => csvRow(row)).join("\n"));
+check(bareWoodtekParsed.diagnostics.headerless && bareWoodtekParsed.parts.length === 4 && bareWoodtekParsed.parts[0].name === "Left Side Panel", "Polyboard fixed columns: headerless input keeps the first part even when names start with Project/Cabinet");
+check(bareWoodtekParsed.projectName === "Project Villa 42" && bareWoodtekParsed.cabinetsMap.size === 2 && bareWoodtekParsed.parts[0].length === 720, "Polyboard fixed columns: headerless exports use exact identity columns and infer sizes from the rest");
+const misleadingHeader = [...woodtekHeader];
+misleadingHeader[6] = "CIX";
+misleadingHeader[11] = "Cabinet";
+misleadingHeader[12] = "Project";
+misleadingHeader[13] = "Part";
+const misleadingParsed = polyboard.parsePolyboardCsv([misleadingHeader, ...woodtekRows].map((row) => csvRow(row)).join("\n"));
+check(misleadingParsed.projectName === "Project Villa 42" && misleadingParsed.parts[0].name === "Left Side Panel" && misleadingParsed.cabinetsMap.size === 2 && misleadingParsed.parts[0].cixFilename === "KB600_LS.CIX", "Polyboard fixed columns: declared positions take precedence over conflicting header aliases");
+const numericIdentityRow = [...woodtekRows[0]];
+numericIdentityRow[6] = "H";
+numericIdentityRow[11] = "2026007";
+numericIdentityRow[12] = "123";
+numericIdentityRow[13] = "9000001";
+const numericIdentityParsed = polyboard.parsePolyboardCsv([numericIdentityRow, numericIdentityRow].map((row) => csvRow(row)).join("\n"));
+check(numericIdentityParsed.projectName === "2026007" && numericIdentityParsed.parts[0].name === "H" && numericIdentityParsed.parts[0].cixFilename === "9000001.cix" && numericIdentityParsed.parts[0].length === 720 && numericIdentityParsed.parts.length === 2, "Polyboard fixed columns: numeric project/cabinet/CIX IDs and header-like part names are never mistaken for dimensions or titles");
+for (const delimiter of [";", ",", "\t", "|"]) {
+  const delimited = polyboard.parsePolyboardCsv("\uFEFFListe de débit\n" + [woodtekHeader, ...woodtekRows].map((row) => csvRow(row, delimiter)).join("\r\n"));
+  check(delimited.diagnostics.delimiter === delimiter && delimited.projectName === "Project Villa 42" && delimited.cabinetsMap.size === 2 && delimited.parts.length === 4, "Polyboard fixed columns: title/BOM/CRLF support with separator " + JSON.stringify(delimiter));
+}
+const quotedRow = [...woodtekRows[0]];
+quotedRow[6] = "Fond d'armoire";
+quotedRow[11] = 'Project; Villa "42"';
+quotedRow[12] = "Cabinet; north";
+const quotedParsed = polyboard.parsePolyboardCsv([woodtekHeader, quotedRow].map((row) => csvRow(row)).join("\n"));
+check(quotedParsed.projectName === 'Project; Villa "42"' && quotedParsed.parts[0].name === "Fond d'armoire" && quotedParsed.parts[0].cabinetName === "Cabinet; north", "Polyboard fixed columns: escaped quotes, embedded delimiters and ordinary apostrophes preserve column positions");
+const repeatedWoodtek = polyboard.parsePolyboardCsv([woodtekHeader, woodtekRows[0], woodtekHeader, woodtekRows[2]].map((row) => csvRow(row)).join("\n"));
+check(repeatedWoodtek.parts.length === 2 && repeatedWoodtek.diagnostics.rowsSkipped === 1, "Polyboard fixed columns: repeated header rows are skipped, real parts are not");
+const emptyProjectRows = woodtekRows.map((row) => row.map((value, column) => column === 11 ? "" : value));
+const emptyProjectCsv = [woodtekHeader, ...emptyProjectRows].map((row) => csvRow(row)).join("\n");
+check(polyboard.parsePolyboardCsv(emptyProjectCsv).projectName === "" && polyboard.parsePolyboardCsv(emptyProjectCsv).diagnostics.warnings.some((warning) => warning.includes("column 12")), "Polyboard fixed columns: a missing CSV project name is reported instead of copied from the cabinet");
+const sharedRailCix = 'BEGIN ID CID3\nBEGIN MAINDATA LPX=564 LPY=100 LPZ=18 CUSTSTR="Top Rail" END MAINDATA\nEND ID';
+const woodtekCixFiles = [
+  { filename: "other-rail.cix", content: sharedRailCix },
+  { filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] },
+  { filename: "shared-rail.cix", content: sharedRailCix },
+  { filename: "WU900_LS.cix", content: sampleData.SAMPLE_CIX_FILES["WU900_LS.cix"] },
+];
+const woodtekCixMatch = polyboard.matchCixToParts(woodtekCabinets, woodtekCixFiles);
+check(woodtekCixMatch.matchedCount === 4 && woodtekCabinets[0].parts[0].cixData.filename === "KB600_LS.cix" && woodtekCabinets[1].parts[0].cixData.filename === "WU900_LS.cix", "Polyboard fixed columns: CNC data links to the named column-14 file for each cabinet");
+check(woodtekCabinets[0].parts.filter((part) => part.name.startsWith("Top Rail")).every((part) => part.cixData.filename === "shared-rail.cix") && woodtekCixMatch.unmatchedCix.includes("other-rail.cix"), "Polyboard CIX: grouped quantities reuse their explicit file, never a different unused fuzzy match");
+const missingCixRow = [...woodtekRows[0]];
+missingCixRow[13] = "missing-file.cix";
+const missingCixParsed = polyboard.parsePolyboardCsv([woodtekHeader, missingCixRow].map((row) => csvRow(row)).join("\n"));
+check(polyboard.matchCixToParts(Array.from(missingCixParsed.cabinetsMap.values()), [{ filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] }]).matchedCount === 0, "Polyboard CIX: a missing explicit reference is reported unlinked, not silently substituted by part name");
+const otherLayoutCsv = [
+  "Part;Project;Cabinet;Length;Width;Thickness;Qty;CIX;Material;Edge1;Edge2;Edge3;Edge4;Grain",
+  "Left Side Panel;Another project;Base;720;560;18;1;KB600_LS;MFC;;;;;0",
+  "Left Side Panel;Another project;Wall;600;320;18;1;WU900_LS;MFC;;;;;0",
+].join("\n");
+const otherLayoutParsed = polyboard.parsePolyboardCsv(otherLayoutCsv, { layout: "auto" });
+check(otherLayoutParsed.diagnostics.layout === "auto" && otherLayoutParsed.projectName === "Another project" && otherLayoutParsed.cabinetsMap.size === 2 && otherLayoutParsed.parts[0].cixFilename === "KB600_LS.cix", "Polyboard CSV: automatic mode supports a different wide export and distinguishes project/cabinet headers");
+const mixedProjectRows = woodtekRows.map((row) => [...row]);
+mixedProjectRows[2][11] = "A different project";
+const mixedProjectCsv = [woodtekHeader, ...mixedProjectRows].map((row) => csvRow(row)).join("\n");
+check(polyboard.parsePolyboardCsv(mixedProjectCsv).diagnostics.projectNames.length === 2, "Polyboard CSV: multiple project names are detected so the API can prevent accidental cabinet mixing");
+check(sampleParsed.diagnostics.layout === "auto", "Polyboard CSV: the shorter bundled sample remains backward compatible");
+
+// ---- Loaded assembly project editing / deletion -----------------------------
+compile("src/lib/assemblyProject.ts", "lib/assemblyProject.js");
+compile("src/lib/assemblyStorage.server.ts", "lib/assemblyStorage.server.js");
+compile("src/components/AssemblyProjectDialog.tsx", "components/AssemblyProjectDialog.js");
+compile("src/app/api/assembly/route.ts", "api/assembly.js");
+const assemblyDetails = require("./compiled/lib/assemblyProject.js");
+const assemblyStorage = require("./compiled/lib/assemblyStorage.server.js");
+const AssemblyProjectDialog = require("./compiled/components/AssemblyProjectDialog.js").default;
+
+for (const bad of [null, [], "name", {}, { name: 7 }, { name: "   " }, { name: "x", notes: 7 }, { name: "x", notes: null }]) {
+  check(!assemblyDetails.parseAssemblyProjectDetails(bad).ok, "assembly edit: rejects invalid details " + JSON.stringify(bad));
+}
+check(!assemblyDetails.parseAssemblyProjectDetails({ name: "x".repeat(201) }).ok, "assembly edit: refuses overly long project names");
+check(!assemblyDetails.parseAssemblyProjectDetails({ name: "x", notes: "x".repeat(5001) }).ok, "assembly edit: refuses overly long notes");
+const cleanAssemblyDetails = assemblyDetails.parseAssemblyProjectDetails({ name: "  New kitchen  ", notes: "  Job 42  ", cabinets: [], importedBy: "fake" });
+check(cleanAssemblyDetails.ok && JSON.stringify(cleanAssemblyDetails.details) === JSON.stringify({ name: "New kitchen", notes: "Job 42" }), "assembly edit: trims metadata and excludes imported project fields");
+check(assemblyDetails.parseAssemblyProjectDetails({ name: "Kitchen" }).details.notes === undefined, "assembly edit: omitted notes remain unchanged");
+check(assemblyDetails.parseAssemblyProjectDetails({ name: "Kitchen", notes: "  " }).details.notes === "", "assembly edit: blank notes explicitly clear saved notes");
+
+const assemblyFixture = {
+  id: "project-fixture",
+  name: 'Kitchen <42> & "Villa"',
+  notes: "Job 42\nReady for installation",
+  importedAt: "2026-10-01T12:00:00.000Z",
+  importedBy: "Manager",
+  sourceFiles: { csvName: "cutlist.csv", pbProjName: "kitchen.pb-proj", cixFiles: ["KB600_LS.cix"] },
+  cabinets: JSON.parse(JSON.stringify(sampleCabinets)),
+};
+const dialogProps = { project: assemblyFixture, onClose: () => {}, onSave: async () => {}, onDelete: async () => {} };
+const editDialogHtml = renderToString(React.createElement(AssemblyProjectDialog, { ...dialogProps, mode: "edit" }));
+const deleteDialogHtml = renderToString(React.createElement(AssemblyProjectDialog, { ...dialogProps, mode: "delete" }));
+check(editDialogHtml.includes('value="Kitchen &lt;42&gt; &amp; &quot;Villa&quot;"') && editDialogHtml.includes("Ready for installation"), "assembly edit dialog: preloads and escapes the current name and notes");
+check(editDialogHtml.includes('aria-labelledby="assembly-project-dialog-title"') && editDialogHtml.includes("Save Changes") && editDialogHtml.includes("stay intact"), "assembly edit dialog: labelled modal describes the safe edit scope");
+check(deleteDialogHtml.replace(/<!--.*?-->/g, "").includes("3 cabinets and 23 parts") && deleteDialogHtml.includes("cannot be undone"), "assembly delete dialog: confirms the project and the number of cabinets/parts being removed");
+check(deleteDialogHtml.includes("Original Polyboard files and linked ERP orders will not be deleted"), "assembly delete dialog: clearly distinguishes local project deletion from source files / ERP orders");
+const assemblyViewSource = fs.readFileSync("src/components/AssemblyView.tsx", "utf8");
+check(assemblyViewSource.includes("activeProject && canManageProject && !loading") && assemblyViewSource.includes("Edit Project") && assemblyViewSource.includes("Delete Project"), "assembly workspace: project controls require a loaded project and existing write permission");
+check(assemblyViewSource.includes('method: "PATCH"') && assemblyViewSource.includes('method: "DELETE"') && assemblyViewSource.includes("encodeURIComponent(projectId)"), "assembly workspace: edit/delete target the selected project's encoded ID");
+check(assemblyViewSource.includes("const activeProject = projects.find(") && assemblyViewSource.includes("current.map((existing)") && assemblyViewSource.includes("selectProject(remaining[0] || null)"), "assembly workspace: updates share one project list and deletion clears or selects a remaining project");
+check(pageSource.includes("<AssemblyView key={currentUser.id} currentUser={currentUser}"), "assembly workspace: permissions and cached project state follow the signed-in user");
+check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && assemblyViewSource.includes("csvLayout: importCsvLayout") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.project"), "assembly import dialog: WoodTek column positions are the default and are sent to the API");
+check(assemblyViewSource.includes("Project Name (Optional Override)") && !assemblyViewSource.includes("setImportProjName(file.name"), "assembly import dialog: uploading a file does not override column 12 with the filename");
+
+// Exercise the REAL Next route handlers and JSON store without a PostgreSQL
+// dependency. Only authentication is substituted; the permission matrix,
+// parser, atomic file writes and audit log are the production implementations.
+async function checkAssemblyProjectApi() {
+  const Module = require("node:module");
+  const { NextRequest, NextResponse } = require("next/server");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "woodtek-assembly-"));
+  const previousDataDir = process.env.WOODTEK_DATA_DIR;
+  process.env.WOODTEK_DATA_DIR = scratch;
+  let actor = { id: 1, name: "Test Manager", role: "Manager" };
+  const requestedActions = [];
+  const routePath = path.join(__dirname, "compiled/api/assembly.js");
+  const routeModule = new Module(routePath, module);
+  routeModule.filename = routePath;
+  routeModule.paths = Module._nodeModulePaths(path.dirname(routePath));
+  routeModule.require = (id) => {
+    if (id === "../lib/auth") return {
+      authorize: async (action) => {
+        requestedActions.push(action);
+        if (!actor) return { user: null, error: NextResponse.json({ error: "Signed out" }, { status: 401 }) };
+        if (!perms.can(actor.role, action)) return { user: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+        return { user: actor, error: null };
+      },
+    };
+    return Module.prototype.require.call(routeModule, id);
+  };
+  routeModule._compile(fs.readFileSync(routePath, "utf8"), routePath);
+  const route = routeModule.exports;
+  const request = (method, id, body, raw = false) => new NextRequest(
+    "http://woodtek.test/api/assembly" + (id !== undefined ? "?id=" + encodeURIComponent(id) : ""),
+    { method, ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: raw ? body : JSON.stringify(body) } : {}) },
+  );
+
+  try {
+    check(!assemblyStorage.assemblyStoreExists(), "assembly store: a missing store is distinguishable from an empty saved store");
+    let response = await route.GET(request("GET"));
+    let data = await response.json();
+    check(response.status === 200 && data.projects.length === 1 && data.projects[0].id === "polyboard-demo-villa-42", "assembly API: first use still loads the demo project");
+    response = await route.DELETE(request("DELETE", "polyboard-demo-villa-42"));
+    check(response.status === 200 && (await response.json()).success, "assembly API: the demo project can be deleted");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 0 && assemblyStorage.assemblyStoreExists(), "assembly API: deleting the last project stays empty on reload (no demo resurrection)");
+    response = await route.GET(request("GET", "polyboard-demo-villa-42"));
+    check(response.status === 404, "assembly API: a deleted project remains absent when fetched by ID");
+
+    const fixture = JSON.parse(JSON.stringify(assemblyFixture));
+    fixture.cabinets[0].linkedOrderId = 42;
+    fixture.cabinets[0].isReadyForAssembly = true;
+    fixture.cabinets[0].assembledAt = "2026-10-02T12:00:00.000Z";
+    fixture.cabinets[0].parts.forEach((part) => { part.isScanned = true; part.scannedBy = "Assembler"; part.scannedAt = "2026-10-02T11:00:00.000Z"; });
+    assemblyStorage.saveProject(fixture);
+    const otherProject = { ...JSON.parse(JSON.stringify(fixture)), id: "other-project", name: "Other kitchen" };
+    assemblyStorage.saveProject(otherProject);
+    const originalCabinets = JSON.stringify(fixture.cabinets);
+    const originalSources = JSON.stringify(fixture.sourceFiles);
+    const beforeInvalid = fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8");
+
+    response = await route.PATCH(request("PATCH", undefined, { name: "Updated" }));
+    check(response.status === 400, "assembly API: edit requires a project ID");
+    response = await route.PATCH(request("PATCH", "  ", { name: "Updated" }));
+    check(response.status === 400, "assembly API: edit refuses a blank project ID");
+    response = await route.PATCH(request("PATCH", fixture.id, "{invalid", true));
+    check(response.status === 400, "assembly API: malformed edit JSON returns 400");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "  " }));
+    check(response.status === 400, "assembly API: a whitespace-only project name returns 400");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "x", notes: { private: true } }));
+    check(response.status === 400, "assembly API: non-text notes return 400");
+    response = await route.PATCH(request("PATCH", "already-deleted", { name: "Updated" }));
+    check(response.status === 404, "assembly API: editing an unknown project does not create one");
+    response = await route.DELETE(request("DELETE"));
+    check(response.status === 400, "assembly API: deletion requires a project ID");
+    response = await route.DELETE(request("DELETE", "already-deleted"));
+    check(response.status === 404, "assembly API: deleting an unknown project returns 404");
+    check(fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8") === beforeInvalid, "assembly API: rejected edits/deletes leave the saved projects untouched");
+
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "  Updated kitchen  ", notes: "  Job 99  ", cabinets: [], sourceFiles: {}, importedBy: "fake", id: "new-id" }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Updated kitchen" && data.project.notes === "Job 99", "assembly API: edited metadata is trimmed, returned and saved");
+    check(data.project.id === fixture.id && data.project.importedAt === fixture.importedAt && data.project.importedBy === fixture.importedBy, "assembly API: editing preserves project identity and import history");
+    check(JSON.stringify(data.project.cabinets) === originalCabinets && JSON.stringify(data.project.sourceFiles) === originalSources, "assembly API: editing cannot overwrite cabinets, CNC data, scan history, assembly readiness or ERP links");
+    check(assemblyStorage.getProjectById(otherProject.id).name === "Other kitchen", "assembly API: editing one project leaves other projects unchanged");
+
+    // A scan happens after the edit dialog's snapshot was opened. The metadata
+    // write reads the current store instead of replacing it with that snapshot.
+    const part = fixture.cabinets[1].parts[0];
+    assemblyStorage.scanPart(fixture.id, fixture.cabinets[1].id, part.barcode, "New assembler");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Updated again" }));
+    data = await response.json();
+    check(data.project.notes === "Job 99" && data.project.cabinets[1].parts[0].scannedBy === "New assembler", "assembly API: omitted notes and assembly work completed since opening the form survive editing");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Updated again", notes: "   " }));
+    check(!(await response.json()).project.notes && !assemblyStorage.getProjectById(fixture.id).notes, "assembly API: notes can be cleared persistently");
+
+    actor = { id: 2, name: "Read only", role: "Floor Supervisor" };
+    response = await route.GET(request("GET"));
+    check(response.status === 200, "assembly API: existing read-only roles can still view projects");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Unauthorized" }));
+    check(response.status === 403, "assembly API: read-only roles cannot edit projects");
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 403 && assemblyStorage.getProjectById(fixture.id), "assembly API: read-only roles cannot delete projects");
+    actor = null;
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Unauthorized" }));
+    check(response.status === 401, "assembly API: signed-out edits are rejected");
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 401, "assembly API: signed-out deletions are rejected");
+    actor = { id: 1, name: "Test Manager", role: "Manager" };
+
+    // Simulate an atomic writer/disk failure; the API must report it, not claim
+    // success or remove the original file. Restore the writer even on failure.
+    const previousWrite = atomic.writeJsonAtomic;
+    const previousConsoleError = console.error;
+    const beforeWriteFailure = fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8");
+    try {
+      atomic.writeJsonAtomic = () => { throw new Error("Simulated disk failure"); };
+      console.error = () => {};
+      response = await route.PATCH(request("PATCH", fixture.id, { name: "Not saved" }));
+      check(response.status === 500, "assembly API: write failures return a recoverable edit error");
+      response = await route.DELETE(request("DELETE", fixture.id));
+      check(response.status === 500, "assembly API: write failures return a recoverable deletion error");
+      check(fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8") === beforeWriteFailure, "assembly API: write failures keep the original projects intact");
+    } finally {
+      atomic.writeJsonAtomic = previousWrite;
+      console.error = previousConsoleError;
+    }
+
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 200 && !assemblyStorage.getProjectById(fixture.id) && assemblyStorage.readAssemblyStore().projects.length === 1, "assembly API: deletion removes only the selected project");
+    response = await route.DELETE(request("DELETE", otherProject.id));
+    check(response.status === 200 && assemblyStorage.readAssemblyStore().projects.length === 0, "assembly API: the final imported project can be removed");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 0, "assembly API: repeated loads of the empty project store remain empty");
+    const actions = audit.readAudit();
+    check(actions.some((entry) => entry.action === "assembly.edit" && entry.entityId === fixture.id) && actions.some((entry) => entry.action === "assembly.delete" && entry.entityId === fixture.id), "assembly API: edits and deletions have an audit trail for the project ID");
+    check(requestedActions.every((action) => action === "orders:read" || action === "orders:write"), "assembly API: project management keeps the existing read/write permission gates");
+
+    response = await route.POST(request("POST", undefined, { projectName: "Imported after deletion", csvContent: sampleData.SAMPLE_CUTLIST_CSV, csvFilename: "new.csv", cixFiles: sampleCix }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Imported after deletion" && data.project.cabinets.length === 3, "assembly API: importing still works after all projects have been deleted");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 1, "assembly API: a new import does not bring back the removed demo");
+
+    response = await route.POST(request("POST", undefined, { projectName: "", csvContent: woodtekCsv, csvFilename: "wrong-file-name.csv", pbProjContent: sampleData.SAMPLE_PB_PROJ, pbProjFilename: "wrong-project-file.pb-proj", cixFiles: woodtekCixFiles }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Project Villa 42", "assembly CSV import: column 12 beats both source filenames when there is no manual override");
+    check(data.project.cabinets.length === 2 && data.project.cabinets[0].name === "Cabinet base" && data.project.cabinets[1].name === "Cabinet wall", "assembly CSV import: column 13 determines the saved cabinets, not the project label or .pb-proj cabinet list");
+    check(data.project.cabinets[0].parts[0].name === "Left Side Panel" && data.project.cabinets[0].parts[0].cixData.filename === "KB600_LS.cix" && data.diagnostics.cix.matchedCount === 4, "assembly CSV import: column 7 names and column 14 CNC links are persisted together");
+    check(data.diagnostics.csv.layout === "woodtek" && data.diagnostics.csv.detectedColumns.project === "column 12 (project name)", "assembly CSV import: the read-back report confirms the fixed column mapping");
+    const savedWoodtek = assemblyStorage.getProjectById(data.project.id);
+    check(savedWoodtek.name === "Project Villa 42" && savedWoodtek.cabinets[0].parts[0].cixReferenceExplicit, "assembly CSV import: project identity and explicit CNC references survive storage reloads");
+
+    response = await route.POST(request("POST", undefined, { projectName: "  Manual project name  ", csvContent: woodtekCsv }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Manual project name" && data.project.cabinets[0].name === "Cabinet base", "assembly CSV import: a deliberate project-name override does not alter cabinet grouping");
+    response = await route.POST(request("POST", undefined, { csvContent: otherLayoutCsv, csvLayout: "auto" }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Another project" && data.project.cabinets.length === 2, "assembly CSV import: the alternative header-based layout reaches the server");
+    response = await route.POST(request("POST", undefined, { csvContent: emptyProjectCsv, csvFilename: "fallback.csv" }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "fallback" && data.project.cabinets[0].name === "Cabinet base", "assembly CSV import: an empty column 12 falls back to the filename without renaming the cabinets");
+    const beforeRejectedImport = fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8");
+    response = await route.POST(request("POST", undefined, { csvContent: mixedProjectCsv, projectName: "Forced override" }));
+    check(response.status === 400 && (await response.json()).error.includes("multiple project names"), "assembly CSV import: multiple projects are refused even with a manual name override");
+    response = await route.POST(request("POST", undefined, { csvContent: woodtekCsv, csvLayout: "unknown" }));
+    check(response.status === 400, "assembly CSV import: invalid layout values are refused");
+    check(fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8") === beforeRejectedImport, "assembly CSV import: rejected project/layout imports leave stored projects unchanged");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.WOODTEK_DATA_DIR;
+    else process.env.WOODTEK_DATA_DIR = previousDataDir;
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+checkAssemblyProjectApi()
+  .catch((error) => { check(false, "assembly API checks completed without an unexpected exception"); console.error(error); })
+  .then(async () => {
+    try {
+      await require("./scripts/cabinet-3d-test.cjs")({ compile, check });
+    } catch (error) {
+      check(false, "cabinet 3D geometry/lifecycle/import checks completed without an unexpected exception");
+      console.error(error);
+    }
+  })
+  .finally(() => {
+    console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
+    process.exitCode = fails === 0 ? 0 : 1;
+  });

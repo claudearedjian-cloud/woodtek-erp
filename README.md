@@ -33,6 +33,80 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
+## Cabinet Assembly — CSV column mapping
+The default **WoodTek export** import layout uses these **one-based** CSV positions
+for exports with 14 or more columns (with or without a header row):
+
+| CSV column | Meaning |
+| --- | --- |
+| 7 | Part name |
+| 12 | Project name |
+| 13 | Cabinet name (parts are grouped by this field) |
+| 14 | CIX filename / CNC program reference |
+
+- Those four positions take precedence over header guesses. Dimensions, material,
+  quantities and edge/grain fields still use their remaining headers/content.
+- Leave **Project Name (Optional Override)** blank to use column 12. A deliberately
+  entered name overrides it; otherwise the project-file/source filename is only a
+  fallback when the CSV has no project name. Uploading a file no longer replaces
+  the CSV's project name with that file's name.
+- CIX paths are reduced to filenames; `.cix`/`.CIX` and references without an
+  extension are accepted. Explicit references link only to that file/program;
+  repeated identical parts can share it. A missing named file stays **unlinked**
+  rather than borrowing an unrelated file by part name.
+- The shorter bundled sample/older exports keep automatic detection. For a
+  different wide CSV, choose **Other layout — detect headers / content**. Project
+  and cabinet headers are distinct. A CSV with multiple project names is refused;
+  export/import one project at a time to avoid mixing cabinets.
+- The import report confirms the chosen layout, CSV project and field mapping.
+  **Existing loaded projects are not rewritten.** Re-import the original files
+  after deployment to apply the corrected mapping. This creates a new project
+  with fresh scan progress; remove an older incorrect import only when ready.
+
+## Cabinet Assembly — selected cabinet 3D preview
+- After import, clicking a cabinet opens **only that cabinet’s own parts and
+  attached CNC borings**, labelled with its name, part count and W × H × D in mm.
+  Project + cabinet identity isolates the view even when different projects reuse
+  the same cabinet/part IDs. Previous meshes and WebGL resources are released;
+  rotation, zoom, explosion and toolbar settings start fresh on selection.
+- Positive imported cabinet dimensions match the cabinet list. Panels retain
+  their actual cutting-list sizes, including overhangs; the camera fits their
+  transformed bounds on wide or narrow screens. Doors/drawer fronts stand in the
+  correct width/height orientation, and inferred right sides stay at the right
+  outer face rather than being overwritten as internal dividers.
+- Scanning or selecting a part updates the current cabinet without allocating a
+  new canvas/context. **Rotate / Pause** affects the live loop. **Reset** restores
+  the assembled view, default rotation/zoom, normal edges, visible CNC holes and
+  paused auto-rotation. Empty cabinets or unavailable WebGL show an explicit
+  message instead of a previous model.
+- This is a **reconstructed preview**, not the original Polyboard CAD scene:
+  cutting-list names/sizes identify panel roles, and placement is estimated when
+  design coordinates are absent. Original CSV/CIX/project files are needed to
+  compare a particular cabinet against the source design; exact CAD positions
+  cannot be verified from a screenshot alone.
+- Viewing does not rewrite saved projects or reset their scans. **Old incorrectly
+  mapped imports still need re-importing after deployment**, as described above;
+  a new import has fresh scan progress.
+
+## Cabinet Assembly — loaded project management
+- Select a loaded project in the top project picker, then use **Edit Project** to
+  change its name and **Notes / Job Reference**. Cabinets, parts, CNC data, scan
+  progress, assembly readiness and linked ERP orders are preserved. Editing
+  project details does not replace the imported cutting list or geometry.
+- **Delete Project** opens a confirmation naming the project and counting its
+  cabinets and parts. Confirming permanently removes that assembly project and
+  its local progress/CNC data only — original Polyboard files and ERP orders are
+  not deleted. The next remaining project opens automatically; deleting the last
+  project shows the empty import screen and stays empty after a reload.
+- The sample project is populated on first use only, never recreated after a
+  deletion. You can still load sample files explicitly from the import dialog.
+- Edit/delete use the existing project write permission; read-only users do not
+  see those controls. Errors keep the dialog and entered values available to
+  retry, and successful changes are audit-logged.
+- No database migration: projects remain in `data/assembly-projects.json` (or
+  `WOODTEK_DATA_DIR`), written atomically. Deploy using the normal update ritual
+  after the owner approves and merges the PR.
+
 ## Purchasing & Suppliers (POs/GRNs shipped in PR #10; supplier A/P follow-up added 2026-10-01)
 - Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
   Settings → System Settings → Optional modules and grant the role or person. **Invoicing &

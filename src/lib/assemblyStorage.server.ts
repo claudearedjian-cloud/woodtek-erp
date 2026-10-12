@@ -6,7 +6,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "@/lib/atomicFile.server";
-import type { PolyboardProject, PolyboardCabinet, PolyboardPart } from "./polyboard";
+import type { PolyboardProject, PolyboardPart } from "./polyboard";
+import type { AssemblyProjectDetails } from "./assemblyProject";
 
 export interface AssemblyStore {
   version: 1;
@@ -16,6 +17,11 @@ export interface AssemblyStore {
 function getStoragePath(): string {
   const dir = process.env.WOODTEK_DATA_DIR || path.join(process.cwd(), "data");
   return path.join(dir, "assembly-projects.json");
+}
+
+/** An existing empty store means the user intentionally deleted all projects. */
+export function assemblyStoreExists(): boolean {
+  return fs.existsSync(getStoragePath());
 }
 
 export function readAssemblyStore(): AssemblyStore {
@@ -48,6 +54,21 @@ export function saveProject(project: PolyboardProject): PolyboardProject {
   } else {
     store.projects.unshift(project);
   }
+  writeAssemblyStore(store);
+  return project;
+}
+
+/** Update the latest stored project without overwriting assembly work in flight. */
+export function updateProjectDetails(
+  projectId: string,
+  details: AssemblyProjectDetails,
+): PolyboardProject | null {
+  const store = readAssemblyStore();
+  const project = store.projects.find((p) => p.id === projectId);
+  if (!project) return null;
+
+  project.name = details.name;
+  if (details.notes !== undefined) project.notes = details.notes || undefined;
   writeAssemblyStore(store);
   return project;
 }

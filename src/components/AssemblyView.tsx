@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   Box,
@@ -10,27 +10,22 @@ import {
   Cpu,
   Barcode,
   CheckCircle2,
-  Clock,
-  Sparkles,
   Search,
   Check,
-  ChevronRight,
-  Maximize2,
   Trash2,
+  Pencil,
   FileCode,
   AlertCircle,
   FolderOpen,
-  ArrowRight,
   RefreshCw,
-  Eye,
   Info,
   Printer,
   Wrench,
-  Link as LinkIcon,
-  PackageCheck,
-  RotateCcw,
 } from "lucide-react";
-import type { PolyboardProject, PolyboardCabinet, PolyboardPart, PolyboardHardware } from "@/lib/polyboard";
+import { WOODTEK_CSV_COLUMNS, type PolyboardCsvLayout, type PolyboardProject } from "@/lib/polyboard";
+import type { AssemblyProjectDetails } from "@/lib/assemblyProject";
+import { can } from "@/lib/permissions";
+import AssemblyProjectDialog from "./AssemblyProjectDialog";
 import { SAMPLE_PB_PROJ, SAMPLE_CUTLIST_CSV, SAMPLE_CIX_FILES } from "@/lib/samplePolyboardData";
 import { generatePartLabelsHtml } from "@/lib/partLabels";
 
@@ -47,11 +42,24 @@ const Cabinet3DViewer = dynamic(() => import("./Cabinet3DViewer"), {
   ),
 });
 
-export default function AssemblyView() {
+export default function AssemblyView({ currentUser }: { currentUser: { role: string } | null }) {
   const [projects, setProjects] = useState<PolyboardProject[]>([]);
-  const [activeProject, setActiveProject] = useState<PolyboardProject | null>(null);
-  const [selectedCabinet, setSelectedCabinet] = useState<PolyboardCabinet | null>(null);
-  const [selectedPart, setSelectedPart] = useState<PolyboardPart | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null);
+  const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
+  // One source of truth: switching projects must not restore stale scan/edit data.
+  const activeProject = projects.find((project) => project.id === activeProjectId) || null;
+  const selectedCabinet = activeProject?.cabinets.find((cabinet) => cabinet.id === selectedCabinetId) || null;
+  const selectedPart = selectedCabinet?.parts.find((part) => part.id === selectedPartId) || null;
+  const canManageProject = can(currentUser?.role, "orders:write");
+  const [projectDialog, setProjectDialog] = useState<{
+    mode: "edit" | "delete";
+    project: PolyboardProject;
+  } | null>(null);
+  const [projectFeedback, setProjectFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -71,6 +79,7 @@ export default function AssemblyView() {
   // Import Dialog State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importProjName, setImportProjName] = useState("");
+  const [importCsvLayout, setImportCsvLayout] = useState<PolyboardCsvLayout>("woodtek");
   const [csvFile, setCsvFile] = useState<{ name: string; content: string } | null>(null);
   const [pbProjFile, setPbProjFile] = useState<{ name: string; content: string } | null>(null);
   const [cixFilesList, setCixFilesList] = useState<Array<{ filename: string; content: string }>>([]);
@@ -83,63 +92,86 @@ export default function AssemblyView() {
 
   const scanInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch projects on load
-  const loadProjects = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/assembly");
-      if (res.ok) {
-        const data = await res.json();
-        setProjects(data.projects || []);
-        if (data.projects && data.projects.length > 0) {
-          const first = data.projects[0];
-          setActiveProject(first);
-          if (first.cabinets && first.cabinets.length > 0) {
-            setSelectedCabinet(first.cabinets[0]);
-            if (first.cabinets[0].parts.length > 0) {
-              setSelectedPart(first.cabinets[0].parts[0]);
-            }
-          }
-        }
-      }
-
-      // Also fetch open ERP orders for routing synchronization
-      const ordRes = await fetch("/api/orders");
-      if (ordRes.ok) {
-        const ordData = await ordRes.json();
-        if (Array.isArray(ordData)) {
-          setErpOrders(ordData);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to load projects", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadProjects();
+  const selectProject = useCallback((project: PolyboardProject | null) => {
+    setActiveProjectId(project?.id || null);
+    setSelectedCabinetId(project?.cabinets[0]?.id || null);
+    setSelectedPartId(project?.cabinets[0]?.parts[0]?.id || null);
+    setScanInput("");
+    setScanFeedback(null);
+    setSelectedOrderId("");
+    setActiveRightTab("parts");
   }, []);
 
-  // Update selected cabinet reference if activeProject updates
+  const updateProject = (project: PolyboardProject) => {
+    setProjects((current) => current.map((existing) => existing.id === project.id ? project : existing));
+  };
+
+  // Fetch once on load; an import/edit/delete updates the local project list.
   useEffect(() => {
-    if (activeProject && selectedCabinet) {
-      const refreshed = activeProject.cabinets.find((c) => c.id === selectedCabinet.id);
-      if (refreshed) {
-        setSelectedCabinet(refreshed);
-        if (selectedPart) {
-          const refreshedPart = refreshed.parts.find((p) => p.id === selectedPart.id);
-          setSelectedPart(refreshedPart || refreshed.parts[0] || null);
-        }
+    let alive = true;
+    const loadProjects = async () => {
+      try {
+        const res = await fetch("/api/assembly", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load assembly projects.");
+        if (!alive) return;
+        const loaded: PolyboardProject[] = data.projects || [];
+        setProjects(loaded);
+        selectProject(loaded[0] || null);
+      } catch (err: unknown) {
+        if (alive) setProjectFeedback({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to load assembly projects.",
+        });
+      } finally {
+        if (alive) setLoading(false);
       }
-    }
-  }, [activeProject]);
+    };
+    void loadProjects();
+
+    // Open ERP orders for routing synchronization (independent of projects).
+    fetch("/api/orders", { cache: "no-store" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (alive && Array.isArray(data)) setErpOrders(data);
+      })
+      .catch((err: unknown) => console.error("Failed to load ERP orders", err));
+
+    return () => { alive = false; };
+  }, [selectProject]);
+
+  const handleEditProject = async (projectId: string, details: AssemblyProjectDetails) => {
+    const res = await fetch(`/api/assembly?id=${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(details),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.project) throw new Error(data.error || "Failed to save project changes.");
+
+    updateProject(data.project);
+    setProjectDialog(null);
+    setProjectFeedback({ type: "success", message: `Project "${data.project.name}" updated.` });
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    const res = await fetch(`/api/assembly?id=${encodeURIComponent(projectId)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || "Failed to delete project.");
+
+    const deletedProject = projects.find((project) => project.id === projectId);
+    const remaining = projects.filter((project) => project.id !== projectId);
+    setProjects((current) => current.filter((project) => project.id !== projectId));
+    selectProject(remaining[0] || null);
+    setProjectDialog(null);
+    setImportReport(null);
+    setProjectFeedback({ type: "success", message: `Project "${deletedProject?.name || projectId}" deleted.` });
+  };
 
   // Handle Scanning or Manual Part CIX entry
   const handleScanSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!scanInput.trim() || !activeProject || !selectedCabinet) return;
+    if (scanning || !scanInput.trim() || !activeProject || !selectedCabinet) return;
 
     setScanning(true);
     setScanFeedback(null);
@@ -160,10 +192,10 @@ export default function AssemblyView() {
         setScanFeedback({ type: "success", message: data.message });
         setScanInput("");
         if (data.project) {
-          setActiveProject(data.project);
+          updateProject(data.project);
         }
         if (data.matchedPart) {
-          setSelectedPart(data.matchedPart);
+          setSelectedPartId(data.matchedPart.id);
         }
       } else {
         setScanFeedback({
@@ -184,7 +216,8 @@ export default function AssemblyView() {
 
   // Toggle single part directly by click
   const handleTogglePart = async (partId: string) => {
-    if (!activeProject || !selectedCabinet) return;
+    if (scanning || !activeProject || !selectedCabinet) return;
+    setScanning(true);
     try {
       const res = await fetch("/api/assembly/scan", {
         method: "POST",
@@ -198,10 +231,12 @@ export default function AssemblyView() {
       });
       const data = await res.json();
       if (res.ok && data.project) {
-        setActiveProject(data.project);
+        updateProject(data.project);
       }
     } catch (err) {
       console.error("Failed to toggle part", err);
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -228,7 +263,8 @@ export default function AssemblyView() {
 
   // Sync cabinet ready status with ERP Order routing
   const handleSyncToOrder = async (orderIdToSync: number) => {
-    if (!activeProject || !selectedCabinet) return;
+    if (scanning || !activeProject || !selectedCabinet) return;
+    setScanning(true);
     try {
       const res = await fetch("/api/assembly/sync-order", {
         method: "POST",
@@ -241,7 +277,7 @@ export default function AssemblyView() {
       });
       const data = await res.json();
       if (res.ok && data.project) {
-        setActiveProject(data.project);
+        updateProject(data.project);
         setScanFeedback({
           type: "success",
           message: `Linked cabinet to ERP Order #${orderIdToSync}.`,
@@ -249,12 +285,15 @@ export default function AssemblyView() {
       }
     } catch (err) {
       console.error("Failed to sync with order", err);
+    } finally {
+      setScanning(false);
     }
   };
 
   // Load Built-in Demo Polyboard Files into Import Modal
   const loadDemoFilesInModal = () => {
     setImportProjName("Villa 42 Kitchen Layout");
+    setImportCsvLayout("woodtek");
     setPbProjFile({ name: "Kitchen-Villa-42.pb-proj", content: SAMPLE_PB_PROJ });
     setCsvFile({ name: "Kitchen-Villa-42-cutlist.csv", content: SAMPLE_CUTLIST_CSV });
     const cixs = Object.entries(SAMPLE_CIX_FILES).map(([filename, content]) => ({
@@ -280,6 +319,7 @@ export default function AssemblyView() {
           projectName: importProjName,
           csvContent: csvFile?.content,
           csvFilename: csvFile?.name,
+          csvLayout: importCsvLayout,
           pbProjContent: pbProjFile?.content,
           pbProjFilename: pbProjFile?.name,
           cixFiles: cixFilesList,
@@ -294,16 +334,24 @@ export default function AssemblyView() {
         setPbProjFile(null);
         setCixFilesList([]);
         setImportProjName("");
+        setImportCsvLayout("woodtek");
 
         // Read-back report: what the importer understood from the files
         const csvDiag = data.diagnostics?.csv;
         const cixDiag = data.diagnostics?.cix;
         const details: Array<{ label: string; value: string }> = [];
         if (csvDiag) {
+          details.push({
+            label: "CSV layout",
+            value: csvDiag.layout === "woodtek" ? "part 7 • project 12 • cabinet 13 • CIX 14" : "automatic headers / content",
+          });
+          if (csvDiag.projectNames?.length) details.push({ label: "CSV project", value: csvDiag.projectNames.join(", ") });
           details.push({ label: "Separator", value: csvDiag.delimiterLabel });
           details.push({
             label: "Header row",
-            value: csvDiag.headerless ? "not found (parsed by content)" : `line ${(csvDiag.headerRowIndex ?? 0) + 1}`,
+            value: csvDiag.headerless
+              ? (csvDiag.layout === "woodtek" ? "not found (fixed identity columns)" : "not found (parsed by content)")
+              : `line ${(csvDiag.headerRowIndex ?? 0) + 1}`,
           });
           const cols = Object.entries(csvDiag.detectedColumns || {})
             .filter(([role]) => !role.startsWith("edge"))
@@ -337,12 +385,10 @@ export default function AssemblyView() {
           details,
         });
 
-        await loadProjects();
-        setActiveProject(data.project);
-        if (data.project.cabinets?.[0]) {
-          setSelectedCabinet(data.project.cabinets[0]);
-          setSelectedPart(data.project.cabinets[0].parts?.[0] || null);
-        }
+        setProjects((current) => [data.project, ...current.filter((project) => project.id !== data.project.id)]);
+        selectProject(data.project);
+        setProjectFeedback(null);
+        setImportNotes("");
       } else {
         alert(data.error || "Failed to import project");
       }
@@ -363,9 +409,6 @@ export default function AssemblyView() {
       const reader = new FileReader();
       reader.onload = (event) => {
         setCsvFile({ name: file.name, content: event.target?.result as string });
-        if (!importProjName) {
-          setImportProjName(file.name.replace(/\.[^/.]+$/, ""));
-        }
       };
       reader.readAsText(file);
     } else if (type === "pbproj") {
@@ -373,9 +416,6 @@ export default function AssemblyView() {
       const reader = new FileReader();
       reader.onload = (event) => {
         setPbProjFile({ name: file.name, content: event.target?.result as string });
-        if (!importProjName) {
-          setImportProjName(file.name.replace(/\.[^/.]+$/, ""));
-        }
       };
       reader.readAsText(file);
     } else if (type === "cix") {
@@ -427,19 +467,21 @@ export default function AssemblyView() {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5 max-w-full">
           {projects.length > 0 && (
             <select
+              aria-label="Loaded assembly project"
+              disabled={loading || scanning || importing}
               value={activeProject?.id || ""}
               onChange={(e) => {
                 const found = projects.find((p) => p.id === e.target.value);
                 if (found) {
-                  setActiveProject(found);
-                  setSelectedCabinet(found.cabinets[0] || null);
-                  setSelectedPart(found.cabinets[0]?.parts[0] || null);
+                  selectProject(found);
+                  setProjectFeedback(null);
+                  setImportReport(null);
                 }
               }}
-              className="bg-slate-900 border border-slate-700 text-sm font-semibold text-slate-200 rounded-xl px-3 py-2 outline-none focus:border-amber-500"
+              className="max-w-full bg-slate-900 border border-slate-700 text-sm font-semibold text-slate-200 rounded-xl px-3 py-2 outline-none focus:border-amber-500 disabled:opacity-50"
             >
               {projects.map((proj) => (
                 <option key={proj.id} value={proj.id}>
@@ -447,6 +489,29 @@ export default function AssemblyView() {
                 </option>
               ))}
             </select>
+          )}
+
+          {activeProject && canManageProject && !loading && (
+            <>
+              <button
+                type="button"
+                disabled={scanning || importing}
+                onClick={() => setProjectDialog({ mode: "edit", project: activeProject })}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3.5 py-2 rounded-xl text-sm border border-slate-700 transition disabled:opacity-50"
+              >
+                <Pencil className="w-4 h-4 text-amber-400" />
+                Edit Project
+              </button>
+              <button
+                type="button"
+                disabled={scanning || importing}
+                onClick={() => setProjectDialog({ mode: "delete", project: activeProject })}
+                className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold px-3.5 py-2 rounded-xl text-sm border border-rose-500/30 transition disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Project
+              </button>
+            </>
           )}
 
           {selectedCabinet && (
@@ -461,6 +526,7 @@ export default function AssemblyView() {
           )}
 
           <button
+            disabled={loading || scanning || importing}
             onClick={() => setShowImportModal(true)}
             className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold px-4 py-2 rounded-xl text-sm shadow-lg shadow-amber-500/20 transition active:scale-95"
           >
@@ -469,6 +535,27 @@ export default function AssemblyView() {
           </button>
         </div>
       </div>
+
+      {projectFeedback && (
+        <div
+          role={projectFeedback.type === "error" ? "alert" : "status"}
+          className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${projectFeedback.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"}`}
+        >
+          {projectFeedback.type === "success" ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+          <span className="flex-1">{projectFeedback.message}</span>
+          <button type="button" onClick={() => setProjectFeedback(null)} aria-label="Dismiss project message" className="px-1 font-bold">✕</button>
+        </div>
+      )}
+
+      {activeProject && !loading && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-200">
+            <FolderOpen className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="break-words min-w-0">{activeProject.name}</span>
+          </div>
+          {activeProject.notes && <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-slate-400">{activeProject.notes}</p>}
+        </div>
+      )}
 
       {/* Import Report: what the importer understood from the uploaded files */}
       {importReport && (
@@ -560,10 +647,13 @@ export default function AssemblyView() {
                 return (
                   <button
                     key={cab.id}
+                    disabled={scanning}
                     onClick={() => {
-                      setSelectedCabinet(cab);
-                      setSelectedPart(cab.parts[0] || null);
+                      setSelectedCabinetId(cab.id);
+                      setSelectedPartId(cab.parts[0]?.id || null);
+                      setScanInput("");
                       setScanFeedback(null);
+                      setSelectedOrderId("");
                     }}
                     className={`w-full text-left p-3.5 rounded-2xl border transition relative overflow-hidden ${
                       isSelected
@@ -626,10 +716,11 @@ export default function AssemblyView() {
                 {/* 3D Visualizer */}
                 <div className="relative">
                   <Cabinet3DViewer
+                    key={`${activeProject.id}:${selectedCabinet.id}`}
                     cabinet={selectedCabinet}
                     selectedPartId={selectedPart?.id}
                     onSelectPart={(p) => {
-                      setSelectedPart(p);
+                      setSelectedPartId(p.id);
                       setActiveRightTab("parts");
                     }}
                   />
@@ -650,6 +741,7 @@ export default function AssemblyView() {
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                       <input
                         ref={scanInputRef}
+                        disabled={scanning}
                         type="text"
                         placeholder="Scan barcode (e.g. KB600_LS) or type CIX..."
                         value={scanInput}
@@ -705,6 +797,7 @@ export default function AssemblyView() {
                       {/* Link to ERP Production Order */}
                       <div className="flex items-center gap-2 w-full sm:w-auto">
                         <select
+                          disabled={scanning}
                           value={selectedCabinet.linkedOrderId || selectedOrderId}
                           onChange={(e) => {
                             setSelectedOrderId(e.target.value);
@@ -777,7 +870,7 @@ export default function AssemblyView() {
                       return (
                         <div
                           key={part.id}
-                          onClick={() => setSelectedPart(part)}
+                          onClick={() => setSelectedPartId(part.id)}
                           className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between gap-3 ${
                             isSelected
                               ? "bg-slate-800/90 border-amber-500"
@@ -789,6 +882,7 @@ export default function AssemblyView() {
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
+                              disabled={scanning}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleTogglePart(part.id);
@@ -947,6 +1041,17 @@ export default function AssemblyView() {
         </div>
       )}
 
+      {projectDialog && (
+        <AssemblyProjectDialog
+          key={`${projectDialog.mode}:${projectDialog.project.id}`}
+          project={projectDialog.project}
+          mode={projectDialog.mode}
+          onClose={() => setProjectDialog(null)}
+          onSave={(details) => handleEditProject(projectDialog.project.id, details)}
+          onDelete={() => handleDeleteProject(projectDialog.project.id)}
+        />
+      )}
+
       {/* Polyboard Import Modal */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
@@ -991,14 +1096,20 @@ export default function AssemblyView() {
               </div>
 
               <div>
-                <label className="font-bold text-slate-300 block mb-1">Project Name</label>
+                <label htmlFor="assembly-import-project-name" className="font-bold text-slate-300 block mb-1">Project Name (Optional Override)</label>
                 <input
+                  id="assembly-import-project-name"
                   type="text"
-                  placeholder="e.g. Modern Kitchen Cabinets Villa 42"
+                  placeholder="Leave blank to use the CSV project name"
                   value={importProjName}
                   onChange={(e) => setImportProjName(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-white outline-none"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {importCsvLayout === "woodtek"
+                    ? "Uses the CSV project name (column 12), then the project file or filename. Enter a name only to override it."
+                    : "Uses the detected CSV project field, then the project file or filename. Enter a name only to override it."}
+                </p>
               </div>
 
               <div className="border border-slate-800 bg-slate-950/60 p-3.5 rounded-2xl">
@@ -1019,6 +1130,24 @@ export default function AssemblyView() {
                   onChange={(e) => handleFileUpload(e, "csv")}
                   className="text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
                 />
+                <div className="mt-3">
+                  <label htmlFor="assembly-import-csv-layout" className="block font-bold text-slate-300 mb-1">CSV Column Layout</label>
+                  <select
+                    id="assembly-import-csv-layout"
+                    value={importCsvLayout}
+                    disabled={importing}
+                    onChange={(e) => setImportCsvLayout(e.target.value as PolyboardCsvLayout)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 outline-none focus:border-amber-500"
+                  >
+                    <option value="woodtek">WoodTek export — columns 7 / 12 / 13 / 14</option>
+                    <option value="auto">Other layout — detect headers / content</option>
+                  </select>
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    {importCsvLayout === "woodtek"
+                      ? `Part name: ${WOODTEK_CSV_COLUMNS.part} • Project name: ${WOODTEK_CSV_COLUMNS.project} • Cabinet name: ${WOODTEK_CSV_COLUMNS.cabinet} • CIX filename: ${WOODTEK_CSV_COLUMNS.cix}. Column numbers start at 1. Shorter CSVs, including the sample, use automatic detection.`
+                      : "Project and cabinet fields are detected separately from the headers. Sizes, material and quantities are detected from their headers or content."}
+                  </p>
+                </div>
               </div>
 
               <div className="border border-slate-800 bg-slate-950/60 p-3.5 rounded-2xl">

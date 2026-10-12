@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorize } from "@/lib/auth";
-import { readAssemblyStore, saveProject, deleteProject } from "@/lib/assemblyStorage.server";
+import {
+  assemblyStoreExists,
+  readAssemblyStore,
+  saveProject,
+  updateProjectDetails,
+  deleteProject,
+} from "@/lib/assemblyStorage.server";
+import { parseAssemblyProjectDetails } from "@/lib/assemblyProject";
 import {
   parsePolyboardCsv,
   parsePolyboardProjectFile,
@@ -8,12 +15,13 @@ import {
   type PolyboardCsvDiagnostics,
   type PolyboardCixMatchResult,
   type PolyboardProject,
+  type PolyboardCabinet,
 } from "@/lib/polyboard";
 import { SAMPLE_PB_PROJ, SAMPLE_CUTLIST_CSV, SAMPLE_CIX_FILES } from "@/lib/samplePolyboardData";
 import { logAudit } from "@/lib/audit.server";
 
 export async function GET(req: NextRequest) {
-  const { user, error } = await authorize("orders:read");
+  const { error } = await authorize("orders:read");
   if (error) return error;
 
   const url = new URL(req.url);
@@ -21,8 +29,8 @@ export async function GET(req: NextRequest) {
 
   const store = readAssemblyStore();
 
-  // If store is empty, seed demo project so the user has immediate data to test
-  if (store.projects.length === 0) {
+  // Seed only on first use, never after the user deletes the last project.
+  if (store.projects.length === 0 && !assemblyStoreExists()) {
     const { projectName } = parsePolyboardProjectFile(SAMPLE_PB_PROJ, "Kitchen-Villa-42.pb-proj");
     const { cabinetsMap } = parsePolyboardCsv(SAMPLE_CUTLIST_CSV);
     const cabinets = Array.from(cabinetsMap.values());
@@ -74,6 +82,7 @@ export async function POST(req: NextRequest) {
       pbProjFilename,
       csvContent,
       csvFilename,
+      csvLayout,
       cixFiles, // Array of { filename: string, content: string }
       notes,
     } = body;
@@ -85,18 +94,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let projectName = rawProjectName?.trim() || "";
-    let cabinets: any[] = [];
+    if (csvLayout !== undefined && csvLayout !== "woodtek" && csvLayout !== "auto") {
+      return NextResponse.json({ error: "Invalid CSV layout" }, { status: 400 });
+    }
+
+    let projectName = typeof rawProjectName === "string" ? rawProjectName.trim() : "";
+    let cabinets: PolyboardCabinet[] = [];
     let csvDiagnostics: PolyboardCsvDiagnostics | null = null;
 
     // Parse the cutting list (CSV/TXT export)
     if (csvContent) {
-      const parsedCsv = parsePolyboardCsv(csvContent);
+      const parsedCsv = parsePolyboardCsv(csvContent, { layout: csvLayout });
+      if (parsedCsv.diagnostics.projectNames.length > 1) {
+        return NextResponse.json({
+          error: "The cutting list contains multiple project names. Export and import one project at a time to avoid mixing cabinets.",
+        }, { status: 400 });
+      }
+      if (!projectName) projectName = parsedCsv.projectName;
       cabinets = Array.from(parsedCsv.cabinetsMap.values());
       csvDiagnostics = parsedCsv.diagnostics;
     }
 
-    // Parse .pb-proj if provided (used for the project name and, when the
+    // Parse .pb-proj if provided (project-name fallback after CSV column 12; when the
     // cutting list has no cabinet breakdown at all, for the cabinet list)
     let pbProjCabinetCount = 0;
     if (pbProjContent) {
@@ -136,7 +155,7 @@ export async function POST(req: NextRequest) {
       cixMatch = matchCixToParts(cabinets, validCixList);
     }
 
-    const totalParts = cabinets.reduce((sum: number, c: any) => sum + (c.parts?.length || 0), 0);
+    const totalParts = cabinets.reduce((sum, cabinet) => sum + cabinet.parts.length, 0);
 
     const projectId = `proj-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newProject: PolyboardProject = {
@@ -197,21 +216,59 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function DELETE(req: NextRequest) {
+export async function PATCH(req: NextRequest) {
   const { user, error } = await authorize("orders:write");
   if (error) return error;
 
-  const url = new URL(req.url);
-  const projectId = url.searchParams.get("id");
+  const projectId = new URL(req.url).searchParams.get("id")?.trim();
   if (!projectId) {
     return NextResponse.json({ error: "Project ID is required" }, { status: 400 });
   }
 
-  const ok = deleteProject(projectId);
-  if (!ok) {
-    return NextResponse.json({ error: "Project not found or already deleted" }, { status: 404 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid project details" }, { status: 400 });
+  }
+  const parsed = parseAssemblyProjectDetails(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  logAudit(user, "assembly.delete", "assembly", `Deleted assembly project ${projectId}`);
-  return NextResponse.json({ success: true });
+  try {
+    const project = updateProjectDetails(projectId, parsed.details);
+    if (!project) {
+      return NextResponse.json({ error: "Project not found or already deleted" }, { status: 404 });
+    }
+
+    logAudit(user, "assembly.edit", "assembly", `Updated assembly project "${project.name}"`, project.id);
+    return NextResponse.json({ success: true, project });
+  } catch (err: unknown) {
+    console.error("Assembly project update error:", err);
+    return NextResponse.json({ error: "Failed to save project changes" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const { user, error } = await authorize("orders:write");
+  if (error) return error;
+
+  const projectId = new URL(req.url).searchParams.get("id")?.trim();
+  if (!projectId) {
+    return NextResponse.json({ error: "Project ID is required" }, { status: 400 });
+  }
+
+  try {
+    const ok = deleteProject(projectId);
+    if (!ok) {
+      return NextResponse.json({ error: "Project not found or already deleted" }, { status: 404 });
+    }
+
+    logAudit(user, "assembly.delete", "assembly", `Deleted assembly project ${projectId}`, projectId);
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    console.error("Assembly project deletion error:", err);
+    return NextResponse.json({ error: "Failed to delete project" }, { status: 500 });
+  }
 }

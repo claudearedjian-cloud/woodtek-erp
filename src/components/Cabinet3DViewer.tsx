@@ -3,7 +3,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { PolyboardCabinet, PolyboardPart } from "@/lib/polyboard";
-import { buildCabinetLayout, type CabinetLayout, type PartPlacement } from "@/lib/polyboardParts";
+import { buildCabinetLayout, type CabinetLayout } from "@/lib/polyboardParts";
+import {
+  applyExplosion,
+  createCabinetScene,
+  disposeSceneResources,
+  fitCabinetCamera,
+  updateCabinetMaterials,
+} from "@/lib/cabinetScene";
 
 interface Cabinet3DViewerProps {
   cabinet: PolyboardCabinet;
@@ -23,6 +30,8 @@ export default function Cabinet3DViewer({
   const [wireframe, setWireframe] = useState<boolean>(false);
   const [showDrillHoles, setShowDrillHoles] = useState<boolean>(true);
   const [autorotate, setAutorotate] = useState<boolean>(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const autorotateRef = useRef(false);
 
   // References for three.js rendering loop & cleanup
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -32,6 +41,7 @@ export default function Cabinet3DViewer({
   const holesRef = useRef<THREE.Object3D[]>([]);
   const layoutRef = useRef<CabinetLayout | null>(null);
   const partsGroupRef = useRef<THREE.Group | null>(null);
+  const disposeModelRef = useRef<(() => void) | null>(null);
 
   // Rotation controls state
   const isDraggingRef = useRef(false);
@@ -42,137 +52,172 @@ export default function Cabinet3DViewer({
   // Layout is recomputed for each cabinet (sizes + placement of every part)
   const layout = React.useMemo(() => buildCabinetLayout(cabinet), [cabinet]);
 
+  // The animation loop must read the current toggle, not its mount-time value.
+  useEffect(() => {
+    autorotateRef.current = autorotate;
+  }, [autorotate]);
+
+  // One renderer per mounted viewer. AssemblyView keys this component by BOTH
+  // project and cabinet ID, so changing selection starts a clean view/context.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    // Dimensions
     const width = container.clientWidth || 600;
     const height = container.clientHeight || 450;
-
-    const cabW = layout.width;
-    const cabH = layout.height;
-    const cabD = layout.depth;
-    const maxDim = Math.max(cabW, cabH, cabD, 100);
-
-    // 1. Scene
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#090d16");
-    sceneRef.current = scene;
-
-    // 2. Camera — framed from the real assembly bounds
-    const radius = 0.6 * Math.sqrt(cabW * cabW + cabH * cabH + cabD * cabD);
-    const fov = 45;
-    const distance = (radius / Math.sin((fov * Math.PI) / 360)) * 1.05;
-    const camera = new THREE.PerspectiveCamera(fov, width / height, 1, distance * 6);
-    camera.position.set(0, maxDim * 0.55, distance);
-    camera.lookAt(0, 0, 0);
-    cameraRef.current = camera;
-
-    // 3. Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
-    scene.add(ambientLight);
-
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.6);
-    dirLight1.position.set(maxDim * 2, maxDim * 3, maxDim * 2);
-    scene.add(dirLight1);
-
-    const dirLight2 = new THREE.DirectionalLight(0x93c5fd, 0.8);
-    dirLight2.position.set(-maxDim * 2, -maxDim, -maxDim);
-    scene.add(dirLight2);
-
-    const fillLight = new THREE.DirectionalLight(0xfef3c7, 0.5);
-    fillLight.position.set(maxDim, -maxDim * 0.5, maxDim * 2);
-    scene.add(fillLight);
-
-    // Grid Floor
-    const gridHelper = new THREE.GridHelper(maxDim * 2.5, 20, 0x334155, 0x1e293b);
-    gridHelper.position.y = -cabH / 2 - 20;
-    scene.add(gridHelper);
-
-    // 4. Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch (error) {
+      console.error("Unable to start the cabinet 3D renderer", error);
+      setViewerError("3D is unavailable. Enable hardware acceleration and reload the page.");
+      return;
+    }
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = false;
-    container.innerHTML = "";
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // 5. Build the parts group (holes are children of their own part mesh)
-    const partsGroup = new THREE.Group();
-    partsGroupRef.current = partsGroup;
-    scene.add(partsGroup);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#090d16");
+    scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    keyLight.position.set(2, 3, 2);
+    const backLight = new THREE.DirectionalLight(0x93c5fd, 0.8);
+    backLight.position.set(-2, -1, -1);
+    const fillLight = new THREE.DirectionalLight(0xfef3c7, 0.5);
+    fillLight.position.set(1, -0.5, 2);
+    scene.add(keyLight, backLight, fillLight);
+    sceneRef.current = scene;
 
-    meshesRef.current = new Map();
-    buildCabinetMeshes(cabinet, layout, partsGroup, meshesRef.current, holesRef.current);
-    layoutRef.current = layout;
-    applyExplosion(layout, explosion, meshesRef.current);
-    updateMaterials(selectedPartId, meshesRef.current, wireframe);
-
-    // 6. Animation loop
-    let animId: number;
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100000);
+    cameraRef.current = camera;
+    let animId = 0;
+    let disposed = false;
     const animate = () => {
+      if (disposed) return;
       animId = requestAnimationFrame(animate);
-
-      if (autorotate) {
-        rotationRef.current.y += 0.005;
+      const group = partsGroupRef.current;
+      if (group) {
+        if (autorotateRef.current) rotationRef.current.y += 0.005;
+        group.rotation.x = rotationRef.current.x;
+        group.rotation.y = rotationRef.current.y;
+        group.scale.setScalar(zoomRef.current);
       }
-
-      partsGroup.rotation.x = rotationRef.current.x;
-      partsGroup.rotation.y = rotationRef.current.y;
-      partsGroup.scale.setScalar(zoomRef.current);
-
       renderer.render(scene, camera);
     };
     animate();
 
-    // Resize handler
     const handleResize = () => {
-      if (!container || !renderer || !camera) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      const w = container.clientWidth || 600;
+      const h = container.clientHeight || 450;
       camera.aspect = w / h;
-      camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-    };
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      cancelAnimationFrame(animId);
-      window.removeEventListener("resize", handleResize);
-      renderer.dispose();
-      partsGroup.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        if (mesh.geometry) mesh.geometry.dispose();
-        const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(material)) material.forEach((m) => m.dispose());
-        else material?.dispose();
-      });
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
+      if (partsGroupRef.current && layoutRef.current) {
+        fitCabinetCamera(camera, partsGroupRef.current, layoutRef.current);
+      } else {
+        camera.updateProjectionMatrix();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    window.addEventListener("resize", handleResize);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(handleResize);
+    observer?.observe(container);
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      setViewerError("3D rendering stopped. Reload the page if the graphics context does not recover.");
+    };
+    const handleContextRestored = () => setViewerError(null);
+    renderer.domElement.addEventListener("webglcontextlost", handleContextLost);
+    renderer.domElement.addEventListener("webglcontextrestored", handleContextRestored);
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", handleResize);
+      observer?.disconnect();
+      renderer.domElement.removeEventListener("webglcontextlost", handleContextLost);
+      renderer.domElement.removeEventListener("webglcontextrestored", handleContextRestored);
+      disposeModelRef.current?.();
+      scene.clear();
+      renderer.dispose();
+      renderer.forceContextLoss();
+      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+    };
+  }, []);
+
+  // Rebuild only cabinet-local geometry on an import/scan update, never reuse
+  // another cabinet's meshes or recreate a WebGL renderer for each scan.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !camera) return;
+    const { group, meshes, holes } = createCabinetScene(cabinet, layout);
+    partsGroupRef.current = group;
+    meshesRef.current = meshes;
+    holesRef.current = holes;
+    layoutRef.current = layout;
+    group.rotation.set(rotationRef.current.x, rotationRef.current.y, 0);
+    group.scale.setScalar(zoomRef.current);
+    scene.add(group);
+    const grid = new THREE.GridHelper(Math.max(layout.width, layout.height, layout.depth) * 2.5, 20, 0x334155, 0x1e293b);
+    grid.position.y = -layout.height / 2 - 20;
+    scene.add(grid);
+    fitCabinetCamera(camera, group, layout);
+
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      scene.remove(group, grid);
+      disposeSceneResources(group);
+      disposeSceneResources(grid);
+      meshes.clear();
+      holes.length = 0;
+      if (partsGroupRef.current === group) {
+        partsGroupRef.current = null;
+        layoutRef.current = null;
+      }
+      if (disposeModelRef.current === dispose) disposeModelRef.current = null;
+    };
+    disposeModelRef.current = dispose;
+    return dispose;
   }, [cabinet, layout]);
 
-  // Update exploded view positions when slider changes
   useEffect(() => {
-    if (!layoutRef.current) return;
-    applyExplosion(layoutRef.current, explosion, meshesRef.current);
+    applyExplosion(layout, explosion, meshesRef.current);
+    if (cameraRef.current && partsGroupRef.current) {
+      fitCabinetCamera(cameraRef.current, partsGroupRef.current, layout);
+    }
   }, [explosion, layout]);
 
-  // Update materials when selectedPartId or isScanned changes
   useEffect(() => {
-    updateMaterials(selectedPartId, meshesRef.current, wireframe);
-  }, [selectedPartId, cabinet, wireframe, layout]);
+    updateCabinetMaterials(selectedPartId, meshesRef.current, wireframe, highlightScanned);
+  }, [selectedPartId, wireframe, highlightScanned, layout]);
 
-  // Toggle drill holes visibility
   useEffect(() => {
-    holesRef.current.forEach((object) => {
-      object.visible = showDrillHoles;
-    });
+    holesRef.current.forEach((object) => { object.visible = showDrillHoles; });
   }, [showDrillHoles, layout]);
+
+  const handleResetView = () => {
+    rotationRef.current = { x: 0.35, y: -0.6 };
+    zoomRef.current = 1;
+    autorotateRef.current = false;
+    setAutorotate(false);
+    setExplosion(0);
+    setWireframe(false);
+    setShowDrillHoles(true);
+    const group = partsGroupRef.current;
+    const camera = cameraRef.current;
+    if (group && camera) {
+      group.rotation.set(0.35, -0.6, 0);
+      group.scale.setScalar(1);
+      applyExplosion(layout, 0, meshesRef.current);
+      fitCabinetCamera(camera, group, layout);
+    }
+  };
 
   // Mouse / Touch Interaction for Orbiting & Zooming
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -206,6 +251,7 @@ export default function Cabinet3DViewer({
   const handleClick = (e: React.MouseEvent) => {
     if (!containerRef.current || !cameraRef.current || !sceneRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
     const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -227,10 +273,17 @@ export default function Cabinet3DViewer({
   };
 
   return (
-    <div className="relative flex flex-col h-full w-full rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/80 shadow-2xl">
+    <div
+      className="relative flex flex-col h-full w-full rounded-2xl overflow-hidden border border-slate-800 bg-slate-950/80 shadow-2xl"
+      data-testid="cabinet-3d-viewer"
+      data-cabinet-id={cabinet.id}
+    >
       {/* 3D Canvas Container */}
       <div
         ref={containerRef}
+        data-testid="cabinet-3d-canvas"
+        role="img"
+        aria-label={`3D assembly preview of ${cabinet.name}`}
         className="w-full h-[400px] sm:h-[460px] cursor-grab active:cursor-grabbing select-none"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -240,12 +293,19 @@ export default function Cabinet3DViewer({
         onClick={handleClick}
       />
 
+      {(viewerError || cabinet.parts.length === 0) && (
+        <div role="status" className="absolute top-40 left-6 right-6 text-center text-sm text-slate-300 pointer-events-none">
+          {viewerError || "No imported parts in this cabinet."}
+        </div>
+      )}
+
       {/* Floating 3D Toolbar & Controls */}
       <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/60 shadow-lg text-xs">
-          <span className="font-bold text-white flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            3D Assembly Simulator
+        <div className="pointer-events-auto flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/60 shadow-lg text-xs">
+          <span className="font-bold text-white flex items-center gap-1.5" title={`Selected cabinet: ${cabinet.name} (${cabinet.id})`}>
+            <span className="w-2.5 h-2.5 shrink-0 rounded-full bg-emerald-500" />
+            <span className="max-w-[180px] truncate">{cabinet.name}</span>
+            <span className="text-slate-400 font-normal">3D</span>
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-slate-300 font-mono text-[11px]">
@@ -286,10 +346,7 @@ export default function Cabinet3DViewer({
             CNC Holes
           </button>
           <button
-            onClick={() => {
-              rotationRef.current = { x: 0.35, y: -0.6 };
-              zoomRef.current = 1.0;
-            }}
+            onClick={handleResetView}
             className="px-2.5 py-1 rounded-lg font-medium text-slate-300 hover:bg-slate-800 transition"
             title="Reset View"
           >
@@ -310,6 +367,7 @@ export default function Cabinet3DViewer({
             max="1"
             step="0.01"
             value={explosion}
+            aria-label="Exploded view"
             onChange={(e) => setExplosion(parseFloat(e.target.value))}
             className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
           />
@@ -334,156 +392,9 @@ export default function Cabinet3DViewer({
           </div>
         </div>
       </div>
+      <p className="px-3 py-2 text-[11px] text-slate-400 border-t border-slate-800/80">
+        Reconstructed from this cabinet’s imported parts. Placement is estimated where design coordinates are unavailable.
+      </p>
     </div>
   );
-}
-
-// ----------------------------------------------------------------------------
-// 3D Cabinet Geometry Builder
-// Every part is built as a box of its REAL cutting list size, oriented from the
-// assembly layout computed in polyboardParts.ts. Parts whose names are not in
-// the vocabulary still get their own slot (interior panels), so the model never
-// collapses into a single pile on the origin.
-// ----------------------------------------------------------------------------
-
-function buildCabinetMeshes(
-  cabinet: PolyboardCabinet,
-  layout: CabinetLayout,
-  partsGroup: THREE.Group,
-  meshesMap: Map<string, THREE.Mesh>,
-  holeMarkers: THREE.Object3D[],
-) {
-  meshesMap.clear();
-  holeMarkers.length = 0;
-
-  cabinet.parts.forEach((part, index) => {
-    const placement: PartPlacement | undefined = layout.placements[index];
-    const size = placement?.size || {
-      length: part.length > 0 ? part.length : layout.height,
-      width: part.width > 0 ? part.width : layout.depth,
-      thickness: part.thickness > 0 ? part.thickness : 18,
-    };
-
-    const geom = new THREE.BoxGeometry(size.length, size.width, size.thickness);
-
-    // Edges geometry for clean CAD look
-    const edgesGeom = new THREE.EdgesGeometry(geom);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x1e293b, linewidth: 1 });
-    const wireframeLines = new THREE.LineSegments(edgesGeom, lineMat);
-
-    const mat = createPartMaterial(part.isScanned);
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.add(wireframeLines);
-
-    if (placement) {
-      mesh.position.set(placement.center.x, placement.center.y, placement.center.z);
-      const basis = new THREE.Matrix4().makeBasis(
-        new THREE.Vector3(placement.axisX.x, placement.axisX.y, placement.axisX.z),
-        new THREE.Vector3(placement.axisY.x, placement.axisY.y, placement.axisY.z),
-        new THREE.Vector3(placement.axisZ.x, placement.axisZ.y, placement.axisZ.z),
-      );
-      mesh.quaternion.setFromRotationMatrix(basis);
-    }
-
-    mesh.userData = {
-      partId: part.id,
-      basePos: mesh.position.clone(),
-      explodeDir: placement ? placement.explode : { x: 0, y: 0.5, z: 0.5 },
-      size,
-      role: placement?.role || "generic",
-      isScanned: !!part.isScanned,
-    };
-
-    partsGroup.add(mesh);
-    meshesMap.set(part.id, mesh);
-
-    // Add CNC Rover A drilling holes onto the 3D part if CIX borings exist
-    const borings = part.cixData?.borings || [];
-    if (borings.length > 0) {
-      const holeMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
-      borings.forEach((b) => {
-        const dia = Math.max(2, b.diameter || 5);
-        const depth = Math.max(2, b.depth || 12);
-        const holeGeom = new THREE.CylinderGeometry(dia / 2, dia / 2, Math.min(depth, size.thickness * 1.5), 12);
-        const holeMesh = new THREE.Mesh(holeGeom, holeMat);
-
-        const x = Math.min(Math.max(b.x, 0), size.length) - size.length / 2;
-        const y = Math.min(Math.max(b.y, 0), size.width) - size.width / 2;
-        const half = size.thickness / 2;
-
-        switch (b.side) {
-          case 1: // bottom face
-            holeMesh.rotation.x = Math.PI / 2;
-            holeMesh.position.set(x, y, -half - 0.6);
-            break;
-          case 2: // left edge
-            holeMesh.rotation.z = Math.PI / 2;
-            holeMesh.position.set(-size.length / 2 + Math.min(depth, size.length) / 2, y, 0);
-            break;
-          case 3: // right edge
-            holeMesh.rotation.z = Math.PI / 2;
-            holeMesh.position.set(size.length / 2 - Math.min(depth, size.length) / 2, y, 0);
-            break;
-          case 4: // front edge
-            holeMesh.position.set(x, -size.width / 2 + Math.min(depth, size.width) / 2, 0);
-            break;
-          case 5: // back edge
-            holeMesh.position.set(x, size.width / 2 - Math.min(depth, size.width) / 2, 0);
-            break;
-          default: // top face
-            holeMesh.rotation.x = Math.PI / 2;
-            holeMesh.position.set(x, y, half + 0.6);
-            break;
-        }
-
-        mesh.add(holeMesh);
-        holeMarkers.push(holeMesh);
-      });
-    }
-  });
-}
-
-function createPartMaterial(isScanned?: boolean, isSelected?: boolean, wireframe: boolean = false) {
-  let color = 0x64748b; // Unscanned slate-500
-  const roughness = 0.6;
-  const metalness = 0.1;
-
-  if (isSelected) {
-    color = 0xfbbf24; // Amber 400
-  } else if (isScanned) {
-    color = 0x10b981; // Emerald 500
-  }
-
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness,
-    wireframe,
-  });
-}
-
-function updateMaterials(
-  selectedPartId: string | null | undefined,
-  meshesMap: Map<string, THREE.Mesh>,
-  wireframe: boolean
-) {
-  meshesMap.forEach((mesh, partId) => {
-    const isSelected = partId === selectedPartId;
-    const isScanned = !!mesh.userData.isScanned;
-    mesh.material = createPartMaterial(isScanned, isSelected, wireframe);
-  });
-}
-
-function applyExplosion(layout: CabinetLayout, explosionFactor: number, meshesMap: Map<string, THREE.Mesh>) {
-  const explodeDistance = Math.max(layout.width, layout.height, layout.depth) * 0.45;
-
-  meshesMap.forEach((mesh) => {
-    const basePos = mesh.userData.basePos as THREE.Vector3 | undefined;
-    const explodeDir = mesh.userData.explodeDir as { x: number; y: number; z: number } | undefined;
-    if (basePos && explodeDir) {
-      mesh.position.x = basePos.x + explodeDir.x * explodeDistance * explosionFactor;
-      mesh.position.y = basePos.y + explodeDir.y * explodeDistance * explosionFactor;
-      mesh.position.z = basePos.z + explodeDir.z * explodeDistance * explosionFactor;
-    }
-  });
 }
