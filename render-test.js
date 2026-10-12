@@ -3545,9 +3545,6 @@ check(
   }
 }
 
-console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
-process.exitCode = fails === 0 ? 0 : 1;
-
 // Assembly & Polyboard Unit Test
 compile("src/lib/cixParser.ts", "lib/cixParser.js");
 const cixParser = require("./compiled/lib/cixParser");
@@ -3560,3 +3557,175 @@ const parsedPart = cixParser.parseCix(testCix, "test_side.cix");
 check(parsedPart.length === 800 && parsedPart.width === 550 && parsedPart.thickness === 18, "Polyboard CIX: correctly parses LPX, LPY, LPZ");
 check(parsedPart.borings.length === 2, "Polyboard CIX: correctly parses Rover A BG boring macros");
 
+
+// ---- Polyboard import robustness -------------------------------------------
+// Real Polyboard cutting lists are user configured (Cutting list > Cutting list
+// options > Format): title blocks, localized field names, any field order,
+// section headings and even no header row at all. These checks come from the
+// "2 cabinets loaded as one and the 3D showed a single part" bug report.
+compile("src/lib/polyboardParts.ts", "lib/polyboardParts.js");
+compile("src/lib/polyboard.ts", "lib/polyboard.js");
+compile("src/lib/samplePolyboardData.ts", "lib/samplePolyboardData.js");
+const polyboard = require("./compiled/lib/polyboard");
+const polyboardParts = require("./compiled/lib/polyboardParts");
+const sampleData = require("./compiled/lib/samplePolyboardData.js");
+
+// A) Title block + French/accented headers, CIX reference column, quantities
+const frCutList = [
+  "Liste de débit - PolyBoard 7.08 - Projet Villa 42",
+  "Meuble;Pièce;Matière;Longueur;Largeur;Épaisseur;Quantité;Référence CIX",
+  "Caisson bas 600;Montant gauche;MFC Blanc 18mm;720;560;18;1;CB600_MG",
+  "Caisson bas 600;Montant droit;MFC Blanc 18mm;720;560;18;1;CB600_MD",
+  "Caisson bas 600;Fond;HDF Blanc 3mm;700;580;3;1;CB600_FD",
+  "Caisson bas 600;Traverse haute;MFC Blanc 18mm;564;100;18;2;CB600_TH",
+  "Caisson bas 600;Tablette;MFC Blanc 18mm;546;520;18;1;CB600_TA",
+  "Caisson haut 900;Joue gauche;MFC Blanc 18mm;600;320;18;1;CH900_JG",
+  "Caisson haut 900;Joue droite;MFC Blanc 18mm;600;320;18;1;CH900_JD",
+  "Caisson haut 900;Porte gauche;MDF Anthracite;595;446;18;1;CH900_PG",
+].join("\n");
+const frParsed = polyboard.parsePolyboardCsv(frCutList);
+const frCabinets = Array.from(frParsed.cabinetsMap.values());
+check(
+  frCabinets.length === 2 && frCabinets[0].name === "Caisson bas 600" && frCabinets[1].name === "Caisson haut 900",
+  "Polyboard CSV: a title block above a French/accented header row still splits the project per cabinet",
+);
+check(
+  frParsed.diagnostics.headerRowIndex === 1 && frParsed.diagnostics.delimiter === ";",
+  "Polyboard CSV: the header row and the semicolon separator are detected, not assumed",
+);
+check(
+  frCabinets[0].parts.some((p) => p.name === "Montant gauche") && frCabinets[0].parts.some((p) => p.name === "Fond"),
+  "Polyboard CSV: accented/localized field names keep the real part names (no 'Part 1' fallback)",
+);
+check(
+  frCabinets[0].parts.filter((p) => p.name.startsWith("Traverse haute")).length === 2,
+  "Polyboard CSV: a grouped line with quantity 2 explodes into 2 parts",
+);
+check(
+  frCabinets[0].width === 600 && frCabinets[0].height === 720 && frCabinets[0].depth === 560,
+  "Polyboard CSV: cabinet size is derived from the carcass panels (600 x 720 x 560)",
+);
+check(
+  frCabinets[0].parts[0].barcode === "CB600_MG" && frCabinets[0].parts[0].cixFilename === "CB600_MG.cix",
+  "Polyboard CSV: the CIX reference column becomes the part barcode and CIX file name",
+);
+
+// B) No header row at all: columns must be found from their contents
+const bareCutList = [
+  "Caisson bas 600;Montant gauche;MFC Blanc 18mm;720;560;18;1",
+  "Caisson bas 600;Montant droit;MFC Blanc 18mm;720;560;18;1",
+  "Caisson haut 900;Joue gauche;MFC Blanc 18mm;600;320;18;1",
+].join("\n");
+const bareParsed = polyboard.parsePolyboardCsv(bareCutList);
+const bareCabinets = Array.from(bareParsed.cabinetsMap.values());
+check(
+  bareParsed.diagnostics.headerless && bareCabinets.length === 2,
+  "Polyboard CSV: a cutting list without a header row is split per cabinet from its value blocks",
+);
+check(
+  bareCabinets[0].parts.every((p) => p.name !== "Part 1") && bareCabinets[0].parts[0].length === 720,
+  "Polyboard CSV: headerless files keep their real part names and dimensions",
+);
+
+// C) Section headings ("Caisson bas 600" on its own line) group the parts
+const sectionCutList = [
+  "Liste de débit",
+  "Caisson bas 600",
+  "Montant gauche;MFC;720;560;18;1",
+  "Montant droit;MFC;720;560;18;1",
+  "Caisson haut 900",
+  "Joue gauche;MFC;600;320;18;1",
+  "Total;3 pièces;;;;",
+].join("\n");
+const sectionParsed = polyboard.parsePolyboardCsv(sectionCutList);
+check(
+  sectionParsed.cabinetsMap.size === 2 &&
+    sectionParsed.diagnostics.cabinetGrouping === "sections" &&
+    Array.from(sectionParsed.cabinetsMap.values())[0].name === "Caisson bas 600",
+  "Polyboard CSV: section headings split the cabinets and the totals line is ignored",
+);
+
+// D) A cutting list with no cabinet field warns instead of silently merging
+const noCabinetParsed = polyboard.parsePolyboardCsv("Piece;Material;Length;Width;Thickness;Qty\nMontant gauche;MFC;720;560;18;1");
+check(
+  noCabinetParsed.cabinetsMap.size === 1 && noCabinetParsed.diagnostics.warnings.length > 0,
+  "Polyboard CSV: a missing cabinet column is reported to the user",
+);
+
+// E) The bundled sample keeps working exactly as before
+const sampleParsed = polyboard.parsePolyboardCsv(sampleData.SAMPLE_CUTLIST_CSV);
+const sampleCabinets = Array.from(sampleParsed.cabinetsMap.values());
+const wallUnit = sampleCabinets.find((c) => c.name === "Wall Unit 900");
+check(
+  sampleCabinets.length === 3 && sampleParsed.parts.length === 23,
+  "Polyboard sample: the demo cutting list still imports as 3 cabinets / 23 parts",
+);
+check(
+  wallUnit.width === 900 && wallUnit.height === 600 && wallUnit.depth === 320,
+  "Polyboard sample: the wall unit reads 900 x 600 x 320 mm instead of the old 864 x 446 envelope",
+);
+check(
+  sampleCabinets[0].parts[0].barcode === "KB600_LS",
+  "Polyboard sample: the CIX_Ref column is picked up again for barcode scanning",
+);
+
+const sampleCix = Object.entries(sampleData.SAMPLE_CIX_FILES).map(([filename, content]) => ({ filename, content }));
+const sampleMatch = polyboard.matchCixToParts(sampleCabinets, sampleCix);
+check(
+  sampleMatch.matchedCount === 6 && sampleMatch.unmatchedCix.length === 0 && sampleMatch.matchedByCabinet["Kitchen Base 600"] === 4,
+  "Polyboard CIX: every uploaded machine file is linked to its own part (and used once)",
+);
+check(
+  sampleCabinets[2].parts.every((p) => !p.cixData),
+  "Polyboard CIX: a cabinet without machine files never borrows another cabinet's CIX program",
+);
+
+// F) 3D assembly layout: every part gets its own slot built from its real size
+const layout = polyboardParts.buildCabinetLayout(frCabinets[0]);
+const centres = new Set(layout.placements.map((p) => `${p.center.x.toFixed(1)},${p.center.y.toFixed(1)},${p.center.z.toFixed(1)}`));
+check(
+  layout.placements.length === frCabinets[0].parts.length && centres.size === layout.placements.length,
+  "Polyboard 3D: each part of a cabinet is placed once, none stacked on the origin",
+);
+check(
+  layout.width === 600 && layout.height === 720 && layout.depth === 560,
+  "Polyboard 3D: the viewer is framed from the derived cabinet envelope",
+);
+const layoutWithDoor = polyboardParts.buildCabinetLayout(frCabinets[1]);
+const properBasis = layout.placements.every((p) => {
+  const cx = p.axisX.y * p.axisY.z - p.axisX.z * p.axisY.y;
+  const cy = p.axisX.z * p.axisY.x - p.axisX.x * p.axisY.z;
+  const cz = p.axisX.x * p.axisY.y - p.axisX.y * p.axisY.x;
+  return Math.abs(cx - p.axisZ.x) < 1e-6 && Math.abs(cy - p.axisZ.y) < 1e-6 && Math.abs(cz - p.axisZ.z) < 1e-6;
+});
+check(properBasis, "Polyboard 3D: every part orientation is a proper (non mirrored) placement");
+
+const sideLeft = layout.placements.find((p) => p.role === "side-left");
+const door = layoutWithDoor.placements.find((p) => p.role === "door");
+check(
+  !!sideLeft && Math.abs(sideLeft.center.x + 291) < 1 && sideLeft.axisX.y === 1,
+  "Polyboard 3D: a left side panel stands vertically at the left face of the cabinet",
+);
+check(
+  !!door && door.center.z > layoutWithDoor.depth / 2,
+  "Polyboard 3D: a door is mounted on the front face, not in the middle of the carcass",
+);
+
+// G) Part role vocabulary across languages
+const roleOf = (name) => polyboardParts.classifyPartRole({ name, length: 100, width: 100, thickness: 18 }, 0, 2);
+check(
+  roleOf("Montant gauche") === "side-left" &&
+    roleOf("Fond") === "back" &&
+    roleOf("Tablette") === "shelf" &&
+    roleOf("Porte") === "door" &&
+    roleOf("Traverse haute") === "rail" &&
+    roleOf("Tiroir") === "drawer-front" &&
+    roleOf("Bottom Deck") === "bottom" &&
+    roleOf("Adjustable Shelf") === "shelf" &&
+    roleOf("Regalboden") === "shelf" &&
+    roleOf("Fianco sinistro") === "side-left",
+  "Polyboard 3D: part types are recognized in EN/FR/DE/ES/IT (and 'Bottom Shelf Deck' is a bottom, not a shelf)",
+);
+
+console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
+process.exitCode = fails === 0 ? 0 : 1;

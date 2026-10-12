@@ -95,7 +95,7 @@ export function parseCix(cixContent: string, filename: string = ""): ParsedCixPa
   let width = 0;
   let thickness = 18;
   let material = "";
-  let programName = filename.replace(/\.cix$/i, "");
+  const programName = filename.replace(/\.cix$/i, "");
   let partName = "";
 
   const borings: CixBoring[] = [];
