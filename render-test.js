@@ -3727,5 +3727,196 @@ check(
   "Polyboard 3D: part types are recognized in EN/FR/DE/ES/IT (and 'Bottom Shelf Deck' is a bottom, not a shelf)",
 );
 
-console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
-process.exitCode = fails === 0 ? 0 : 1;
+// ---- Loaded assembly project editing / deletion -----------------------------
+compile("src/lib/assemblyProject.ts", "lib/assemblyProject.js");
+compile("src/lib/assemblyStorage.server.ts", "lib/assemblyStorage.server.js");
+compile("src/components/AssemblyProjectDialog.tsx", "components/AssemblyProjectDialog.js");
+compile("src/app/api/assembly/route.ts", "api/assembly.js");
+const assemblyDetails = require("./compiled/lib/assemblyProject.js");
+const assemblyStorage = require("./compiled/lib/assemblyStorage.server.js");
+const AssemblyProjectDialog = require("./compiled/components/AssemblyProjectDialog.js").default;
+
+for (const bad of [null, [], "name", {}, { name: 7 }, { name: "   " }, { name: "x", notes: 7 }, { name: "x", notes: null }]) {
+  check(!assemblyDetails.parseAssemblyProjectDetails(bad).ok, "assembly edit: rejects invalid details " + JSON.stringify(bad));
+}
+check(!assemblyDetails.parseAssemblyProjectDetails({ name: "x".repeat(201) }).ok, "assembly edit: refuses overly long project names");
+check(!assemblyDetails.parseAssemblyProjectDetails({ name: "x", notes: "x".repeat(5001) }).ok, "assembly edit: refuses overly long notes");
+const cleanAssemblyDetails = assemblyDetails.parseAssemblyProjectDetails({ name: "  New kitchen  ", notes: "  Job 42  ", cabinets: [], importedBy: "fake" });
+check(cleanAssemblyDetails.ok && JSON.stringify(cleanAssemblyDetails.details) === JSON.stringify({ name: "New kitchen", notes: "Job 42" }), "assembly edit: trims metadata and excludes imported project fields");
+check(assemblyDetails.parseAssemblyProjectDetails({ name: "Kitchen" }).details.notes === undefined, "assembly edit: omitted notes remain unchanged");
+check(assemblyDetails.parseAssemblyProjectDetails({ name: "Kitchen", notes: "  " }).details.notes === "", "assembly edit: blank notes explicitly clear saved notes");
+
+const assemblyFixture = {
+  id: "project-fixture",
+  name: 'Kitchen <42> & "Villa"',
+  notes: "Job 42\nReady for installation",
+  importedAt: "2026-10-01T12:00:00.000Z",
+  importedBy: "Manager",
+  sourceFiles: { csvName: "cutlist.csv", pbProjName: "kitchen.pb-proj", cixFiles: ["KB600_LS.cix"] },
+  cabinets: JSON.parse(JSON.stringify(sampleCabinets)),
+};
+const dialogProps = { project: assemblyFixture, onClose: () => {}, onSave: async () => {}, onDelete: async () => {} };
+const editDialogHtml = renderToString(React.createElement(AssemblyProjectDialog, { ...dialogProps, mode: "edit" }));
+const deleteDialogHtml = renderToString(React.createElement(AssemblyProjectDialog, { ...dialogProps, mode: "delete" }));
+check(editDialogHtml.includes('value="Kitchen &lt;42&gt; &amp; &quot;Villa&quot;"') && editDialogHtml.includes("Ready for installation"), "assembly edit dialog: preloads and escapes the current name and notes");
+check(editDialogHtml.includes('aria-labelledby="assembly-project-dialog-title"') && editDialogHtml.includes("Save Changes") && editDialogHtml.includes("stay intact"), "assembly edit dialog: labelled modal describes the safe edit scope");
+check(deleteDialogHtml.replace(/<!--.*?-->/g, "").includes("3 cabinets and 23 parts") && deleteDialogHtml.includes("cannot be undone"), "assembly delete dialog: confirms the project and the number of cabinets/parts being removed");
+check(deleteDialogHtml.includes("Original Polyboard files and linked ERP orders will not be deleted"), "assembly delete dialog: clearly distinguishes local project deletion from source files / ERP orders");
+const assemblyViewSource = fs.readFileSync("src/components/AssemblyView.tsx", "utf8");
+check(assemblyViewSource.includes("activeProject && canManageProject && !loading") && assemblyViewSource.includes("Edit Project") && assemblyViewSource.includes("Delete Project"), "assembly workspace: project controls require a loaded project and existing write permission");
+check(assemblyViewSource.includes('method: "PATCH"') && assemblyViewSource.includes('method: "DELETE"') && assemblyViewSource.includes("encodeURIComponent(projectId)"), "assembly workspace: edit/delete target the selected project's encoded ID");
+check(assemblyViewSource.includes("const activeProject = projects.find(") && assemblyViewSource.includes("current.map((existing)") && assemblyViewSource.includes("selectProject(remaining[0] || null)"), "assembly workspace: updates share one project list and deletion clears or selects a remaining project");
+check(pageSource.includes("<AssemblyView key={currentUser.id} currentUser={currentUser}"), "assembly workspace: permissions and cached project state follow the signed-in user");
+
+// Exercise the REAL Next route handlers and JSON store without a PostgreSQL
+// dependency. Only authentication is substituted; the permission matrix,
+// parser, atomic file writes and audit log are the production implementations.
+async function checkAssemblyProjectApi() {
+  const Module = require("node:module");
+  const { NextRequest, NextResponse } = require("next/server");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "woodtek-assembly-"));
+  const previousDataDir = process.env.WOODTEK_DATA_DIR;
+  process.env.WOODTEK_DATA_DIR = scratch;
+  let actor = { id: 1, name: "Test Manager", role: "Manager" };
+  const requestedActions = [];
+  const routePath = path.join(__dirname, "compiled/api/assembly.js");
+  const routeModule = new Module(routePath, module);
+  routeModule.filename = routePath;
+  routeModule.paths = Module._nodeModulePaths(path.dirname(routePath));
+  routeModule.require = (id) => {
+    if (id === "../lib/auth") return {
+      authorize: async (action) => {
+        requestedActions.push(action);
+        if (!actor) return { user: null, error: NextResponse.json({ error: "Signed out" }, { status: 401 }) };
+        if (!perms.can(actor.role, action)) return { user: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+        return { user: actor, error: null };
+      },
+    };
+    return Module.prototype.require.call(routeModule, id);
+  };
+  routeModule._compile(fs.readFileSync(routePath, "utf8"), routePath);
+  const route = routeModule.exports;
+  const request = (method, id, body, raw = false) => new NextRequest(
+    "http://woodtek.test/api/assembly" + (id !== undefined ? "?id=" + encodeURIComponent(id) : ""),
+    { method, ...(body !== undefined ? { headers: { "Content-Type": "application/json" }, body: raw ? body : JSON.stringify(body) } : {}) },
+  );
+
+  try {
+    check(!assemblyStorage.assemblyStoreExists(), "assembly store: a missing store is distinguishable from an empty saved store");
+    let response = await route.GET(request("GET"));
+    let data = await response.json();
+    check(response.status === 200 && data.projects.length === 1 && data.projects[0].id === "polyboard-demo-villa-42", "assembly API: first use still loads the demo project");
+    response = await route.DELETE(request("DELETE", "polyboard-demo-villa-42"));
+    check(response.status === 200 && (await response.json()).success, "assembly API: the demo project can be deleted");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 0 && assemblyStorage.assemblyStoreExists(), "assembly API: deleting the last project stays empty on reload (no demo resurrection)");
+    response = await route.GET(request("GET", "polyboard-demo-villa-42"));
+    check(response.status === 404, "assembly API: a deleted project remains absent when fetched by ID");
+
+    const fixture = JSON.parse(JSON.stringify(assemblyFixture));
+    fixture.cabinets[0].linkedOrderId = 42;
+    fixture.cabinets[0].isReadyForAssembly = true;
+    fixture.cabinets[0].assembledAt = "2026-10-02T12:00:00.000Z";
+    fixture.cabinets[0].parts.forEach((part) => { part.isScanned = true; part.scannedBy = "Assembler"; part.scannedAt = "2026-10-02T11:00:00.000Z"; });
+    assemblyStorage.saveProject(fixture);
+    const otherProject = { ...JSON.parse(JSON.stringify(fixture)), id: "other-project", name: "Other kitchen" };
+    assemblyStorage.saveProject(otherProject);
+    const originalCabinets = JSON.stringify(fixture.cabinets);
+    const originalSources = JSON.stringify(fixture.sourceFiles);
+    const beforeInvalid = fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8");
+
+    response = await route.PATCH(request("PATCH", undefined, { name: "Updated" }));
+    check(response.status === 400, "assembly API: edit requires a project ID");
+    response = await route.PATCH(request("PATCH", "  ", { name: "Updated" }));
+    check(response.status === 400, "assembly API: edit refuses a blank project ID");
+    response = await route.PATCH(request("PATCH", fixture.id, "{invalid", true));
+    check(response.status === 400, "assembly API: malformed edit JSON returns 400");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "  " }));
+    check(response.status === 400, "assembly API: a whitespace-only project name returns 400");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "x", notes: { private: true } }));
+    check(response.status === 400, "assembly API: non-text notes return 400");
+    response = await route.PATCH(request("PATCH", "already-deleted", { name: "Updated" }));
+    check(response.status === 404, "assembly API: editing an unknown project does not create one");
+    response = await route.DELETE(request("DELETE"));
+    check(response.status === 400, "assembly API: deletion requires a project ID");
+    response = await route.DELETE(request("DELETE", "already-deleted"));
+    check(response.status === 404, "assembly API: deleting an unknown project returns 404");
+    check(fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8") === beforeInvalid, "assembly API: rejected edits/deletes leave the saved projects untouched");
+
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "  Updated kitchen  ", notes: "  Job 99  ", cabinets: [], sourceFiles: {}, importedBy: "fake", id: "new-id" }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Updated kitchen" && data.project.notes === "Job 99", "assembly API: edited metadata is trimmed, returned and saved");
+    check(data.project.id === fixture.id && data.project.importedAt === fixture.importedAt && data.project.importedBy === fixture.importedBy, "assembly API: editing preserves project identity and import history");
+    check(JSON.stringify(data.project.cabinets) === originalCabinets && JSON.stringify(data.project.sourceFiles) === originalSources, "assembly API: editing cannot overwrite cabinets, CNC data, scan history, assembly readiness or ERP links");
+    check(assemblyStorage.getProjectById(otherProject.id).name === "Other kitchen", "assembly API: editing one project leaves other projects unchanged");
+
+    // A scan happens after the edit dialog's snapshot was opened. The metadata
+    // write reads the current store instead of replacing it with that snapshot.
+    const part = fixture.cabinets[1].parts[0];
+    assemblyStorage.scanPart(fixture.id, fixture.cabinets[1].id, part.barcode, "New assembler");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Updated again" }));
+    data = await response.json();
+    check(data.project.notes === "Job 99" && data.project.cabinets[1].parts[0].scannedBy === "New assembler", "assembly API: omitted notes and assembly work completed since opening the form survive editing");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Updated again", notes: "   " }));
+    check(!(await response.json()).project.notes && !assemblyStorage.getProjectById(fixture.id).notes, "assembly API: notes can be cleared persistently");
+
+    actor = { id: 2, name: "Read only", role: "Floor Supervisor" };
+    response = await route.GET(request("GET"));
+    check(response.status === 200, "assembly API: existing read-only roles can still view projects");
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Unauthorized" }));
+    check(response.status === 403, "assembly API: read-only roles cannot edit projects");
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 403 && assemblyStorage.getProjectById(fixture.id), "assembly API: read-only roles cannot delete projects");
+    actor = null;
+    response = await route.PATCH(request("PATCH", fixture.id, { name: "Unauthorized" }));
+    check(response.status === 401, "assembly API: signed-out edits are rejected");
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 401, "assembly API: signed-out deletions are rejected");
+    actor = { id: 1, name: "Test Manager", role: "Manager" };
+
+    // Simulate an atomic writer/disk failure; the API must report it, not claim
+    // success or remove the original file. Restore the writer even on failure.
+    const previousWrite = atomic.writeJsonAtomic;
+    const previousConsoleError = console.error;
+    const beforeWriteFailure = fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8");
+    try {
+      atomic.writeJsonAtomic = () => { throw new Error("Simulated disk failure"); };
+      console.error = () => {};
+      response = await route.PATCH(request("PATCH", fixture.id, { name: "Not saved" }));
+      check(response.status === 500, "assembly API: write failures return a recoverable edit error");
+      response = await route.DELETE(request("DELETE", fixture.id));
+      check(response.status === 500, "assembly API: write failures return a recoverable deletion error");
+      check(fs.readFileSync(path.join(scratch, "assembly-projects.json"), "utf8") === beforeWriteFailure, "assembly API: write failures keep the original projects intact");
+    } finally {
+      atomic.writeJsonAtomic = previousWrite;
+      console.error = previousConsoleError;
+    }
+
+    response = await route.DELETE(request("DELETE", fixture.id));
+    check(response.status === 200 && !assemblyStorage.getProjectById(fixture.id) && assemblyStorage.readAssemblyStore().projects.length === 1, "assembly API: deletion removes only the selected project");
+    response = await route.DELETE(request("DELETE", otherProject.id));
+    check(response.status === 200 && assemblyStorage.readAssemblyStore().projects.length === 0, "assembly API: the final imported project can be removed");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 0, "assembly API: repeated loads of the empty project store remain empty");
+    const actions = audit.readAudit();
+    check(actions.some((entry) => entry.action === "assembly.edit" && entry.entityId === fixture.id) && actions.some((entry) => entry.action === "assembly.delete" && entry.entityId === fixture.id), "assembly API: edits and deletions have an audit trail for the project ID");
+    check(requestedActions.every((action) => action === "orders:read" || action === "orders:write"), "assembly API: project management keeps the existing read/write permission gates");
+
+    response = await route.POST(request("POST", undefined, { projectName: "Imported after deletion", csvContent: sampleData.SAMPLE_CUTLIST_CSV, csvFilename: "new.csv", cixFiles: sampleCix }));
+    data = await response.json();
+    check(response.status === 200 && data.project.name === "Imported after deletion" && data.project.cabinets.length === 3, "assembly API: importing still works after all projects have been deleted");
+    response = await route.GET(request("GET"));
+    check((await response.json()).projects.length === 1, "assembly API: a new import does not bring back the removed demo");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.WOODTEK_DATA_DIR;
+    else process.env.WOODTEK_DATA_DIR = previousDataDir;
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+checkAssemblyProjectApi()
+  .catch((error) => { check(false, "assembly API checks completed without an unexpected exception"); console.error(error); })
+  .finally(() => {
+    console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
+    process.exitCode = fails === 0 ? 0 : 1;
+  });

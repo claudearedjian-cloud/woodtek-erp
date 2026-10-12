@@ -33,6 +33,25 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
+## Cabinet Assembly — loaded project management
+- Select a loaded project in the top project picker, then use **Edit Project** to
+  change its name and **Notes / Job Reference**. Cabinets, parts, CNC data, scan
+  progress, assembly readiness and linked ERP orders are preserved. Editing
+  project details does not replace the imported cutting list or geometry.
+- **Delete Project** opens a confirmation naming the project and counting its
+  cabinets and parts. Confirming permanently removes that assembly project and
+  its local progress/CNC data only — original Polyboard files and ERP orders are
+  not deleted. The next remaining project opens automatically; deleting the last
+  project shows the empty import screen and stays empty after a reload.
+- The sample project is populated on first use only, never recreated after a
+  deletion. You can still load sample files explicitly from the import dialog.
+- Edit/delete use the existing project write permission; read-only users do not
+  see those controls. Errors keep the dialog and entered values available to
+  retry, and successful changes are audit-logged.
+- No database migration: projects remain in `data/assembly-projects.json` (or
+  `WOODTEK_DATA_DIR`), written atomically. Deploy using the normal update ritual
+  after the owner approves and merges the PR.
+
 ## Purchasing & Suppliers (POs/GRNs shipped in PR #10; supplier A/P follow-up added 2026-10-01)
 - Manager always has access. For anyone else, turn on **Purchasing & Suppliers** in
   Settings → System Settings → Optional modules and grant the role or person. **Invoicing &
