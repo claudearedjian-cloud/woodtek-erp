@@ -15,6 +15,7 @@ import {
   type PolyboardCsvDiagnostics,
   type PolyboardCixMatchResult,
   type PolyboardProject,
+  type PolyboardCabinet,
 } from "@/lib/polyboard";
 import { SAMPLE_PB_PROJ, SAMPLE_CUTLIST_CSV, SAMPLE_CIX_FILES } from "@/lib/samplePolyboardData";
 import { logAudit } from "@/lib/audit.server";
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest) {
       pbProjFilename,
       csvContent,
       csvFilename,
+      csvLayout,
       cixFiles, // Array of { filename: string, content: string }
       notes,
     } = body;
@@ -92,18 +94,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let projectName = rawProjectName?.trim() || "";
-    let cabinets: any[] = [];
+    if (csvLayout !== undefined && csvLayout !== "woodtek" && csvLayout !== "auto") {
+      return NextResponse.json({ error: "Invalid CSV layout" }, { status: 400 });
+    }
+
+    let projectName = typeof rawProjectName === "string" ? rawProjectName.trim() : "";
+    let cabinets: PolyboardCabinet[] = [];
     let csvDiagnostics: PolyboardCsvDiagnostics | null = null;
 
     // Parse the cutting list (CSV/TXT export)
     if (csvContent) {
-      const parsedCsv = parsePolyboardCsv(csvContent);
+      const parsedCsv = parsePolyboardCsv(csvContent, { layout: csvLayout });
+      if (parsedCsv.diagnostics.projectNames.length > 1) {
+        return NextResponse.json({
+          error: "The cutting list contains multiple project names. Export and import one project at a time to avoid mixing cabinets.",
+        }, { status: 400 });
+      }
+      if (!projectName) projectName = parsedCsv.projectName;
       cabinets = Array.from(parsedCsv.cabinetsMap.values());
       csvDiagnostics = parsedCsv.diagnostics;
     }
 
-    // Parse .pb-proj if provided (used for the project name and, when the
+    // Parse .pb-proj if provided (project-name fallback after CSV column 12; when the
     // cutting list has no cabinet breakdown at all, for the cabinet list)
     let pbProjCabinetCount = 0;
     if (pbProjContent) {
@@ -143,7 +155,7 @@ export async function POST(req: NextRequest) {
       cixMatch = matchCixToParts(cabinets, validCixList);
     }
 
-    const totalParts = cabinets.reduce((sum: number, c: any) => sum + (c.parts?.length || 0), 0);
+    const totalParts = cabinets.reduce((sum, cabinet) => sum + cabinet.parts.length, 0);
 
     const projectId = `proj-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newProject: PolyboardProject = {

@@ -22,7 +22,7 @@ import {
   Printer,
   Wrench,
 } from "lucide-react";
-import type { PolyboardProject } from "@/lib/polyboard";
+import { WOODTEK_CSV_COLUMNS, type PolyboardCsvLayout, type PolyboardProject } from "@/lib/polyboard";
 import type { AssemblyProjectDetails } from "@/lib/assemblyProject";
 import { can } from "@/lib/permissions";
 import AssemblyProjectDialog from "./AssemblyProjectDialog";
@@ -79,6 +79,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
   // Import Dialog State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importProjName, setImportProjName] = useState("");
+  const [importCsvLayout, setImportCsvLayout] = useState<PolyboardCsvLayout>("woodtek");
   const [csvFile, setCsvFile] = useState<{ name: string; content: string } | null>(null);
   const [pbProjFile, setPbProjFile] = useState<{ name: string; content: string } | null>(null);
   const [cixFilesList, setCixFilesList] = useState<Array<{ filename: string; content: string }>>([]);
@@ -292,6 +293,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
   // Load Built-in Demo Polyboard Files into Import Modal
   const loadDemoFilesInModal = () => {
     setImportProjName("Villa 42 Kitchen Layout");
+    setImportCsvLayout("woodtek");
     setPbProjFile({ name: "Kitchen-Villa-42.pb-proj", content: SAMPLE_PB_PROJ });
     setCsvFile({ name: "Kitchen-Villa-42-cutlist.csv", content: SAMPLE_CUTLIST_CSV });
     const cixs = Object.entries(SAMPLE_CIX_FILES).map(([filename, content]) => ({
@@ -317,6 +319,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
           projectName: importProjName,
           csvContent: csvFile?.content,
           csvFilename: csvFile?.name,
+          csvLayout: importCsvLayout,
           pbProjContent: pbProjFile?.content,
           pbProjFilename: pbProjFile?.name,
           cixFiles: cixFilesList,
@@ -331,16 +334,24 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
         setPbProjFile(null);
         setCixFilesList([]);
         setImportProjName("");
+        setImportCsvLayout("woodtek");
 
         // Read-back report: what the importer understood from the files
         const csvDiag = data.diagnostics?.csv;
         const cixDiag = data.diagnostics?.cix;
         const details: Array<{ label: string; value: string }> = [];
         if (csvDiag) {
+          details.push({
+            label: "CSV layout",
+            value: csvDiag.layout === "woodtek" ? "part 7 • project 12 • cabinet 13 • CIX 14" : "automatic headers / content",
+          });
+          if (csvDiag.projectNames?.length) details.push({ label: "CSV project", value: csvDiag.projectNames.join(", ") });
           details.push({ label: "Separator", value: csvDiag.delimiterLabel });
           details.push({
             label: "Header row",
-            value: csvDiag.headerless ? "not found (parsed by content)" : `line ${(csvDiag.headerRowIndex ?? 0) + 1}`,
+            value: csvDiag.headerless
+              ? (csvDiag.layout === "woodtek" ? "not found (fixed identity columns)" : "not found (parsed by content)")
+              : `line ${(csvDiag.headerRowIndex ?? 0) + 1}`,
           });
           const cols = Object.entries(csvDiag.detectedColumns || {})
             .filter(([role]) => !role.startsWith("edge"))
@@ -398,9 +409,6 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
       const reader = new FileReader();
       reader.onload = (event) => {
         setCsvFile({ name: file.name, content: event.target?.result as string });
-        if (!importProjName) {
-          setImportProjName(file.name.replace(/\.[^/.]+$/, ""));
-        }
       };
       reader.readAsText(file);
     } else if (type === "pbproj") {
@@ -408,9 +416,6 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
       const reader = new FileReader();
       reader.onload = (event) => {
         setPbProjFile({ name: file.name, content: event.target?.result as string });
-        if (!importProjName) {
-          setImportProjName(file.name.replace(/\.[^/.]+$/, ""));
-        }
       };
       reader.readAsText(file);
     } else if (type === "cix") {
@@ -1090,14 +1095,20 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
               </div>
 
               <div>
-                <label className="font-bold text-slate-300 block mb-1">Project Name</label>
+                <label htmlFor="assembly-import-project-name" className="font-bold text-slate-300 block mb-1">Project Name (Optional Override)</label>
                 <input
+                  id="assembly-import-project-name"
                   type="text"
-                  placeholder="e.g. Modern Kitchen Cabinets Villa 42"
+                  placeholder="Leave blank to use the CSV project name"
                   value={importProjName}
                   onChange={(e) => setImportProjName(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-white outline-none"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {importCsvLayout === "woodtek"
+                    ? "Uses the CSV project name (column 12), then the project file or filename. Enter a name only to override it."
+                    : "Uses the detected CSV project field, then the project file or filename. Enter a name only to override it."}
+                </p>
               </div>
 
               <div className="border border-slate-800 bg-slate-950/60 p-3.5 rounded-2xl">
@@ -1118,6 +1129,24 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                   onChange={(e) => handleFileUpload(e, "csv")}
                   className="text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
                 />
+                <div className="mt-3">
+                  <label htmlFor="assembly-import-csv-layout" className="block font-bold text-slate-300 mb-1">CSV Column Layout</label>
+                  <select
+                    id="assembly-import-csv-layout"
+                    value={importCsvLayout}
+                    disabled={importing}
+                    onChange={(e) => setImportCsvLayout(e.target.value as PolyboardCsvLayout)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 outline-none focus:border-amber-500"
+                  >
+                    <option value="woodtek">WoodTek export — columns 7 / 12 / 13 / 14</option>
+                    <option value="auto">Other layout — detect headers / content</option>
+                  </select>
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    {importCsvLayout === "woodtek"
+                      ? `Part name: ${WOODTEK_CSV_COLUMNS.part} • Project name: ${WOODTEK_CSV_COLUMNS.project} • Cabinet name: ${WOODTEK_CSV_COLUMNS.cabinet} • CIX filename: ${WOODTEK_CSV_COLUMNS.cix}. Column numbers start at 1. Shorter CSVs, including the sample, use automatic detection.`
+                      : "Project and cabinet fields are detected separately from the headers. Sizes, material and quantities are detected from their headers or content."}
+                  </p>
+                </div>
               </div>
 
               <div className="border border-slate-800 bg-slate-950/60 p-3.5 rounded-2xl">

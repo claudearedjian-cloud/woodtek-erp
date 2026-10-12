@@ -5,9 +5,9 @@
 // Real Polyboard cut list exports are configured by the user (Cutting list >
 // Cutting list options > Format): they can carry a title block, any field
 // order, any separator, localized field names or no header row at all. This
-// parser therefore identifies the header row, matches columns by alias AND by
-// content, and understands section/merged-cell layouts instead of assuming a
-// fixed English column order.
+// WoodTek exports use part 7 / project 12 / cabinet 13 / CIX 14 (one-based).
+// Other layouts identify headers by alias AND content and understand section/
+// merged-cell layouts instead of assuming a fixed English column order.
 // ============================================================================
 
 import { parseCix, type ParsedCixPart } from "./cixParser";
@@ -40,6 +40,7 @@ export interface PolyboardPart {
   width: number;     // Net / overall width (mm)
   thickness: number; // Net thickness (mm)
   cixFilename?: string;
+  cixReferenceExplicit?: boolean; // The CSV names a specific CNC file, not a generated reference.
   barcode: string;   // Barcode printed on part label (e.g., CIX program name or part ID)
   isScanned?: boolean;
   scannedAt?: string;
@@ -84,8 +85,15 @@ export interface PolyboardProject {
   globalHardware?: PolyboardHardware[];
 }
 
+/** One-based positions in the owner's Polyboard cutting-list export. */
+export const WOODTEK_CSV_COLUMNS = { part: 7, project: 12, cabinet: 13, cix: 14 } as const;
+export type PolyboardCsvLayout = "woodtek" | "auto";
+const WOODTEK_IDENTITY_INDICES = Object.values(WOODTEK_CSV_COLUMNS).map((column) => column - 1);
+
 /** Human readable report of what the importer understood from a CSV file. */
 export interface PolyboardCsvDiagnostics {
+  layout: PolyboardCsvLayout;
+  projectNames: string[];
   delimiter: string;
   delimiterLabel: string;
   headerRowIndex: number | null; // null = no header row found (positional parse)
@@ -101,6 +109,7 @@ export interface PolyboardCsvDiagnostics {
 }
 
 export interface PolyboardCsvResult {
+  projectName: string;
   cabinetsMap: Map<string, PolyboardCabinet>;
   parts: PolyboardPart[];
   diagnostics: PolyboardCsvDiagnostics;
@@ -112,21 +121,28 @@ export interface PolyboardCsvResult {
 function parseCsvLine(line: string, delimiter: string = ","): string[] {
   const result: string[] = [];
   let current = "";
-  let inQuotes = false;
+  let quote: string | null = null;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
-    if (char === '"' || char === "'") {
-      if (inQuotes && line[i + 1] === char) {
-        current += char;
-        i++;
+    if (quote) {
+      if (char === quote) {
+        if (line[i + 1] === quote) {
+          current += char;
+          i++;
+        } else {
+          quote = null;
+        }
       } else {
-        inQuotes = !inQuotes;
+        current += char;
       }
-    } else if (char === delimiter && !inQuotes) {
+    } else if ((char === '"' || char === "'") && !current.trim()) {
+      quote = char;
+    } else if (char === delimiter) {
       result.push(current.trim());
       current = "";
     } else {
+      // An apostrophe in a name (Fond d'armoire) is not an opening CSV quote.
       current += char;
     }
   }
@@ -161,6 +177,7 @@ function detectSeparator(lines: string[]): { char: string; label: string } {
 // ---------------------------------------------------------------------------
 
 type CsvRole =
+  | "project"
   | "cabinet"
   | "part"
   | "material"
@@ -178,11 +195,15 @@ type CsvRole =
   | "grain";
 
 const HEADER_ALIASES: Record<CsvRole, string[]> = {
+  project: [
+    "project", "projectname", "projet", "projetname", "nomprojet", "nomduprojet", "job", "jobname", "chantier",
+    "projekt", "projektname", "progetto", "proyecto", "auftrag", "auftragsname",
+  ],
   cabinet: [
     "cabinet", "cabinets", "cabinetname", "meuble", "meubles", "nomdumeuble", "nommeuble", "modele", "model", "models",
     "modell", "modello", "modelo", "unite", "unit", "units", "armoire", "armoires", "schrank", "caisson", "caissons",
     "corps", "carcass", "carcassname", "korpuss", "cuerpo", "corpo", "element", "elemento", "furniture", "item", "itemname",
-    "article", "assembly", "box", "boxname", "projet", "project", "projetname", "projectname", "ensemble",
+    "article", "assembly", "box", "boxname", "ensemble",
   ],
   part: [
     "part", "parts", "partname", "partlabel", "piece", "pieces", "nomdelapiece", "nompiece", "nom", "name", "description",
@@ -268,6 +289,17 @@ function looksNumeric(value: string | undefined): boolean {
   return !!value && NUMERIC_LIKE.test(value.trim());
 }
 
+/** Actual dimensions distinguish part rows from header-like project/file names. */
+function hasPartDimensions(cells: string[], woodtekColumns = false): boolean {
+  const sizeCells = woodtekColumns ? cells.filter((_, column) => !WOODTEK_IDENTITY_INDICES.includes(column)) : cells;
+  const dimensionRoles: CsvRole[] = ["length", "width", "thickness", "qty", "dimCombined"];
+  const hasDimensionTitles = sizeCells.some((cell) =>
+    scoreHeaderCell(cell).some(({ role, score }) => score === 6 && dimensionRoles.includes(role)),
+  );
+  if (hasDimensionTitles) return false;
+  return sizeCells.filter(looksNumeric).length >= 2 || sizeCells.some((cell) => COMBINED_DIMS.test(cell));
+}
+
 /** Title-ish lines that are not cabinet names (repeated report headings). */
 const TITLE_ROW = /^(polyboard|wood ?designer|liste de debit|liste des debits|debits|cutting list|cut ?list|cutlist|projet|project|project name|erp|export|impression|page)\b/i;
 
@@ -299,7 +331,7 @@ interface ColumnMapping {
 function buildColumnMapping(
   rows: string[][],
   headerRowIndex: number | null,
-  options: { preferSections?: boolean } = {},
+  options: { preferSections?: boolean; woodtekColumns?: boolean } = {},
 ): { mapping: ColumnMapping; labels: Record<string, string>; inferred: string[] } {
   const mapping: ColumnMapping = {};
   const labels: Record<string, string> = {};
@@ -312,6 +344,15 @@ function buildColumnMapping(
     labels[role] = label;
     assignedCols.add(col);
   };
+
+  // Reserve the four identity columns BEFORE header matching or inference.
+  // A project code or numeric CIX filename must never become a size/quantity.
+  if (options.woodtekColumns) {
+    assign("part", WOODTEK_CSV_COLUMNS.part - 1, "column 7 (part name)");
+    assign("project", WOODTEK_CSV_COLUMNS.project - 1, "column 12 (project name)");
+    assign("cabinet", WOODTEK_CSV_COLUMNS.cabinet - 1, "column 13 (cabinet name)");
+    assign("cix", WOODTEK_CSV_COLUMNS.cix - 1, "column 14 (CIX filename)");
+  }
 
   if (headerRowIndex !== null) {
     const headerCells = rows[headerRowIndex];
@@ -483,8 +524,13 @@ function countBlocks(values: string[]): number {
 /**
  * Parses a Polyboard cutting list CSV/TXT export.
  */
-export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
+export function parsePolyboardCsv(
+  csvContent: string,
+  options: { layout?: PolyboardCsvLayout } = {},
+): PolyboardCsvResult {
   const diagnostics: PolyboardCsvDiagnostics = {
+    layout: "auto",
+    projectNames: [],
     delimiter: ",",
     delimiterLabel: "comma (,)",
     headerRowIndex: null,
@@ -510,7 +556,7 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
 
   if (lines.length === 0) {
     diagnostics.warnings.push("The cutting list file is empty.");
-    return { cabinetsMap, parts: allParts, diagnostics };
+    return { projectName: "", cabinetsMap, parts: allParts, diagnostics };
   }
 
   const delimiter = detectSeparator(lines);
@@ -518,11 +564,15 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
   diagnostics.delimiterLabel = delimiter.label;
 
   const rows = lines.map((l) => parseCsvLine(l, delimiter.char));
+  // Shorter, existing exports (including the sample) keep automatic detection.
+  const woodtekColumns = options.layout !== "auto" && rows.some((row) => row.length >= WOODTEK_CSV_COLUMNS.cix);
+  diagnostics.layout = woodtekColumns ? "woodtek" : "auto";
 
   // 1. Find the header row: the best scoring row in the first 25 lines.
   let headerRowIndex: number | null = null;
   let bestScore = 0;
   for (let i = 0; i < Math.min(rows.length, 25); i++) {
+    if (hasPartDimensions(rows[i], woodtekColumns)) continue;
     const score = rowHeaderScore(rows[i]);
     if (score > bestScore) {
       bestScore = score;
@@ -539,7 +589,7 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     diagnostics.headerLabels = rows[headerRowIndex].map((c) => c.trim());
   }
 
-  // 2. Map columns (aliases first, then content inference). A section row
+  // 2. Reserve fixed identity columns, then map other headers/content. A section row
   // ("Caisson bas 600" on its own line) is a stronger grouping signal than a
   // guessed column, so the block-guess is skipped when sections are present.
   const dataStart = headerRowIndex === null ? 0 : headerRowIndex + 1;
@@ -548,14 +598,19 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     const filled = cells.map((c) => (c || "").trim()).filter(Boolean);
     return filled.length === 1 && isSectionLabel(filled[0]);
   });
-  const { mapping, labels, inferred } = buildColumnMapping(rows, headerRowIndex, { preferSections: hasSectionRows });
+  const { mapping, labels, inferred } = buildColumnMapping(rows, headerRowIndex, {
+    preferSections: hasSectionRows,
+    woodtekColumns,
+  });
   diagnostics.detectedColumns = labels;
   diagnostics.columnsInferredFromContent = inferred;
 
   if (headerRowIndex === null) {
     diagnostics.warnings.push(
-      "No header row was detected, so columns were identified from their contents (dimensions / quantities). " +
-        "Enable field titles in Polyboard (Cutting list > Cutting list options > Format) for a precise import.",
+      woodtekColumns
+        ? "No header row was detected. Part/project/cabinet/CIX use fixed columns 7/12/13/14; dimensions, materials and quantities are identified from the remaining columns."
+        : "No header row was detected, so columns were identified from their contents (dimensions / quantities). " +
+          "Enable field titles in Polyboard (Cutting list > Cutting list options > Format) for a precise import.",
     );
   }
   if (mapping.length === undefined && mapping.dimCombined === undefined) {
@@ -571,6 +626,7 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
   let usedSections = false;
   const sectionNames: string[] = [];
 
+  const projectColumn = mapping.project;
   const cabinetColumn = mapping.cabinet;
   const partColumn = mapping.part;
   const materialColumn = mapping.material;
@@ -607,7 +663,7 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     if (filled.length === 0) return;
 
     // Repeated header (some exports repeat titles for every cabinet)
-    if (filled.length >= 2 && rowHeaderScore(trimmed) >= Math.max(5, bestScore * 0.7)) {
+    if (filled.length >= 2 && !hasPartDimensions(trimmed, woodtekColumns) && rowHeaderScore(trimmed) >= Math.max(5, bestScore * 0.7)) {
       diagnostics.rowsSkipped++;
       return;
     }
@@ -676,14 +732,21 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     }
 
     let cixRef = cixColumn !== undefined ? cellAt(cixColumn) : "";
+    const cixReferenceExplicit = !!cixRef;
     if (!cixRef) {
       const cleanCab = cabinetName.replace(/[^a-zA-Z0-9]/g, "_");
       const cleanPart = partName.replace(/[^a-zA-Z0-9]/g, "_");
       cixRef = `${cleanCab}_${cleanPart}`;
     }
 
+    // The export may include a Windows or POSIX path; uploads provide basenames.
+    cixRef = cixRef.split(/[\\/]/).pop() || cixRef;
     const barcode = cixRef.replace(/\.cix$/i, "").trim();
     const cab = ensureCabinet(cabinetName);
+    const csvProjectName = cellAt(projectColumn);
+    if (csvProjectName && !diagnostics.projectNames.includes(csvProjectName)) {
+      diagnostics.projectNames.push(csvProjectName);
+    }
 
     const edgeBanding = {
       top: mapping.edge1 !== undefined ? cellAt(mapping.edge1) : undefined,
@@ -703,7 +766,8 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
         length,
         width,
         thickness,
-        cixFilename: cixRef.endsWith(".cix") ? cixRef : `${cixRef}.cix`,
+        cixFilename: /\.cix$/i.test(cixRef) ? cixRef : `${cixRef}.cix`,
+        cixReferenceExplicit,
         barcode: partBarcode,
         isScanned: false,
         edgeBanding,
@@ -739,6 +803,10 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     );
   }
 
+  if (woodtekColumns && diagnostics.projectNames.length === 0) {
+    diagnostics.warnings.push("CSV column 12 contains no project name. The entered project name or source filename will be used instead.");
+  }
+
   // 5. Finish each cabinet: cubic size, per-role dimensions, hardware list.
   for (const cab of cabinetsMap.values()) {
     const derived = deriveCabinetDimensions(cab);
@@ -758,7 +826,7 @@ export function parsePolyboardCsv(csvContent: string): PolyboardCsvResult {
     cab.hardware = buildHardwareChecklist(cab);
   }
 
-  return { cabinetsMap, parts: allParts, diagnostics };
+  return { projectName: diagnostics.projectNames[0] || "", cabinetsMap, parts: allParts, diagnostics };
 }
 
 /** Automated hardware fittings checklist per cabinet based on its parts. */
@@ -936,7 +1004,8 @@ export interface PolyboardCixMatchResult {
  *   1. its file name (with or without .cix) or its CIX program name,
  *   2. the barcode / CIX reference on the part,
  *   3. the part name stored inside the CIX header (CUSTSTR), when the sizes agree.
- * Unused files always win, and a fuzzy match can never steal a file that is
+ * A non-empty CSV CIX reference is authoritative (filename or program name).
+ * Without one, unused files win and fuzzy matching cannot steal a file that is
  * already serving another cabinet.
  */
 export function matchCixToParts(
@@ -1036,12 +1105,22 @@ export function matchCixToParts(
         return value;
       };
 
-      const scored = entries
+      const declaredReference = (part.cixFilename || "").replace(/\.cix$/i, "").toLowerCase();
+      const explicitEntries = part.cixReferenceExplicit ? entries.filter((entry) =>
+        entry.filename.replace(/\.cix$/i, "").toLowerCase() === declaredReference ||
+        (entry.parsed.programName || "").replace(/\.cix$/i, "").toLowerCase() === declaredReference,
+      ) : [];
+      // A declared filename is authoritative, including when several identical
+      // parts share that one program. Never replace it with an unused fuzzy match.
+      if (part.cixReferenceExplicit && explicitEntries.length === 0) continue;
+
+      const scored = part.cixReferenceExplicit ? [] : entries
         .map((entry) => ({ entry, value: scoreFor(entry) }))
         .filter((candidate) => candidate.value > 0)
         .sort((a, b) => b.value - a.value);
 
-      let chosen = scored.find((candidate) => candidate.entry.used === 0)?.entry;
+      let chosen = explicitEntries.find((entry) => entry.used === 0) || explicitEntries[0] ||
+        scored.find((candidate) => candidate.entry.used === 0)?.entry;
       if (!chosen) {
         const bestScored = scored[0];
         if (bestScored && bestScored.value >= 120) chosen = bestScored.entry; // explicit reference

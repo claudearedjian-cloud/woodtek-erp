@@ -33,6 +33,36 @@ start-woodtek-prod.bat      (or the scheduled task runs the silent bat)
   never overwritten. No RTL layout flip yet — Arabic renders inside the normal
   layout.
 
+## Cabinet Assembly — CSV column mapping
+The default **WoodTek export** import layout uses these **one-based** CSV positions
+for exports with 14 or more columns (with or without a header row):
+
+| CSV column | Meaning |
+| --- | --- |
+| 7 | Part name |
+| 12 | Project name |
+| 13 | Cabinet name (parts are grouped by this field) |
+| 14 | CIX filename / CNC program reference |
+
+- Those four positions take precedence over header guesses. Dimensions, material,
+  quantities and edge/grain fields still use their remaining headers/content.
+- Leave **Project Name (Optional Override)** blank to use column 12. A deliberately
+  entered name overrides it; otherwise the project-file/source filename is only a
+  fallback when the CSV has no project name. Uploading a file no longer replaces
+  the CSV's project name with that file's name.
+- CIX paths are reduced to filenames; `.cix`/`.CIX` and references without an
+  extension are accepted. Explicit references link only to that file/program;
+  repeated identical parts can share it. A missing named file stays **unlinked**
+  rather than borrowing an unrelated file by part name.
+- The shorter bundled sample/older exports keep automatic detection. For a
+  different wide CSV, choose **Other layout — detect headers / content**. Project
+  and cabinet headers are distinct. A CSV with multiple project names is refused;
+  export/import one project at a time to avoid mixing cabinets.
+- The import report confirms the chosen layout, CSV project and field mapping.
+  **Existing loaded projects are not rewritten.** Re-import the original files
+  after deployment to apply the corrected mapping. This creates a new project
+  with fresh scan progress; remove an older incorrect import only when ready.
+
 ## Cabinet Assembly — loaded project management
 - Select a loaded project in the top project picker, then use **Edit Project** to
   change its name and **Notes / Job Reference**. Cabinets, parts, CNC data, scan
