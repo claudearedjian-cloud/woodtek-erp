@@ -368,7 +368,13 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                 ? "by section headings"
                 : "by repeated value blocks",
           });
-          details.push({ label: "Rows", value: `${csvDiag.rowsParsed} parts parsed, ${csvDiag.rowsSkipped} skipped` });
+          const skippedLines: number[] = (csvDiag.skippedRows || []).map((row: { line: number }) => row.line);
+          details.push({
+            label: "Rows",
+            value: `${csvDiag.rowsParsed} parts parsed, ${csvDiag.rowsSkipped} skipped${
+              skippedLines.length ? ` (line${skippedLines.length === 1 ? "" : "s"} ${skippedLines.slice(0, 10).join(", ")}${skippedLines.length > 10 ? "…" : ""})` : ""
+            }`,
+          });
         }
         if (cixDiag) {
           details.push({

@@ -90,6 +90,14 @@ export const WOODTEK_CSV_COLUMNS = { part: 7, project: 12, cabinet: 13, cix: 14 
 export type PolyboardCsvLayout = "woodtek" | "auto";
 const WOODTEK_IDENTITY_INDICES = Object.values(WOODTEK_CSV_COLUMNS).map((column) => column - 1);
 
+export interface PolyboardSkippedRow {
+  line: number;
+  reason: "repeated-header" | "total" | "boilerplate" | "empty";
+  /** Column-14 reference on that line (WoodTek layout), when present. */
+  cix?: string;
+  text: string;
+}
+
 /** Human readable report of what the importer understood from a CSV file. */
 export interface PolyboardCsvDiagnostics {
   layout: PolyboardCsvLayout;
@@ -104,6 +112,8 @@ export interface PolyboardCsvDiagnostics {
   cabinetGrouping: "column" | "sections" | "blocks" | "single";
   rowsParsed: number;
   rowsSkipped: number;
+  /** One entry per skipped line (1-based file line), so a dropped part is never silent. */
+  skippedRows: PolyboardSkippedRow[];
   sectionRows: number;
   warnings: string[];
 }
@@ -541,6 +551,7 @@ export function parsePolyboardCsv(
     cabinetGrouping: "single",
     rowsParsed: 0,
     rowsSkipped: 0,
+    skippedRows: [],
     sectionRows: 0,
     warnings: [],
   };
@@ -549,10 +560,14 @@ export function parsePolyboardCsv(
   const allParts: PolyboardPart[] = [];
 
   const rawContent = (csvContent || "").replace(/^\uFEFF/, "");
-  const lines = rawContent
-    .split(/\r\n|\r|\n/)
-    .map((l) => l.replace(/\s+$/, ""))
-    .filter((l) => l.trim().length > 0);
+  const lines: string[] = [];
+  const lineNumbers: number[] = []; // 1-based line in the original file, for the report
+  rawContent.split(/\r\n|\r|\n/).forEach((raw, index) => {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) return;
+    lines.push(line);
+    lineNumbers.push(index + 1);
+  });
 
   if (lines.length === 0) {
     diagnostics.warnings.push("The cutting list file is empty.");
@@ -605,12 +620,12 @@ export function parsePolyboardCsv(
   diagnostics.detectedColumns = labels;
   diagnostics.columnsInferredFromContent = inferred;
 
-  if (headerRowIndex === null) {
+  // A headerless WoodTek export is the normal case: the fixed identity columns
+  // are reported in the import details, so it is not a warning.
+  if (headerRowIndex === null && !woodtekColumns) {
     diagnostics.warnings.push(
-      woodtekColumns
-        ? "No header row was detected. Part/project/cabinet/CIX use fixed columns 7/12/13/14; dimensions, materials and quantities are identified from the remaining columns."
-        : "No header row was detected, so columns were identified from their contents (dimensions / quantities). " +
-          "Enable field titles in Polyboard (Cutting list > Cutting list options > Format) for a precise import.",
+      "No header row was detected, so columns were identified from their contents (dimensions / quantities). " +
+        "Enable field titles in Polyboard (Cutting list > Cutting list options > Format) for a precise import.",
     );
   }
   if (mapping.length === undefined && mapping.dimCombined === undefined) {
@@ -657,14 +672,52 @@ export function parsePolyboardCsv(
     return cabinetsMap.get(clean)!;
   };
 
+  const headerKeys = headerRowIndex === null ? [] : rows[headerRowIndex].map((cell) => normalizeKey(cell || ""));
+  const headerFilledCount = headerKeys.filter(Boolean).length;
+  /** True when a row repeats the detected header cell-for-cell (most of it). */
+  const repeatsHeader = (cells: string[]): boolean => {
+    if (headerFilledCount === 0) return false;
+    let same = 0;
+    headerKeys.forEach((key, col) => {
+      if (key && normalizeKey(cells[col] || "") === key) same++;
+    });
+    return same / headerFilledCount >= 0.6;
+  };
+
+  const skipRow = (rowIndex: number, reason: PolyboardSkippedRow["reason"], cells: string[]) => {
+    diagnostics.rowsSkipped++;
+    const cix = woodtekColumns && reason !== "repeated-header" ? (cells[WOODTEK_CSV_COLUMNS.cix - 1] || "").trim() : "";
+    diagnostics.skippedRows.push({
+      line: lineNumbers[dataStart + rowIndex],
+      reason,
+      ...(cix ? { cix } : {}),
+      text: cells.filter(Boolean).join(" | ").slice(0, 160),
+    });
+  };
+
   dataRows.forEach((cells, rowIndex) => {
     const trimmed = cells.map((c) => (c || "").trim());
     const filled = trimmed.filter(Boolean);
     if (filled.length === 0) return;
 
-    // Repeated header (some exports repeat titles for every cabinet)
-    if (filled.length >= 2 && !hasPartDimensions(trimmed, woodtekColumns) && rowHeaderScore(trimmed) >= Math.max(5, bestScore * 0.7)) {
-      diagnostics.rowsSkipped++;
+    // A real part row in the WoodTek layout names its CNC file in column 14
+    // and is never a title, header or totals line.
+    const declaresCix = woodtekColumns && !!trimmed[WOODTEK_CSV_COLUMNS.cix - 1] &&
+      normalizeKey(trimmed[WOODTEK_CSV_COLUMNS.cix - 1]) !== headerKeys[WOODTEK_CSV_COLUMNS.cix - 1];
+
+    // Repeated header (some exports repeat titles for every cabinet). Only
+    // possible when the file HAS a header; a part row carrying a one-letter
+    // grain/edge code ("L", "W", "H", "T") must never be mistaken for one.
+    if (
+      headerRowIndex !== null &&
+      !declaresCix &&
+      filled.length >= 2 &&
+      (repeatsHeader(trimmed) ||
+        (trimmed.every((cell) => !looksNumeric(cell)) &&
+          !hasPartDimensions(trimmed, woodtekColumns) &&
+          rowHeaderScore(trimmed) >= Math.max(5, bestScore * 0.7)))
+    ) {
+      skipRow(rowIndex, "repeated-header", trimmed);
       return;
     }
 
@@ -681,14 +734,14 @@ export function parsePolyboardCsv(
         }
         diagnostics.sectionRows++;
       } else {
-        diagnostics.rowsSkipped++;
+        skipRow(rowIndex, "boilerplate", trimmed);
       }
       return;
     }
 
     // Footer / totals rows
-    if (SUMMARY_ROW.test(normalizeText(filled[0])) && trimmed.length >= 2 && trimmed.filter((c) => looksNumeric(c)).length <= 2) {
-      diagnostics.rowsSkipped++;
+    if (!declaresCix && SUMMARY_ROW.test(normalizeText(filled[0])) && trimmed.length >= 2 && trimmed.filter((c) => looksNumeric(c)).length <= 2) {
+      skipRow(rowIndex, "total", trimmed);
       return;
     }
 
@@ -720,14 +773,14 @@ export function parsePolyboardCsv(
     let qty = qtyColumn !== undefined ? Math.round(toNumber(cellAt(qtyColumn))) : 0;
     if (qty <= 0) qty = 1;
     if (qty > 500) {
-      diagnostics.warnings.push(`Unusually large quantity (${qty}) on row ${dataStart + rowIndex + 1} was capped at 500.`);
+      diagnostics.warnings.push(`Unusually large quantity (${qty}) on line ${lineNumbers[dataStart + rowIndex]} was capped at 500.`);
       qty = 500;
     }
 
     const material = materialColumn !== undefined && cellAt(materialColumn) ? cellAt(materialColumn) : "";
 
     if (!partName && length <= 0 && width <= 0) {
-      diagnostics.rowsSkipped++;
+      skipRow(rowIndex, "empty", trimmed);
       return;
     }
 
@@ -779,6 +832,15 @@ export function parsePolyboardCsv(
       diagnostics.rowsParsed++;
     }
   });
+
+  const skippedWithCix = diagnostics.skippedRows.filter((row) => row.cix);
+  if (skippedWithCix.length > 0) {
+    diagnostics.warnings.push(
+      `${skippedWithCix.length} line(s) naming a CIX file in column 14 were not imported as parts: ` +
+        skippedWithCix.slice(0, 8).map((row) => `line ${row.line} (${row.cix})`).join(", ") +
+        (skippedWithCix.length > 8 ? "…" : "") + ".",
+    );
+  }
 
   // 4. Report how the parts were grouped per cabinet.
   if (cabinetColumn !== undefined) {
@@ -990,12 +1052,43 @@ export function parsePolyboardProjectFile(content: string, filename: string = ""
   return { projectName, cabinets };
 }
 
+export interface PolyboardUnmatchedCix {
+  filename: string;
+  /** Part name stored inside the CIX header (CUSTSTR), when it has one. */
+  partName?: string;
+  length: number;
+  width: number;
+  thickness: number;
+  /** False when no row of the cutting list names this file. */
+  referencedInCsv: boolean;
+}
+
+export interface PolyboardMissingCix {
+  reference: string;
+  cabinetName: string;
+  partName: string;
+}
+
 export interface PolyboardCixMatchResult {
   matchedCount: number;
   totalCix: number;
   unmatchedCix: string[];
+  unmatchedDetails: PolyboardUnmatchedCix[];
+  /** Files named in the cutting list (column 14) that were not uploaded. */
+  missingCix: PolyboardMissingCix[];
   partsWithoutCix: number;
   matchedByCabinet: Record<string, number>;
+}
+
+/**
+ * Canonical form of a CIX reference: basename, no extension, case-insensitive,
+ * and numeric names without leading zeros, so "48", "00000048" and
+ * "C:\\CNC\\00000048.CIX" are the same program (spreadsheets drop the zeros).
+ */
+export function canonicalCixReference(value: string | undefined): string {
+  const base = (value || "").trim().split(/[\\/]/).pop() || "";
+  const stem = base.replace(/\.cix$/i, "").trim().toLowerCase();
+  return /^\d+$/.test(stem) ? stem.replace(/^0+(?=\d)/, "") : stem;
 }
 
 /**
@@ -1058,6 +1151,9 @@ export function matchCixToParts(
 
   let matchedCount = 0;
   const matchedByCabinet: Record<string, number> = {};
+  const declaredReferences = new Set<string>();
+  const missingCix: PolyboardMissingCix[] = [];
+  const missingSeen = new Set<string>();
 
   for (const cab of cabinets) {
     matchedByCabinet[cab.name] = matchedByCabinet[cab.name] || 0;
@@ -1105,14 +1201,22 @@ export function matchCixToParts(
         return value;
       };
 
-      const declaredReference = (part.cixFilename || "").replace(/\.cix$/i, "").toLowerCase();
+      const declaredReference = canonicalCixReference(part.cixFilename);
       const explicitEntries = part.cixReferenceExplicit ? entries.filter((entry) =>
-        entry.filename.replace(/\.cix$/i, "").toLowerCase() === declaredReference ||
-        (entry.parsed.programName || "").replace(/\.cix$/i, "").toLowerCase() === declaredReference,
+        canonicalCixReference(entry.filename) === declaredReference ||
+        canonicalCixReference(entry.parsed.programName) === declaredReference,
       ) : [];
+      if (part.cixReferenceExplicit && declaredReference) declaredReferences.add(declaredReference);
       // A declared filename is authoritative, including when several identical
       // parts share that one program. Never replace it with an unused fuzzy match.
-      if (part.cixReferenceExplicit && explicitEntries.length === 0) continue;
+      if (part.cixReferenceExplicit && explicitEntries.length === 0) {
+        const missingKey = `${cab.name}\u0000${declaredReference}`;
+        if (declaredReference && !missingSeen.has(missingKey)) {
+          missingSeen.add(missingKey);
+          missingCix.push({ reference: part.cixFilename || declaredReference, cabinetName: cab.name, partName });
+        }
+        continue;
+      }
 
       const scored = part.cixReferenceExplicit ? [] : entries
         .map((entry) => ({ entry, value: scoreFor(entry) }))
@@ -1144,10 +1248,25 @@ export function matchCixToParts(
   }
 
   const totalParts = cabinets.reduce((sum, c) => sum + c.parts.length, 0);
+  const unmatchedEntries = entries.filter((entry) => entry.used === 0);
   return {
     matchedCount,
     totalCix: cixFiles.length,
-    unmatchedCix: entries.filter((entry) => entry.used === 0).map((entry) => entry.filename),
+    unmatchedCix: unmatchedEntries.map((entry) => entry.filename),
+    unmatchedDetails: unmatchedEntries.map((entry) => {
+      const internalName = (entry.parsed.partName || "").trim();
+      return {
+        filename: entry.filename,
+        ...(internalName && canonicalCixReference(internalName) !== canonicalCixReference(entry.filename) ? { partName: internalName } : {}),
+        length: entry.parsed.length || 0,
+        width: entry.parsed.width || 0,
+        thickness: entry.parsed.thickness || 0,
+        referencedInCsv:
+          declaredReferences.has(canonicalCixReference(entry.filename)) ||
+          declaredReferences.has(canonicalCixReference(entry.parsed.programName)),
+      };
+    }),
+    missingCix,
     partsWithoutCix: Math.max(0, totalParts - matchedCount),
     matchedByCabinet,
   };

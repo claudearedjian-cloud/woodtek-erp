@@ -3807,6 +3807,51 @@ const mixedProjectCsv = [woodtekHeader, ...mixedProjectRows].map((row) => csvRow
 check(polyboard.parsePolyboardCsv(mixedProjectCsv).diagnostics.projectNames.length === 2, "Polyboard CSV: multiple project names are detected so the API can prevent accidental cabinet mixing");
 check(sampleParsed.diagnostics.layout === "auto", "Polyboard CSV: the shorter bundled sample remains backward compatible");
 
+// Owner report: headerless export, 00000048..55.cix "Not linked to any part".
+// Rows carrying a one-letter grain/edge code were dropped as "repeated headers".
+const padCix = (n) => String(n).padStart(8, "0");
+const numberedRow = (n, overrides = {}) => {
+  const cells = [720, 560, 18, 1, "", 0, "Side " + n, "MFC White", "", "", "", "Villa 42", n > 30 ? "Tall unit" : "Base unit", padCix(n)];
+  Object.entries(overrides).forEach(([column, value]) => { cells[column] = value; });
+  return csvRow(cells);
+};
+const numberedCix = (count) => Array.from({ length: count }, (_, i) => ({
+  filename: padCix(i + 1) + ".cix",
+  content: 'BEGIN ID CID3\nBEGIN MAINDATA LPX=716 LPY=396 LPZ=18 CUSTSTR="Door" END MAINDATA\nEND ID',
+}));
+for (const [label, overrides] of [["grain L", { 5: "L" }], ["edge W", { 4: "W" }], ["edge H/T", { 8: "H", 9: "T" }], ["qty title", { 10: "pcs" }]]) {
+  const csv = Array.from({ length: 55 }, (_, i) => numberedRow(i + 1, i + 1 >= 48 ? overrides : {})).join("\r\n");
+  const parsed = polyboard.parsePolyboardCsv(csv);
+  const match = polyboard.matchCixToParts(Array.from(parsed.cabinetsMap.values()), numberedCix(55));
+  check(parsed.parts.length === 55 && parsed.diagnostics.rowsSkipped === 0 && match.matchedCount === 55 && match.unmatchedCix.length === 0,
+    "Polyboard headerless WoodTek CSV: rows with a one-letter " + label + " code are imported and keep their CIX link");
+}
+const headerlessInfo = polyboard.parsePolyboardCsv(Array.from({ length: 3 }, (_, i) => numberedRow(i + 1)).join("\n"));
+check(headerlessInfo.diagnostics.headerless && !headerlessInfo.diagnostics.warnings.some((w) => w.includes("No header row")),
+  "Polyboard headerless WoodTek CSV: the expected headerless layout is reported as a detail, not a warning");
+const strippedZeros = polyboard.parsePolyboardCsv(Array.from({ length: 55 }, (_, i) => numberedRow(i + 1, { 13: String(i + 1) })).join("\n"));
+const strippedZerosMatch = polyboard.matchCixToParts(Array.from(strippedZeros.cabinetsMap.values()), numberedCix(55));
+check(strippedZerosMatch.matchedCount === 55 && strippedZerosMatch.unmatchedCix.length === 0 && polyboard.canonicalCixReference("C:\\CNC\\00000048.CIX") === "48",
+  "Polyboard CIX: a column-14 number whose leading zeros were dropped by a spreadsheet still links 00000048.cix");
+check(polyboard.canonicalCixReference("A0048") !== polyboard.canonicalCixReference("A48") && polyboard.canonicalCixReference("0") === "0",
+  "Polyboard CIX: only purely numeric references ignore leading zeros");
+const shortList = polyboard.parsePolyboardCsv(Array.from({ length: 47 }, (_, i) => numberedRow(i + 1, i === 2 ? { 13: "99999999" } : {})).join("\n"));
+const shortListMatch = polyboard.matchCixToParts(Array.from(shortList.cabinetsMap.values()), numberedCix(55));
+const unlisted = shortListMatch.unmatchedDetails.filter((f) => !f.referencedInCsv).map((f) => f.filename);
+check(unlisted.length === 9 && unlisted.includes("00000003.cix") && unlisted.includes("00000055.cix") && shortListMatch.unmatchedDetails[0].partName === "Door" && shortListMatch.unmatchedDetails[0].length === 716,
+  "Polyboard CIX: unlinked files report their internal part name/size and that the cutting list never names them");
+check(shortListMatch.missingCix.length === 1 && shortListMatch.missingCix[0].reference === "99999999.cix" && shortListMatch.missingCix[0].partName === "Side 3",
+  "Polyboard CIX: a column-14 file that was not uploaded is reported with its cabinet and part");
+const totalLike = polyboard.parsePolyboardCsv([numberedRow(1), numberedRow(2, { 0: "Total", 1: "", 2: "" })].join("\n"));
+check(totalLike.parts.length === 2 && totalLike.diagnostics.rowsSkipped === 0,
+  "Polyboard headerless WoodTek CSV: a part row naming a CIX file is never discarded as a totals line");
+const footerCsv = polyboard.parsePolyboardCsv([numberedRow(1), numberedRow(2), "Total;2"].join("\n"));
+check(footerCsv.parts.length === 2 && footerCsv.diagnostics.skippedRows.length === 1 && footerCsv.diagnostics.skippedRows[0].line === 3 && footerCsv.diagnostics.skippedRows[0].reason === "total",
+  "Polyboard CSV: skipped lines are listed with their real file line number and reason");
+const repeatedHeaderWithCodes = polyboard.parsePolyboardCsv([woodtekHeader, woodtekRows[0], woodtekHeader].map((row) => csvRow(row)).concat([numberedRow(5, { 5: "L" })]).join("\n"));
+check(repeatedHeaderWithCodes.parts.length === 2 && repeatedHeaderWithCodes.diagnostics.skippedRows.length === 1 && repeatedHeaderWithCodes.diagnostics.skippedRows[0].reason === "repeated-header" && !repeatedHeaderWithCodes.diagnostics.warnings.some((w) => w.includes("naming a CIX file")),
+  "Polyboard CSV: a real repeated header is still skipped while a coded part row after it is kept");
+
 // ---- Loaded assembly project editing / deletion -----------------------------
 compile("src/lib/assemblyProject.ts", "lib/assemblyProject.js");
 compile("src/lib/assemblyStorage.server.ts", "lib/assemblyStorage.server.js");
@@ -3998,6 +4043,21 @@ async function checkAssemblyProjectApi() {
     check(data.diagnostics.csv.layout === "woodtek" && data.diagnostics.csv.detectedColumns.project === "column 12 (project name)", "assembly CSV import: the read-back report confirms the fixed column mapping");
     const savedWoodtek = assemblyStorage.getProjectById(data.project.id);
     check(savedWoodtek.name === "Project Villa 42" && savedWoodtek.cabinets[0].parts[0].cixReferenceExplicit, "assembly CSV import: project identity and explicit CNC references survive storage reloads");
+
+    const codedHeaderless = Array.from({ length: 55 }, (_, i) => numberedRow(i + 1, i + 1 >= 48 ? { 5: "L" } : {})).join("\n");
+    response = await route.POST(request("POST", undefined, { csvContent: codedHeaderless, cixFiles: numberedCix(55) }));
+    data = await response.json();
+    check(response.status === 200 && data.diagnostics.totalParts === 55 && data.diagnostics.cix.matchedCount === 55 && data.diagnostics.warnings.length === 0,
+      "assembly CSV import: the reported headerless export with grain codes imports all 55 parts, links all 55 CIX files and shows no warnings");
+    const shortHeaderless = Array.from({ length: 47 }, (_, i) => numberedRow(i + 1)).join("\n");
+    response = await route.POST(request("POST", undefined, { csvContent: shortHeaderless, cixFiles: numberedCix(55) }));
+    data = await response.json();
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.startsWith("8 CIX file(s) are not named in column 14") && w.includes("00000048.cix (Door 716×396×18)")),
+      "assembly CSV import: files missing from the cutting list are explained with their internal part name and size");
+    response = await route.POST(request("POST", undefined, { csvContent: Array.from({ length: 2 }, (_, i) => numberedRow(i + 1, i === 1 ? { 13: "00000077" } : {})).join("\n"), cixFiles: numberedCix(1) }));
+    data = await response.json();
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.includes("name a CIX file that was not uploaded") && w.includes("00000077.cix (Base unit / Side 2)")),
+      "assembly CSV import: column-14 files that were not uploaded are named in the report");
 
     response = await route.POST(request("POST", undefined, { projectName: "  Manual project name  ", csvContent: woodtekCsv }));
     data = await response.json();
