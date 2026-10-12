@@ -187,7 +187,33 @@ export async function POST(req: NextRequest) {
           "Check that the CIX reference column in the cutting list matches the .cix file names (or the part names in the CIX header).",
       );
     } else if (cixMatch && cixMatch.unmatchedCix.length > 0) {
-      warnings.push(`Not linked to any part: ${cixMatch.unmatchedCix.slice(0, 8).join(", ")}${cixMatch.unmatchedCix.length > 8 ? "…" : ""}`);
+      const describe = (file: PolyboardCixMatchResult["unmatchedDetails"][number]) => {
+        const size = file.length > 0 && file.width > 0
+          ? ` ${Math.round(file.length)}×${Math.round(file.width)}${file.thickness > 0 ? `×${Math.round(file.thickness)}` : ""}`
+          : "";
+        const inside = file.partName || size ? ` (${[file.partName, size.trim()].filter(Boolean).join(" ")})` : "";
+        return `${file.filename}${inside}`;
+      };
+      const notInCsv = cixMatch.unmatchedDetails.filter((file) => !file.referencedInCsv);
+      const otherUnlinked = cixMatch.unmatchedDetails.filter((file) => file.referencedInCsv);
+      const list = (files: typeof notInCsv) => `${files.slice(0, 8).map(describe).join(", ")}${files.length > 8 ? "…" : ""}`;
+      if (notInCsv.length > 0) {
+        warnings.push(
+          `${notInCsv.length} CIX file(s) are not named in column 14 of any imported cutting-list row: ${list(notInCsv)}. ` +
+            "Check that the cutting list and the CIX files were exported from the same Polyboard project at the same time (no parts filtered out of the list).",
+        );
+      }
+      if (otherUnlinked.length > 0) {
+        warnings.push(`Not linked to any part: ${list(otherUnlinked)}`);
+      }
+    }
+    if (cixMatch && validCixList.length > 0 && cixMatch.missingCix.length > 0) {
+      const missing = cixMatch.missingCix;
+      warnings.push(
+        `${missing.length} part(s) name a CIX file that was not uploaded: ` +
+          missing.slice(0, 8).map((m) => `${m.reference} (${m.cabinetName} / ${m.partName})`).join(", ") +
+          (missing.length > 8 ? "…" : "") + ".",
+      );
     }
     if (validCixList.length === 0) {
       warnings.push(
