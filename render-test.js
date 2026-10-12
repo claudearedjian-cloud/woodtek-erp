@@ -4023,6 +4023,14 @@ async function checkAssemblyProjectApi() {
 
 checkAssemblyProjectApi()
   .catch((error) => { check(false, "assembly API checks completed without an unexpected exception"); console.error(error); })
+  .then(async () => {
+    try {
+      await require("./scripts/cabinet-3d-test.cjs")({ compile, check });
+    } catch (error) {
+      check(false, "cabinet 3D geometry/lifecycle/import checks completed without an unexpected exception");
+      console.error(error);
+    }
+  })
   .finally(() => {
     console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
     process.exitCode = fails === 0 ? 0 : 1;

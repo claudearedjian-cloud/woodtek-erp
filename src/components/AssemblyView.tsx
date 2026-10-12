@@ -716,6 +716,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                 {/* 3D Visualizer */}
                 <div className="relative">
                   <Cabinet3DViewer
+                    key={`${activeProject.id}:${selectedCabinet.id}`}
                     cabinet={selectedCabinet}
                     selectedPartId={selectedPart?.id}
                     onSelectPart={(p) => {

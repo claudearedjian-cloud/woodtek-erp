@@ -63,6 +63,31 @@ for exports with 14 or more columns (with or without a header row):
   after deployment to apply the corrected mapping. This creates a new project
   with fresh scan progress; remove an older incorrect import only when ready.
 
+## Cabinet Assembly — selected cabinet 3D preview
+- After import, clicking a cabinet opens **only that cabinet’s own parts and
+  attached CNC borings**, labelled with its name, part count and W × H × D in mm.
+  Project + cabinet identity isolates the view even when different projects reuse
+  the same cabinet/part IDs. Previous meshes and WebGL resources are released;
+  rotation, zoom, explosion and toolbar settings start fresh on selection.
+- Positive imported cabinet dimensions match the cabinet list. Panels retain
+  their actual cutting-list sizes, including overhangs; the camera fits their
+  transformed bounds on wide or narrow screens. Doors/drawer fronts stand in the
+  correct width/height orientation, and inferred right sides stay at the right
+  outer face rather than being overwritten as internal dividers.
+- Scanning or selecting a part updates the current cabinet without allocating a
+  new canvas/context. **Rotate / Pause** affects the live loop. **Reset** restores
+  the assembled view, default rotation/zoom, normal edges, visible CNC holes and
+  paused auto-rotation. Empty cabinets or unavailable WebGL show an explicit
+  message instead of a previous model.
+- This is a **reconstructed preview**, not the original Polyboard CAD scene:
+  cutting-list names/sizes identify panel roles, and placement is estimated when
+  design coordinates are absent. Original CSV/CIX/project files are needed to
+  compare a particular cabinet against the source design; exact CAD positions
+  cannot be verified from a screenshot alone.
+- Viewing does not rewrite saved projects or reset their scans. **Old incorrectly
+  mapped imports still need re-importing after deployment**, as described above;
+  a new import has fresh scan progress.
+
 ## Cabinet Assembly — loaded project management
 - Select a loaded project in the top project picker, then use **Edit Project** to
   change its name and **Notes / Job Reference**. Cabinets, parts, CNC data, scan

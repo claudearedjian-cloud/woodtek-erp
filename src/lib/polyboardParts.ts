@@ -209,8 +209,18 @@ export function deriveCabinetDimensions(cabinet: CabinetLike): { width: number; 
     depth = (cabinet.depth && cabinet.depth > 0 ? cabinet.depth : 0) || maxWid || DEFAULT_DIMS.depth;
   }
 
-  const round = (n: number) => Math.max(1, Math.round(n));
-  return { width: round(width), height: round(height), depth: round(depth) };
+  // Positive imported cabinet dimensions are the canonical envelope displayed
+  // in the cabinet list. Do not re-infer a different size in the 3D viewer.
+  const dimension = (stored: number | undefined, inferred: number, fallback: number) => {
+    const value = Number(stored);
+    if (Number.isFinite(value) && value > 0) return value;
+    return Number.isFinite(inferred) && inferred > 0 ? Math.max(1, Math.round(inferred)) : fallback;
+  };
+  return {
+    width: dimension(cabinet.width, width, DEFAULT_DIMS.width),
+    height: dimension(cabinet.height, height, DEFAULT_DIMS.height),
+    depth: dimension(cabinet.depth, depth, DEFAULT_DIMS.depth),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -353,19 +363,18 @@ export function buildCabinetLayout(cabinet: CabinetLike): CabinetLayout {
 
   const panel = (i: number) => {
     const part = parts[i];
-    const thickness = Number(part.thickness) > 0 ? Number(part.thickness) : 18;
-    const length = Number(part.length) > 0 ? Number(part.length) : H;
-    const width = Number(part.width) > 0 ? Number(part.width) : D;
+    const positive = (value: number | undefined, fallback: number) =>
+      Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+    const thickness = positive(part.thickness, 18);
+    const length = positive(part.length, H);
+    const width = positive(part.width, D);
     return {
       length,
       width,
       thickness,
-      // A physical panel can never be larger than the cabinet plus a little.
-      size: {
-        length: Math.min(length, Math.max(W, H, D) * 1.6),
-        width: Math.min(width, Math.max(W, H, D) * 1.6),
-        thickness: Math.min(thickness, 120),
-      },
+      // Keep actual cutting-list sizes, including worktop overhangs. The
+      // camera fits the mesh bounds instead of silently shrinking panels.
+      size: { length, width, thickness },
     };
   };
 
@@ -388,7 +397,7 @@ export function buildCabinetLayout(cabinet: CabinetLike): CabinetLayout {
   const middleIdx = verticalPanels.filter((i) => roles[i] !== "side-left" && roles[i] !== "side-right");
 
   const lefts = leftIdx.length > 0 ? leftIdx : middleIdx.splice(0, 1);
-  const rights = rightIdx.length > 0 ? rightIdx : middleIdx.slice(-1);
+  const rights = rightIdx.length > 0 ? rightIdx : middleIdx.splice(-1, 1);
 
   lefts.forEach((i, k) => {
     const { size } = panel(i);
@@ -508,7 +517,7 @@ export function buildCabinetLayout(cabinet: CabinetLike): CabinetLayout {
     const y = H / 2 - offset - size.length / 2;
     offset += size.length;
     const isDrawer = roles[i] === "drawer-front";
-    push(i, roles[i], size, { x: 0, y, z: D / 2 + size.thickness / 2 }, AXIS.x, AXIS.y, AXIS.z, {
+    push(i, roles[i], size, { x: 0, y, z: D / 2 + size.thickness / 2 }, AXIS.y, AXIS.negX, AXIS.z, {
       x: 0,
       y: 0.25,
       z: isDrawer ? 1.4 : 1.5,
@@ -523,7 +532,7 @@ export function buildCabinetLayout(cabinet: CabinetLike): CabinetLayout {
     else if (count > 2) x = -W / 2 + (W * (k + 0.5)) / count;
     else if (roles[i] === "side-left") x = -W / 4;
     else if (roles[i] === "side-right") x = W / 4;
-    push(i, roles[i], size, { x, y: 0, z: D / 2 + size.thickness / 2 }, AXIS.x, AXIS.y, AXIS.z, { x: x === 0 ? 0 : Math.sign(x) * 0.4, y: 0, z: 1.5 });
+    push(i, roles[i], size, { x, y: 0, z: D / 2 + size.thickness / 2 }, AXIS.y, AXIS.negX, AXIS.z, { x: x === 0 ? 0 : Math.sign(x) * 0.4, y: 0, z: 1.5 });
   });
 
   // --- Worktops & plinths --------------------------------------------------
