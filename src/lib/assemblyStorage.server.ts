@@ -128,7 +128,7 @@ export function scanPart(
     };
   }
 
-  const needle = barcodeOrCixRef.trim().toLowerCase().replace(/\.cix$/i, "");
+  const needle = barcodeOrCixRef.trim().toLowerCase().replace(/\.(?:cix|cid|txt)$/i, "");
   
   // Find matching part in this cabinet (preferably unscanned first)
   let targetPart = cab.parts.find(
@@ -136,7 +136,7 @@ export function scanPart(
       !p.isScanned &&
       (p.barcode.toLowerCase() === needle ||
         p.id.toLowerCase() === needle ||
-        (p.cixFilename && p.cixFilename.toLowerCase().replace(/\.cix$/i, "") === needle) ||
+        ([p.cixFilename, p.cixFilenameFace0, p.cixFilenameFace6, p.cixMatchedFilenameFace0, p.cixMatchedFilenameFace6].some((ref) => ref && ref.toLowerCase().replace(/\.(?:cix|cid|txt)$/i, "") === needle)) ||
         p.name.toLowerCase() === needle)
   );
 
@@ -146,7 +146,7 @@ export function scanPart(
       (p) =>
         p.barcode.toLowerCase() === needle ||
         p.id.toLowerCase() === needle ||
-        (p.cixFilename && p.cixFilename.toLowerCase().replace(/\.cix$/i, "") === needle) ||
+        ([p.cixFilename, p.cixFilenameFace0, p.cixFilenameFace6, p.cixMatchedFilenameFace0, p.cixMatchedFilenameFace6].some((ref) => ref && ref.toLowerCase().replace(/\.(?:cix|cid|txt)$/i, "") === needle)) ||
         p.name.toLowerCase() === needle
     );
     if (targetPart && targetPart.isScanned) {
@@ -170,7 +170,7 @@ export function scanPart(
         !p.isScanned &&
         (p.barcode.toLowerCase().includes(needle) ||
           needle.includes(p.barcode.toLowerCase()) ||
-          (p.cixFilename && p.cixFilename.toLowerCase().includes(needle)))
+          [p.cixFilename, p.cixFilenameFace0, p.cixFilenameFace6, p.cixMatchedFilenameFace0, p.cixMatchedFilenameFace6].some((ref) => ref && ref.toLowerCase().includes(needle)))
     );
   }
 
@@ -182,7 +182,7 @@ export function scanPart(
         const foundOther = otherCab.parts.find(
           (p) =>
             p.barcode.toLowerCase() === needle ||
-            (p.cixFilename && p.cixFilename.toLowerCase().replace(/\.cix$/i, "") === needle) ||
+            ([p.cixFilename, p.cixFilenameFace0, p.cixFilenameFace6, p.cixMatchedFilenameFace0, p.cixMatchedFilenameFace6].some((ref) => ref && ref.toLowerCase().replace(/\.(?:cix|cid|txt)$/i, "") === needle)) ||
             p.barcode.toLowerCase().includes(needle)
         );
         if (foundOther) {

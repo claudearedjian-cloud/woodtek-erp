@@ -3654,75 +3654,233 @@ const polyboardParts = require("./compiled/lib/polyboardParts");
 const sampleData = require("./compiled/lib/samplePolyboardData.js");
 
 const woodtekNoCixHeader = [
-  "Field 1", "Material", "Length", "Width", "Thickness", "Qty", "Part name",
-  "Edge 1", "Edge 2", "Edge 3", "Edge 4", "Project", "Cabinet", "CIX filename",
+  "Length", "Width", "Thickness", "Quantity", "Material", "Grain", "Part name",
+  "Edge L1", "Edge L2", "Edge W1", "Edge W2", "Project", "Cabinet", "Face 0 CIX",
+  "Face 6 CIX", "Part serial",
 ].join(";");
 const woodtekNoCixRow = [
-  "x", "MFC White", "800", "550", "18", "1", "Left side",
-  "", "", "", "", "Villa 42", "Base 600", "",
+  "800", "550", "18", "1", "MFC White", "0", "Left side",
+  "", "", "", "", "Villa 42", "Base 600", "", "", "7",
 ].join(";");
 const woodtekNoCix = polyboard.parsePolyboardCsv(`${woodtekNoCixHeader}\n${woodtekNoCixRow}`, { layout: "woodtek" });
 check(
-  woodtekNoCix.diagnostics.missingCixReferences.length === 1 &&
-    woodtekNoCix.diagnostics.missingCixReferences[0].line === 2 &&
-    !woodtekNoCix.parts[0].cixReferenceExplicit,
-  "Polyboard CSV: audits a blank fixed column-14 reference with its source row and part details",
+  !woodtekNoCix.parts[0].cixReferenceExplicit &&
+    woodtekNoCix.parts[0].cixFace0Expected === false &&
+    woodtekNoCix.parts[0].cixFace6Expected === false &&
+    !woodtekNoCix.parts[0].cixFilename &&
+    !woodtekNoCix.diagnostics.warnings.some((warning) => warning.includes("blank")),
+  "Polyboard CSV: blank face-0 and face-6 CIX columns mean no machining, not missing references",
 );
 const noRefCabinets = Array.from(woodtekNoCix.cabinetsMap.values());
-const sizeOnlyMatch = polyboard.matchCixToParts(noRefCabinets, [
+const intentionallyUnmachined = polyboard.matchCixToParts(noRefCabinets, [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  intentionallyUnmachined.matchedCount === 0 &&
+    intentionallyUnmachined.partsWithCix === 0 &&
+    intentionallyUnmachined.unlinkedParts.length === 0 &&
+    intentionallyUnmachined.unmatchedCix.includes("00000048.cix"),
+  "Polyboard CIX linking: does not attach an orphan program to a WoodTek face marked as unmachined",
+);
+
+const woodtekTwoFaceCsv = [
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model;00000056.cix;00000057.cix;1",
+  "832;582;5;1;0_mazonite 5mm;0;Back;;;;;test;Model;;;5",
+  "700;500;18;1;0_white 18mm;1;Shelf;a grain;;;;test;Model[1];;00000070.cix;6",
+].join("\n");
+const woodtekTwoFace = polyboard.parsePolyboardCsv(woodtekTwoFaceCsv, { layout: "woodtek" });
+const twoFaceParts = woodtekTwoFace.parts;
+check(
+  twoFaceParts.length === 3 &&
+    twoFaceParts[0].cixFilenameFace0 === "00000056.cix" &&
+    twoFaceParts[0].cixFilenameFace6 === "00000057.cix" &&
+    twoFaceParts[0].partSerial === "1" &&
+    twoFaceParts[1].cixFace0Expected === false &&
+    twoFaceParts[1].cixFace6Expected === false &&
+    twoFaceParts[2].cixFace0Expected === false &&
+    twoFaceParts[2].cixFilenameFace6 === "00000070.cix" &&
+    twoFaceParts[2].partSerial === "6" &&
+    woodtekTwoFace.diagnostics.detectedColumns.cix === "column 14 (face 0 CIX filename)" &&
+    woodtekTwoFace.diagnostics.detectedColumns.cixFace6 === "column 15 (face 6 CIX filename)" &&
+    woodtekTwoFace.diagnostics.detectedColumns.partSerial === "column 16 (cabinet part serial)",
+  "Polyboard CSV: columns 14/15 map independent face programs and column 16 preserves the cabinet part serial",
+);
+const twoFaceMatch = polyboard.matchCixToParts(Array.from(woodtekTwoFace.cabinetsMap.values()), [
+  { filename: "00000056.cix", content: multilineCix },
+  { filename: "00000057.cix", content: multilineCix },
+  { filename: "00000070.cix", content: multilineCix },
+]);
+check(
+  twoFaceMatch.matchedCount === 3 &&
+    twoFaceMatch.partsWithCix === 2 &&
+    twoFaceMatch.links.map((link) => link.face).sort().join(",") === "0,6,6" &&
+    twoFaceParts[0].cixData?.borings.length === 1 &&
+    twoFaceParts[0].cixDataFace6?.borings.length === 1 &&
+    twoFaceParts[2].cixDataFace6?.borings.length === 1 &&
+    twoFaceMatch.partsWithoutCix === 0 &&
+    twoFaceMatch.unlinkedParts.length === 0,
+  "Polyboard CIX linking: explicit face-0 and face-6 filenames attach to the correct cabinet parts, while blank faces stay empty",
+);
+const missingOneFaceCsv = polyboard.parsePolyboardCsv(woodtekTwoFaceCsv, { layout: "woodtek" });
+const missingOneFace = polyboard.matchCixToParts(Array.from(missingOneFaceCsv.cabinetsMap.values()), [
+  { filename: "00000056.cix", content: multilineCix },
+  { filename: "00000070.cix", content: multilineCix },
+]);
+check(
+  missingOneFace.missingCix.length === 1 &&
+    missingOneFace.missingCix[0].reference === "00000057.cix" &&
+    missingOneFace.missingCix[0].face === 6 &&
+    missingOneFace.missingCix[0].partSerial === "1",
+  "Polyboard CIX linking: a missing face-specific file is reported with face, cabinet part and serial",
+);
+const unresolvedFace0Csv = polyboard.parsePolyboardCsv(
+  "800;550;18;1;0_white 18mm;1;Fallback side;;;;;test;Cabinet;missing-face0.cix;;11",
+  { layout: "woodtek" },
+);
+const unresolvedFace0Match = polyboard.matchCixToParts(Array.from(unresolvedFace0Csv.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  unresolvedFace0Match.matchedCount === 1 &&
+    unresolvedFace0Match.matchedByMethod.dimensions === 1 &&
+    unresolvedFace0Match.links[0].filename === "00000048.cix" &&
+    unresolvedFace0Match.links[0].face === 0 &&
+    unresolvedFace0Match.links[0].partSerial === "11" &&
+    unresolvedFace0Csv.parts[0].cixFilenameFace0 === "missing-face0.cix" &&
+    unresolvedFace0Csv.parts[0].cixMatchedFilenameFace0 === "00000048.cix" &&
+    unresolvedFace0Csv.parts[0].cixData.filename === "00000048.cix" &&
+    unresolvedFace0Match.missingCix.length === 1 &&
+    unresolvedFace0Match.unlinkedParts.length === 0,
+  "Polyboard CIX linking: a nonblank face-0 reference with no uploaded file may use a unique size fallback and remains flagged for review",
+);
+const unresolvedFace0AmbiguousCsv = polyboard.parsePolyboardCsv(
+  "800;550;18;1;0_white 18mm;1;Fallback side;;;;;test;Cabinet;missing-face0.cix;;11",
+  { layout: "woodtek" },
+);
+const ambiguousUnresolvedFace0Match = polyboard.matchCixToParts(
+  Array.from(unresolvedFace0AmbiguousCsv.cabinetsMap.values()),
+  [
+    { filename: "00000048.cix", content: multilineCix },
+    { filename: "00000049.cix", content: multilineCix },
+  ],
+);
+check(
+  ambiguousUnresolvedFace0Match.matchedCount === 0 &&
+    ambiguousUnresolvedFace0Match.ambiguousSizeMatches.length === 1 &&
+    ambiguousUnresolvedFace0Match.ambiguousSizeMatches[0].candidateFiles.length === 2 &&
+    ambiguousUnresolvedFace0Match.missingCix.length === 1,
+  "Polyboard CIX linking: an unresolved explicit reference with ambiguous same-size programs stays unassigned",
+);
+const differentSerialCsv = polyboard.parsePolyboardCsv([
+  "800;550;18;1;0_white 18mm;1;Repeated side;;;;;test;Cabinet;missing-face0.cix;;11",
+  "800;550;18;1;0_white 18mm;1;Repeated side;;;;;test;Cabinet;missing-face0.cix;;12",
+].join("\n"), { layout: "woodtek" });
+const differentSerialMatch = polyboard.matchCixToParts(Array.from(differentSerialCsv.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  differentSerialMatch.matchedCount === 0 &&
+    differentSerialMatch.ambiguousSizeMatches.length === 2 &&
+    differentSerialMatch.ambiguousSizeMatches.every((match) => ["11", "12"].includes(match.partSerial)),
+  "Polyboard CIX linking: same-size parts with different cabinet serials do not share one guessed fallback file",
+);
+
+const userStyleTopCix = multilineCix.replace("LPX=800", "LPX=564").replace("LPY=550", "LPY=600");
+const duplicateCabinetCsv = [
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model;00000056.cix;;1",
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model[1];00000060.cix;;1",
+].join("\n");
+const duplicateCabinetParts = polyboard.parsePolyboardCsv(duplicateCabinetCsv, { layout: "woodtek" });
+const duplicateCabinetMatch = polyboard.matchCixToParts(Array.from(duplicateCabinetParts.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: userStyleTopCix },
+  { filename: "00000056.cix", content: userStyleTopCix },
+  { filename: "00000060.cix", content: userStyleTopCix },
+]);
+check(
+  duplicateCabinetMatch.matchedCount === 2 &&
+    duplicateCabinetMatch.partsWithCix === 2 &&
+    duplicateCabinetMatch.matchedByMethod.reference === 2 &&
+    duplicateCabinetMatch.matchedByMethod.dimensions === 0 &&
+    duplicateCabinetMatch.unmatchedCix.includes("00000048.cix") &&
+    duplicateCabinetMatch.links.some((link) => link.cabinetName === "Model" && link.partName === "Top" && link.partSerial === "1") &&
+    duplicateCabinetMatch.links.some((link) => link.cabinetName === "Model[1]" && link.partName === "Top" && link.partSerial === "1"),
+  "Polyboard CIX linking: CSV filenames bind duplicate-size Top parts to their own cabinets; an unreferenced same-size file stays unlinked",
+);
+
+const genericNoCixCsv = [
+  "Length;Width;Thickness;Quantity;Part;Project;Cabinet",
+  "800;550;18;1;Left side;Villa 42;Base 600",
+].join("\n");
+const genericNoCix = polyboard.parsePolyboardCsv(genericNoCixCsv);
+const genericNoRefCabinets = Array.from(genericNoCix.cabinetsMap.values());
+const sizeOnlyMatch = polyboard.matchCixToParts(genericNoRefCabinets, [
   { filename: "00000048.cix", content: multilineCix },
 ]);
 check(
   sizeOnlyMatch.matchedCount === 1 &&
     sizeOnlyMatch.matchedByMethod.dimensions === 1 &&
-    noRefCabinets[0].parts[0].cixMatchMethod === "dimensions" &&
-    noRefCabinets[0].parts[0].cixData?.borings.length === 1,
-  "Polyboard CIX linking: uses exact part dimensions when column 14 and CUSTSTR contain no usable name",
+    genericNoRefCabinets[0].parts[0].cixMatchMethod === "dimensions" &&
+    genericNoRefCabinets[0].parts[0].cixData?.borings.length === 1,
+  "Polyboard CIX linking: generic layouts still allow a unique dimensions-only match when no face reference columns exist",
 );
 const sameSizeParts = ["Left side", "Right side"].map((name, index) => ({
-  ...noRefCabinets[0].parts[0],
+  ...genericNoRefCabinets[0].parts[0],
   id: `ambiguous-${index}`,
   name,
   cixFilename: `Base_600_${name.replace(/ /g, "_")}.cix`,
+  cixFilenameFace0: undefined,
+  cixFilenameFace6: undefined,
+  cixMatchedFilenameFace0: undefined,
+  cixMatchedFilenameFace6: undefined,
   cixReferenceExplicit: false,
+  cixReferenceFace6Explicit: false,
   cixData: undefined,
+  cixDataFace6: undefined,
   cixMatchMethod: undefined,
+  cixMatchMethodFace6: undefined,
   barcode: `Base_600_${name.replace(/ /g, "_")}`,
 }));
 const ambiguousMatch = polyboard.matchCixToParts([
-  { ...noRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: sameSizeParts },
 ], [
   { filename: "00000048.cix", content: multilineCix },
   { filename: "00000049.cix", content: multilineCix },
 ]);
 check(
   ambiguousMatch.matchedCount === 0 && ambiguousMatch.ambiguousSizeMatches.length === 2,
-  "Polyboard CIX linking: refuses to guess when two same-size parts and programs are indistinguishable by dimensions",
+  "Polyboard CIX linking: refuses to guess when same-size parts and programs are indistinguishable by dimensions",
 );
 const contestedSizeMatch = polyboard.matchCixToParts([
-  { ...noRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: sameSizeParts },
 ], [{ filename: "00000048.cix", content: multilineCix }]);
 check(
   contestedSizeMatch.matchedCount === 0 && contestedSizeMatch.ambiguousSizeMatches.length === 2,
   "Polyboard CIX linking: does not give one size-only program to a different part merely because it is the only candidate",
 );
 const repeatedUnreferencedParts = [1, 2].map((index) => ({
-  ...noRefCabinets[0].parts[0],
+  ...genericNoRefCabinets[0].parts[0],
   id: `repeated-${index}`,
   name: "Repeated shelf",
   cixFilename: "Base_600_Repeated_shelf.cix",
+  cixFilenameFace0: undefined,
+  cixFilenameFace6: undefined,
+  cixMatchedFilenameFace0: undefined,
+  cixMatchedFilenameFace6: undefined,
   cixReferenceExplicit: false,
+  cixReferenceFace6Explicit: false,
   cixData: undefined,
+  cixDataFace6: undefined,
   cixMatchMethod: undefined,
+  cixMatchMethodFace6: undefined,
   barcode: `Base_600_Repeated_shelf-${index}`,
 }));
 const repeatedSizeMatch = polyboard.matchCixToParts([
-  { ...noRefCabinets[0], name: "Base 600", parts: repeatedUnreferencedParts },
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: repeatedUnreferencedParts },
 ], [{ filename: "00000048.cix", content: multilineCix }]);
 check(
   repeatedSizeMatch.matchedCount === 2 &&
     repeatedSizeMatch.links.every((link) => link.method === "dimensions" && link.filename === "00000048.cix"),
-  "Polyboard CIX linking: reuses one size-matched program for repeated identical, unreferenced parts",
+  "Polyboard CIX linking: reuses one size-matched program for repeated identical, unreferenced parts on the same face",
 );
 
 // A) Title block + French/accented headers, CIX reference column, quantities
@@ -3883,11 +4041,15 @@ check(
 );
 
 // ---- Owner-specified Polyboard CSV positions (one-based 7/12/13/14) ---------
-const woodtekHeader = ["Length", "Width", "Thickness", "Qty", "Edge1", "Grain", "Part", "Material", "Edge2", "Edge3", "Edge4", "Project", "Cabinet", "CIX"];
+const woodtekHeader = [
+  "Length", "Width", "Thickness", "Quantity", "Material", "Grain", "Part name",
+  "Edge L1", "Edge L2", "Edge W1", "Edge W2", "Project", "Cabinet", "Face 0 CIX",
+  "Face 6 CIX", "Part serial",
+];
 const woodtekRows = [
-  [720, 560, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet base", "C:\\CNC\\KB600_LS.CIX"],
-  [564, 100, 18, 2, "", 0, "Top Rail", "MFC White", "", "", "", "", "", "shared-rail"],
-  [600, 320, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet wall", "/exports/WU900_LS.cix"],
+  [720, 560, 18, 1, "MFC White", 0, "Left Side Panel", "L1", "L2", "W1", "W2", "Project Villa 42", "Cabinet base", "C:\\CNC\\KB600_LS.CIX", "", "51"],
+  [564, 100, 18, 2, "MFC White", 0, "Top Rail", "", "", "", "", "", "", "shared-rail", "", "52"],
+  [600, 320, 18, 1, "MFC White", 0, "Left Side Panel", "", "", "", "", "Project Villa 42", "Cabinet wall", "/exports/WU900_LS.cix", "", "53"],
 ];
 const csvRow = (cells, delimiter = ";") => cells.map((cell) => {
   const value = String(cell);
@@ -3896,13 +4058,14 @@ const csvRow = (cells, delimiter = ";") => cells.map((cell) => {
 const woodtekCsv = [woodtekHeader, ...woodtekRows].map((row) => csvRow(row)).join("\n");
 const woodtekParsed = polyboard.parsePolyboardCsv(woodtekCsv);
 const woodtekCabinets = Array.from(woodtekParsed.cabinetsMap.values());
-check(JSON.stringify(polyboard.WOODTEK_CSV_COLUMNS) === JSON.stringify({ part: 7, project: 12, cabinet: 13, cix: 14 }), "Polyboard fixed columns: positions are one-based 7/12/13/14");
+check(JSON.stringify(polyboard.WOODTEK_CSV_COLUMNS) === JSON.stringify({ length: 1, width: 2, thickness: 3, quantity: 4, material: 5, grain: 6, part: 7, edgeL1: 8, edgeL2: 9, edgeW1: 10, edgeW2: 11, project: 12, cabinet: 13, cix: 14, cixFace6: 15, partSerial: 16 }), "Polyboard fixed columns: part/project/cabinet/face-0/face-6/serial positions are one-based 7/12/13/14/15/16");
 check(woodtekParsed.projectName === "Project Villa 42" && woodtekParsed.diagnostics.projectNames.length === 1, "Polyboard fixed columns: column 12 supplies the project name, not a cabinet name");
 check(woodtekCabinets.length === 2 && woodtekCabinets[0].name === "Cabinet base" && woodtekCabinets[1].name === "Cabinet wall", "Polyboard fixed columns: column 13 splits the project into its actual cabinets");
 check(woodtekCabinets[0].parts[0].name === "Left Side Panel" && woodtekCabinets[0].parts[1].name === "Top Rail (#1)", "Polyboard fixed columns: column 7 supplies part names, with quantity suffixes only when needed");
-check(woodtekParsed.parts.length === 4 && woodtekCabinets[0].parts[0].length === 720 && woodtekCabinets[0].parts[0].width === 560 && woodtekCabinets[0].parts[0].material === "MFC White", "Polyboard fixed columns: dimensions, quantities and material still use the remaining fields");
+check(woodtekParsed.parts.length === 4 && woodtekCabinets[0].parts[0].length === 720 && woodtekCabinets[0].parts[0].width === 560 && woodtekCabinets[0].parts[0].thickness === 18 && woodtekCabinets[0].parts[0].quantity === 1 && woodtekCabinets[0].parts[0].material === "MFC White", "Polyboard fixed columns: dimensions, quantity and material use their exact positions");
+check(woodtekCabinets[0].parts[0].grain === 0 && JSON.stringify(woodtekCabinets[0].parts[0].edgeBanding) === JSON.stringify({ top: "L1", bottom: "L2", left: "W1", right: "W2" }), "Polyboard fixed columns: grain and L1/L2/W1/W2 edge values retain their exact positions");
 check(woodtekCabinets[0].parts[0].cixFilename === "KB600_LS.CIX" && woodtekCabinets[0].parts[0].barcode === "KB600_LS" && woodtekCabinets[1].parts[0].cixFilename === "WU900_LS.cix", "Polyboard fixed columns: column 14 normalizes paths and uppercase extensions without a duplicate .cix suffix");
-check(woodtekParsed.diagnostics.layout === "woodtek" && woodtekParsed.diagnostics.cabinetGrouping === "column" && woodtekParsed.diagnostics.detectedColumns.cix === "column 14 (CIX filename)", "Polyboard fixed columns: diagnostics report the actual positional mapping instead of guessed blocks");
+check(woodtekParsed.diagnostics.layout === "woodtek" && woodtekParsed.diagnostics.cabinetGrouping === "column" && woodtekParsed.diagnostics.detectedColumns.cix === "column 14 (face 0 CIX filename)", "Polyboard fixed columns: diagnostics report the actual positional mapping instead of guessed blocks");
 const bareWoodtekParsed = polyboard.parsePolyboardCsv(woodtekRows.map((row) => csvRow(row)).join("\n"));
 check(bareWoodtekParsed.diagnostics.headerless && bareWoodtekParsed.parts.length === 4 && bareWoodtekParsed.parts[0].name === "Left Side Panel", "Polyboard fixed columns: headerless input keeps the first part even when names start with Project/Cabinet");
 check(bareWoodtekParsed.projectName === "Project Villa 42" && bareWoodtekParsed.cabinetsMap.size === 2 && bareWoodtekParsed.parts[0].length === 720, "Polyboard fixed columns: headerless exports use exact identity columns and infer sizes from the rest");
@@ -3948,7 +4111,8 @@ check(woodtekCabinets[0].parts.filter((part) => part.name.startsWith("Top Rail")
 const missingCixRow = [...woodtekRows[0]];
 missingCixRow[13] = "missing-file.cix";
 const missingCixParsed = polyboard.parsePolyboardCsv([woodtekHeader, missingCixRow].map((row) => csvRow(row)).join("\n"));
-check(polyboard.matchCixToParts(Array.from(missingCixParsed.cabinetsMap.values()), [{ filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] }]).matchedCount === 0, "Polyboard CIX: a missing explicit reference is reported unlinked, not silently substituted by part name");
+const missingCixFallbackMatch = polyboard.matchCixToParts(Array.from(missingCixParsed.cabinetsMap.values()), [{ filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] }]);
+check(missingCixFallbackMatch.matchedCount === 1 && missingCixFallbackMatch.matchedByMethod.dimensions === 1 && missingCixFallbackMatch.missingCix.length === 1, "Polyboard CIX: an unavailable explicit reference uses only a flagged size fallback, never a filename/CUSTSTR guess");
 const otherLayoutCsv = [
   "Part;Project;Cabinet;Length;Width;Thickness;Qty;CIX;Material;Edge1;Edge2;Edge3;Edge4;Grain",
   "Left Side Panel;Another project;Base;720;560;18;1;KB600_LS;MFC;;;;;0",
@@ -3966,7 +4130,7 @@ check(sampleParsed.diagnostics.layout === "auto", "Polyboard CSV: the shorter bu
 // Rows carrying a one-letter grain/edge code were dropped as "repeated headers".
 const padCix = (n) => String(n).padStart(8, "0");
 const numberedRow = (n, overrides = {}) => {
-  const cells = [720, 560, 18, 1, "", 0, "Side " + n, "MFC White", "", "", "", "Villa 42", n > 30 ? "Tall unit" : "Base unit", padCix(n)];
+  const cells = [720, 560, 18, 1, "MFC White", 0, "Side " + n, "", "", "", "", "Villa 42", n > 30 ? "Tall unit" : "Base unit", padCix(n), "", String(n)];
   Object.entries(overrides).forEach(([column, value]) => { cells[column] = value; });
   return csvRow(cells);
 };
@@ -3974,7 +4138,7 @@ const numberedCix = (count) => Array.from({ length: count }, (_, i) => ({
   filename: padCix(i + 1) + ".cix",
   content: 'BEGIN ID CID3\nBEGIN MAINDATA LPX=716 LPY=396 LPZ=18 CUSTSTR="Door" END MAINDATA\nEND ID',
 }));
-for (const [label, overrides] of [["grain L", { 5: "L" }], ["edge W", { 4: "W" }], ["edge H/T", { 8: "H", 9: "T" }], ["qty title", { 10: "pcs" }]]) {
+for (const [label, overrides] of [["grain L", { 5: "L" }], ["edge W", { 9: "W" }], ["edge H/T", { 7: "H", 8: "T" }], ["qty title", { 3: "pcs" }]]) {
   const csv = Array.from({ length: 55 }, (_, i) => numberedRow(i + 1, i + 1 >= 48 ? overrides : {})).join("\r\n");
   const parsed = polyboard.parsePolyboardCsv(csv);
   const match = polyboard.matchCixToParts(Array.from(parsed.cabinetsMap.values()), numberedCix(55));
@@ -4047,7 +4211,8 @@ check(assemblyViewSource.includes("activeProject && canManageProject && !loading
 check(assemblyViewSource.includes('method: "PATCH"') && assemblyViewSource.includes('method: "DELETE"') && assemblyViewSource.includes("encodeURIComponent(projectId)"), "assembly workspace: edit/delete target the selected project's encoded ID");
 check(assemblyViewSource.includes("const activeProject = projects.find(") && assemblyViewSource.includes("current.map((existing)") && assemblyViewSource.includes("selectProject(remaining[0] || null)"), "assembly workspace: updates share one project list and deletion clears or selects a remaining project");
 check(pageSource.includes("<AssemblyView key={currentUser.id} currentUser={currentUser}"), "assembly workspace: permissions and cached project state follow the signed-in user");
-check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && assemblyViewSource.includes("csvLayout: importCsvLayout") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.project"), "assembly import dialog: WoodTek column positions are the default and are sent to the API");
+check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && assemblyViewSource.includes("csvLayout: importCsvLayout") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.project") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.cixFace6") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.partSerial"), "assembly import dialog: WoodTek face-specific CIX and part-serial columns are explained and sent to the API");
+check(assemblyViewSource.includes("cixMatchedFilenameFace0") && assemblyViewSource.includes("cixMatchedFilenameFace6") && assemblyViewSource.includes("CSV ref:"), "assembly workspace: face details distinguish an uploaded fallback filename from the original CSV reference");
 check(assemblyViewSource.includes("Project Name (Optional Override)") && !assemblyViewSource.includes("setImportProjName(file.name"), "assembly import dialog: uploading a file does not override column 12 with the filename");
 
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
@@ -4207,12 +4372,25 @@ async function checkAssemblyProjectApi() {
     const shortHeaderless = Array.from({ length: 47 }, (_, i) => numberedRow(i + 1)).join("\n");
     response = await route.POST(request("POST", undefined, { csvContent: shortHeaderless, cixFiles: numberedCix(55) }));
     data = await response.json();
-    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.startsWith("8 CIX file(s) are not named in column 14") && w.includes("00000048.cix (Door 716×396×18)")),
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.startsWith("8 CIX file(s) are not named in column 14 or 15") && w.includes("00000048.cix (Door 716×396×18)")),
       "assembly CSV import: files missing from the cutting list are explained with their internal part name and size");
     response = await route.POST(request("POST", undefined, { csvContent: Array.from({ length: 2 }, (_, i) => numberedRow(i + 1, i === 1 ? { 13: "00000077" } : {})).join("\n"), cixFiles: numberedCix(1) }));
     data = await response.json();
-    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.includes("name a CIX file that was not uploaded") && w.includes("00000077.cix (Base unit / Side 2)")),
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.includes("face reference(s) name a CIX file that was not uploaded") && w.includes("00000077.cix (face 0, Base unit / Side 2")),
       "assembly CSV import: column-14 files that were not uploaded are named in the report");
+    const explicitFallbackCsv = [800, 550, 18, 1, "MFC White", 0, "Fallback side", "", "", "", "", "Fallback project", "Cabinet 101", "not-uploaded.cix", "", "101"].join(";");
+    response = await route.POST(request("POST", undefined, { csvContent: explicitFallbackCsv, cixFiles: [{ filename: "00000048.cix", content: multilineCix }] }));
+    data = await response.json();
+    check(response.status === 200 && data.project.cabinets[0].parts[0].cixData.filename === "00000048.cix" &&
+      data.diagnostics.warnings.some((w) => w.includes("unique size-only fallback") && w.includes("00000048.cix → Cabinet 101 / Fallback side #101 (face 0)")) &&
+      data.diagnostics.warnings.some((w) => w.includes("not-uploaded.cix (face 0, Cabinet 101 / Fallback side #101")),
+      "assembly CSV import: unique size-only fallback is attached and reported alongside the unavailable CSV filename/serial");
+    const blankFaceCsv = [800, 550, 18, 1, "MFC White", 0, "Unmachined side", "", "", "", "", "Blank project", "Cabinet 102", "", "", "102"].join(";");
+    response = await route.POST(request("POST", undefined, { csvContent: blankFaceCsv, cixFiles: [{ filename: "00000048.cix", content: multilineCix }] }));
+    data = await response.json();
+    check(response.status === 200 && data.diagnostics.cix.missingCix.length === 0 && data.diagnostics.cix.unlinkedParts.length === 0 &&
+      !data.diagnostics.warnings.some((w) => w.includes("eligible face(s)") || w.includes("face reference(s) name a CIX file")),
+      "assembly CSV import: blank face references never produce missing-file or eligible-face warnings");
 
     response = await route.POST(request("POST", undefined, { projectName: "  Manual project name  ", csvContent: woodtekCsv }));
     data = await response.json();

@@ -5,7 +5,9 @@
 // Real Polyboard cut list exports are configured by the user (Cutting list >
 // Cutting list options > Format): they can carry a title block, any field
 // order, any separator, localized field names or no header row at all. This
-// WoodTek exports use part 7 / project 12 / cabinet 13 / CIX 14 (one-based).
+// WoodTek exports use length/width/thickness/quantity/material/grain in 1–6,
+// part name in 7, L1/L2/W1/W2 edge values in 8–11, project/cabinet in 12–13,
+// face-0/face-6 CIX filenames in 14–15, and cabinet part serial in 16.
 // Other layouts identify headers by alias AND content and understand section/
 // merged-cell layouts instead of assuming a fixed English column order.
 // ============================================================================
@@ -41,14 +43,28 @@ export interface PolyboardPart {
   length: number;    // Net / overall length (mm)
   width: number;     // Net / overall width (mm)
   thickness: number; // Net thickness (mm)
+  /** Primary CIX reference (face 0 when present, otherwise face 6). */
   cixFilename?: string;
-  cixReferenceExplicit?: boolean; // The CSV names a specific CNC file, not a generated reference.
-  cixMatchMethod?: PolyboardCixMatchMethod; // How the uploaded CIX program was linked.
+  /** Face-specific references declared in WoodTek CSV columns 14 and 15. */
+  cixFilenameFace0?: string;
+  cixFilenameFace6?: string;
+  /** Actual uploaded filenames attached to the face-specific parsed programs. */
+  cixMatchedFilenameFace0?: string;
+  cixMatchedFilenameFace6?: string;
+  /** Whether a WoodTek CSV declares machining on each face; false means no machining. */
+  cixFace0Expected?: boolean;
+  cixFace6Expected?: boolean;
+  cixReferenceExplicit?: boolean; // Column 14 names a specific face-0 CNC file.
+  cixReferenceFace6Explicit?: boolean; // Column 15 names a specific face-6 CNC file.
+  cixMatchMethod?: PolyboardCixMatchMethod; // How the face-0 or legacy CNC program was linked.
+  cixMatchMethodFace6?: PolyboardCixMatchMethod;
+  partSerial?: string; // Column 16: serial within the cabinet.
   barcode: string;   // Barcode printed on part label (e.g., CIX program name or part ID)
   isScanned?: boolean;
   scannedAt?: string;
   scannedBy?: string;
-  cixData?: ParsedCixPart;
+  cixData?: ParsedCixPart; // Face 0, retained for backward compatibility.
+  cixDataFace6?: ParsedCixPart;
   grain?: number;
   edgeBanding?: {
     top?: string;
@@ -89,27 +105,40 @@ export interface PolyboardProject {
 }
 
 /** One-based positions in the owner's Polyboard cutting-list export. */
-export const WOODTEK_CSV_COLUMNS = { part: 7, project: 12, cabinet: 13, cix: 14 } as const;
+export const WOODTEK_CSV_COLUMNS = {
+  length: 1,
+  width: 2,
+  thickness: 3,
+  quantity: 4,
+  material: 5,
+  grain: 6,
+  part: 7,
+  edgeL1: 8,
+  edgeL2: 9,
+  edgeW1: 10,
+  edgeW2: 11,
+  project: 12,
+  cabinet: 13,
+  cix: 14,
+  cixFace6: 15,
+  partSerial: 16,
+} as const;
 export type PolyboardCsvLayout = "woodtek" | "auto";
-const WOODTEK_IDENTITY_INDICES = Object.values(WOODTEK_CSV_COLUMNS).map((column) => column - 1);
+const WOODTEK_IDENTITY_INDICES = [
+  WOODTEK_CSV_COLUMNS.part,
+  WOODTEK_CSV_COLUMNS.project,
+  WOODTEK_CSV_COLUMNS.cabinet,
+  WOODTEK_CSV_COLUMNS.cix,
+  WOODTEK_CSV_COLUMNS.cixFace6,
+  WOODTEK_CSV_COLUMNS.partSerial,
+].map((column) => column - 1);
 
 export interface PolyboardSkippedRow {
   line: number;
   reason: "repeated-header" | "total" | "boilerplate" | "empty";
-  /** Column-14 reference on that line (WoodTek layout), when present. */
+  /** Column-14/15 face reference on that line (WoodTek layout), when present. */
   cix?: string;
   text: string;
-}
-
-/** An imported WoodTek part row that had no explicit column-14 CIX reference. */
-export interface PolyboardMissingCixReference {
-  line: number;
-  cabinetName: string;
-  partName: string;
-  quantity: number;
-  length: number;
-  width: number;
-  thickness: number;
 }
 
 /** Human readable report of what the importer understood from a CSV file. */
@@ -128,8 +157,6 @@ export interface PolyboardCsvDiagnostics {
   rowsSkipped: number;
   /** One entry per skipped line (1-based file line), so a dropped part is never silent. */
   skippedRows: PolyboardSkippedRow[];
-  /** Part rows whose fixed WoodTek column 14 was blank; includes source sizes and quantities. */
-  missingCixReferences: PolyboardMissingCixReference[];
   sectionRows: number;
   warnings: string[];
 }
@@ -371,13 +398,25 @@ function buildColumnMapping(
     assignedCols.add(col);
   };
 
-  // Reserve the four identity columns BEFORE header matching or inference.
-  // A project code or numeric CIX filename must never become a size/quantity.
+  // Reserve the fixed WoodTek export columns BEFORE header matching or
+  // inference. Numeric identity fields must never become sizes or quantities.
   if (options.woodtekColumns) {
+    assign("length", WOODTEK_CSV_COLUMNS.length - 1, "column 1 (length)");
+    assign("width", WOODTEK_CSV_COLUMNS.width - 1, "column 2 (width)");
+    assign("thickness", WOODTEK_CSV_COLUMNS.thickness - 1, "column 3 (thickness)");
+    assign("qty", WOODTEK_CSV_COLUMNS.quantity - 1, "column 4 (quantity)");
+    assign("material", WOODTEK_CSV_COLUMNS.material - 1, "column 5 (material)");
+    assign("grain", WOODTEK_CSV_COLUMNS.grain - 1, "column 6 (grain)");
     assign("part", WOODTEK_CSV_COLUMNS.part - 1, "column 7 (part name)");
+    assign("edge1", WOODTEK_CSV_COLUMNS.edgeL1 - 1, "column 8 (edge L1)");
+    assign("edge2", WOODTEK_CSV_COLUMNS.edgeL2 - 1, "column 9 (edge L2)");
+    assign("edge3", WOODTEK_CSV_COLUMNS.edgeW1 - 1, "column 10 (edge W1)");
+    assign("edge4", WOODTEK_CSV_COLUMNS.edgeW2 - 1, "column 11 (edge W2)");
     assign("project", WOODTEK_CSV_COLUMNS.project - 1, "column 12 (project name)");
     assign("cabinet", WOODTEK_CSV_COLUMNS.cabinet - 1, "column 13 (cabinet name)");
-    assign("cix", WOODTEK_CSV_COLUMNS.cix - 1, "column 14 (CIX filename)");
+    assign("cix", WOODTEK_CSV_COLUMNS.cix - 1, "column 14 (face 0 CIX filename)");
+    assign("cixFace6", WOODTEK_CSV_COLUMNS.cixFace6 - 1, "column 15 (face 6 CIX filename)");
+    assign("partSerial", WOODTEK_CSV_COLUMNS.partSerial - 1, "column 16 (cabinet part serial)");
   }
 
   if (headerRowIndex !== null) {
@@ -568,7 +607,6 @@ export function parsePolyboardCsv(
     rowsParsed: 0,
     rowsSkipped: 0,
     skippedRows: [],
-    missingCixReferences: [],
     sectionRows: 0,
     warnings: [],
   };
@@ -664,6 +702,8 @@ export function parsePolyboardCsv(
   const materialColumn = mapping.material;
   const qtyColumn = mapping.qty;
   const cixColumn = mapping.cix;
+  const cixFace6Column = mapping.cixFace6;
+  const partSerialColumn = mapping.partSerial;
 
   const ensureCabinet = (name: string): PolyboardCabinet => {
     const clean = (name || "").trim() || "Cabinet 1";
@@ -703,7 +743,9 @@ export function parsePolyboardCsv(
 
   const skipRow = (rowIndex: number, reason: PolyboardSkippedRow["reason"], cells: string[]) => {
     diagnostics.rowsSkipped++;
-    const cix = woodtekColumns && reason !== "repeated-header" ? (cells[WOODTEK_CSV_COLUMNS.cix - 1] || "").trim() : "";
+    const cix = woodtekColumns && reason !== "repeated-header"
+      ? [cells[WOODTEK_CSV_COLUMNS.cix - 1], cells[WOODTEK_CSV_COLUMNS.cixFace6 - 1]].filter(Boolean).join(" / ").trim()
+      : "";
     diagnostics.skippedRows.push({
       line: lineNumbers[dataStart + rowIndex],
       reason,
@@ -717,10 +759,12 @@ export function parsePolyboardCsv(
     const filled = trimmed.filter(Boolean);
     if (filled.length === 0) return;
 
-    // A real part row in the WoodTek layout names its CNC file in column 14
-    // and is never a title, header or totals line.
-    const declaresCix = woodtekColumns && !!trimmed[WOODTEK_CSV_COLUMNS.cix - 1] &&
-      normalizeKey(trimmed[WOODTEK_CSV_COLUMNS.cix - 1]) !== headerKeys[WOODTEK_CSV_COLUMNS.cix - 1];
+    // A real WoodTek part row with a face reference in column 14 or 15 is
+    // never a title, repeated header or totals line.
+    const declaresCix = woodtekColumns && [WOODTEK_CSV_COLUMNS.cix, WOODTEK_CSV_COLUMNS.cixFace6].some((column) => {
+      const value = trimmed[column - 1] || "";
+      return !!value && normalizeKey(value) !== headerKeys[column - 1];
+    });
 
     // Repeated header (some exports repeat titles for every cabinet). Only
     // possible when the file HAS a header; a part row carrying a one-letter
@@ -801,28 +845,19 @@ export function parsePolyboardCsv(
       return;
     }
 
-    let cixRef = cixColumn !== undefined ? cellAt(cixColumn) : "";
-    const cixReferenceExplicit = !!cixRef;
-    if (woodtekColumns && !cixReferenceExplicit) {
-      diagnostics.missingCixReferences.push({
-        line: lineNumbers[dataStart + rowIndex],
-        cabinetName,
-        partName,
-        quantity: qty,
-        length,
-        width,
-        thickness,
-      });
-    }
-    if (!cixRef) {
-      const cleanCab = cabinetName.replace(/[^a-zA-Z0-9]/g, "_");
-      const cleanPart = partName.replace(/[^a-zA-Z0-9]/g, "_");
-      cixRef = `${cleanCab}_${cleanPart}`;
-    }
-
-    // The export may include a Windows or POSIX path; uploads provide basenames.
-    cixRef = cixRef.split(/[\\/]/).pop() || cixRef;
-    const barcode = cixRef.replace(/\.cix$/i, "").trim();
+    const normalizeCixFilename = (value: string) => {
+      const basename = value.trim().split(/[\\/]/).pop() || "";
+      if (!basename) return "";
+      return /\.(?:cix|cid|txt)$/i.test(basename) ? basename : `${basename}.cix`;
+    };
+    const face0Filename = normalizeCixFilename(cixColumn !== undefined ? cellAt(cixColumn) : "");
+    const face6Filename = normalizeCixFilename(cixFace6Column !== undefined ? cellAt(cixFace6Column) : "");
+    const cixReferenceExplicit = !!face0Filename;
+    const cixReferenceFace6Explicit = !!face6Filename;
+    const generatedBarcode = `${cabinetName.replace(/[^a-zA-Z0-9]/g, "_")}_${partName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const barcodeRef = face0Filename || face6Filename || generatedBarcode;
+    const barcode = barcodeRef.replace(/\.(?:cix|cid|txt)$/i, "").trim();
+    const partSerial = partSerialColumn !== undefined ? cellAt(partSerialColumn).trim() : "";
     const cab = ensureCabinet(cabinetName);
     const csvProjectName = cellAt(projectColumn);
     if (csvProjectName && !diagnostics.projectNames.includes(csvProjectName)) {
@@ -847,8 +882,13 @@ export function parsePolyboardCsv(
         length,
         width,
         thickness,
-        cixFilename: /\.cix$/i.test(cixRef) ? cixRef : `${cixRef}.cix`,
+        cixFilename: face0Filename || face6Filename || undefined,
+        ...(face0Filename ? { cixFilenameFace0: face0Filename } : {}),
+        ...(face6Filename ? { cixFilenameFace6: face6Filename } : {}),
+        ...(woodtekColumns ? { cixFace0Expected: !!face0Filename, cixFace6Expected: !!face6Filename } : {}),
         cixReferenceExplicit,
+        cixReferenceFace6Explicit,
+        ...(partSerial ? { partSerial } : {}),
         barcode: partBarcode,
         isScanned: false,
         edgeBanding,
@@ -864,28 +904,12 @@ export function parsePolyboardCsv(
   const skippedWithCix = diagnostics.skippedRows.filter((row) => row.cix);
   if (skippedWithCix.length > 0) {
     diagnostics.warnings.push(
-      `${skippedWithCix.length} line(s) naming a CIX file in column 14 were not imported as parts: ` +
+      `${skippedWithCix.length} line(s) naming a CIX file in column 14 or 15 were not imported as parts: ` +
         skippedWithCix.slice(0, 8).map((row) => `line ${row.line} (${row.cix})`).join(", ") +
         (skippedWithCix.length > 8 ? "…" : "") + ".",
     );
   }
 
-  const missingReferencePartCount = diagnostics.missingCixReferences.reduce((sum, row) => sum + row.quantity, 0);
-  if (missingReferencePartCount > 0) {
-    const describeMissingReference = (row: PolyboardMissingCixReference) => {
-      const size = row.length > 0 && row.width > 0
-        ? ` ${Math.round(row.length)}×${Math.round(row.width)}${row.thickness > 0 ? `×${Math.round(row.thickness)}` : ""}`
-        : "";
-      const quantity = row.quantity > 1 ? ` ×${row.quantity}` : "";
-      return `line ${row.line} (${row.cabinetName} / ${row.partName}${size})${quantity}`;
-    };
-    diagnostics.warnings.push(
-      `Column 14 (CIX filename) is blank for ${missingReferencePartCount} imported part(s) across ` +
-        `${diagnostics.missingCixReferences.length} row(s): ` +
-        diagnostics.missingCixReferences.slice(0, 8).map(describeMissingReference).join(", ") +
-        (diagnostics.missingCixReferences.length > 8 ? "…" : "") + ".",
-    );
-  }
 
   // 4. Report how the parts were grouped per cabinet.
   if (cabinetColumn !== undefined) {
@@ -1110,14 +1134,18 @@ export interface PolyboardUnmatchedCix {
 
 export interface PolyboardMissingCix {
   reference: string;
+  face: 0 | 6;
   cabinetName: string;
   partName: string;
+  partSerial?: string;
 }
 
 export interface PolyboardCixLink {
   filename: string;
+  face: 0 | 6;
   cabinetName: string;
   partName: string;
+  partSerial?: string;
   method: PolyboardCixMatchMethod;
   length: number;
   width: number;
@@ -1127,6 +1155,8 @@ export interface PolyboardCixLink {
 export interface PolyboardUnlinkedPart {
   cabinetName: string;
   partName: string;
+  partSerial?: string;
+  face: 0 | 6;
   reference: string;
   referenceExplicit: boolean;
   length: number;
@@ -1137,6 +1167,8 @@ export interface PolyboardUnlinkedPart {
 export interface PolyboardSizeMatchAmbiguity {
   cabinetName: string;
   partName: string;
+  partSerial?: string;
+  face: 0 | 6;
   length: number;
   width: number;
   thickness: number;
@@ -1144,16 +1176,18 @@ export interface PolyboardSizeMatchAmbiguity {
 }
 
 export interface PolyboardCixMatchResult {
+  /** Number of CIX file-to-face links (a part can have face-0 and face-6 programs). */
   matchedCount: number;
+  partsWithCix: number;
   totalCix: number;
   unmatchedCix: string[];
   unmatchedDetails: PolyboardUnmatchedCix[];
-  /** Files named in the cutting list (column 14) that were not uploaded. */
+  /** Face-specific files named in columns 14/15 that were not uploaded. */
   missingCix: PolyboardMissingCix[];
   partsWithoutCix: number;
   matchedByCabinet: Record<string, number>;
   matchedByMethod: Record<PolyboardCixMatchMethod, number>;
-  /** One entry per linked part; dimensions-only links are called out in reports. */
+  /** One entry per linked face program; dimensions-only links are called out in reports. */
   links: PolyboardCixLink[];
   unlinkedParts: PolyboardUnlinkedPart[];
   /** Size-only candidates that are ambiguous across files or differently named parts. */
@@ -1172,14 +1206,16 @@ export function canonicalCixReference(value: string | undefined): string {
 }
 
 /**
- * Matches imported CIX files against project parts.
+ * Matches imported CIX files against project part faces.
  * A file is linked by, in order of confidence:
- *   1. an explicit filename/program reference in CSV column 14,
- *   2. the file name, barcode, or CUSTSTR part name,
+ *   1. an explicit face-specific CSV filename reference,
+ *   2. the file name, barcode, or CUSTSTR part name for legacy/generic layouts,
  *   3. a unique, close match of the part's length, width and (when present)
  *      thickness. Dimensions-only matches are always marked for review.
- * A non-empty CSV CIX reference is authoritative; size matching never overrides
- * an explicit reference to a file that was not uploaded.
+ * A blank WoodTek face reference means no machining and is never eligible for
+ * name/size matching. A nonblank reference that is not among the uploads may
+ * fall back to a unique size-only candidate, while the missing reference is
+ * still reported for review.
  */
 export function matchCixToParts(
   cabinets: PolyboardCabinet[],
@@ -1188,6 +1224,7 @@ export function matchCixToParts(
   const parsedCixList = cixFiles.map((file) => parseCix(file.content, file.filename));
   const key = (value: string | undefined) => normalizeKey(value || "");
   const loose = (value: string | undefined) => normalizeText(value || "").replace(/ /g, "");
+  type CixFace = 0 | 6;
 
   interface CixEntry {
     parsed: ParsedCixPart;
@@ -1237,6 +1274,37 @@ export function matchCixToParts(
     };
   });
 
+  interface CixTarget {
+    cabinet: PolyboardCabinet;
+    part: PolyboardPart;
+    partName: string;
+    face: CixFace;
+    reference: string;
+    explicit: boolean;
+  }
+
+  const displayPartName = (part: PolyboardPart) => (part.name || "").replace(/\s*\(#\d+\)$/, "");
+  const hasFaceData = (part: PolyboardPart, face: CixFace) => face === 0 ? !!part.cixData : !!part.cixDataFace6;
+  const getTargets = (): CixTarget[] => cabinets.flatMap((cabinet) => cabinet.parts.flatMap((part) => {
+    const partName = displayPartName(part);
+    const faces: CixFace[] = [0, 6];
+    return faces.flatMap((face) => {
+      const expected = face === 0 ? part.cixFace0Expected : part.cixFace6Expected;
+      const reference = face === 0
+        ? (part.cixFilenameFace0 || (part.cixReferenceFace6Explicit ? "" : part.cixFilename) || "")
+        : (part.cixFilenameFace6 || "");
+      const explicit = face === 0
+        ? !!(part.cixReferenceExplicit || part.cixFilenameFace0)
+        : !!(part.cixReferenceFace6Explicit || part.cixFilenameFace6);
+      if (expected === false || hasFaceData(part, face)) return [];
+      // A WoodTek blank means no machining on that face. Generic imports retain
+      // legacy name/size matching for face 0; face 6 only exists when declared.
+      if (face === 6 && expected !== true && !reference && !explicit) return [];
+      return [{ cabinet, part, partName, face, reference, explicit: explicit && !!reference }];
+    });
+  }));
+
+  const targets = getTargets();
   let matchedCount = 0;
   const matchedByCabinet: Record<string, number> = {};
   const matchedByMethod: Record<PolyboardCixMatchMethod, number> = { reference: 0, name: 0, dimensions: 0 };
@@ -1244,8 +1312,7 @@ export function matchCixToParts(
   const declaredReferences = new Set<string>();
   const missingCix: PolyboardMissingCix[] = [];
   const missingSeen = new Set<string>();
-
-  const displayPartName = (part: PolyboardPart) => (part.name || "").replace(/\s*\(#\d+\)$/, "");
+  const sizeFallbackTargets = new Set<CixTarget>();
 
   const dimensionsAgreeForName = (entry: CixEntry, part: PolyboardPart): boolean => {
     const checks: Array<[number, number]> = [
@@ -1298,14 +1365,23 @@ export function matchCixToParts(
   };
 
   const recordMatch = (
-    cabinet: PolyboardCabinet,
-    part: PolyboardPart,
+    target: CixTarget,
     entry: CixEntry,
     method: PolyboardCixMatchMethod,
   ) => {
-    const partName = displayPartName(part);
-    part.cixData = entry.parsed;
-    part.cixMatchMethod = method;
+    const { cabinet, part, partName, face } = target;
+    if (face === 0) {
+      part.cixData = entry.parsed;
+      part.cixMatchMethod = method;
+      part.cixMatchedFilenameFace0 = entry.filename;
+      if (!part.cixFilenameFace0) part.cixFilenameFace0 = entry.filename;
+    } else {
+      part.cixDataFace6 = entry.parsed;
+      part.cixMatchMethodFace6 = method;
+      part.cixMatchedFilenameFace6 = entry.filename;
+      if (!part.cixFilenameFace6) part.cixFilenameFace6 = entry.filename;
+    }
+    if (!part.cixFilename) part.cixFilename = entry.filename;
     entry.used++;
     entry.usedByCabinets.add(cabinet.name);
     matchedCount++;
@@ -1313,8 +1389,10 @@ export function matchCixToParts(
     matchedByMethod[method]++;
     links.push({
       filename: entry.filename,
+      face,
       cabinetName: cabinet.name,
       partName,
+      ...(part.partSerial ? { partSerial: part.partSerial } : {}),
       method,
       length: part.length,
       width: part.width,
@@ -1328,108 +1406,110 @@ export function matchCixToParts(
     }
   };
 
-  // First honor CSV references and the existing filename/name matching rules.
-  for (const cabinet of cabinets) {
-    matchedByCabinet[cabinet.name] = matchedByCabinet[cabinet.name] || 0;
+  for (const cabinet of cabinets) matchedByCabinet[cabinet.name] = 0;
 
-    for (const part of cabinet.parts) {
-      const partName = displayPartName(part);
-      const candidates = [
-        part.cixFilename || "",
-        (part.cixFilename || "").replace(/\.(?:cix|cid|txt)$/i, ""),
-        part.barcode,
-        part.barcode.replace(/-\d+$/, ""),
-        partName,
-        `${cabinet.name} ${partName}`,
-        `${cabinet.name}-${partName}`,
-      ].filter(Boolean);
+  // First honor each face's explicit CSV filename; never substitute a different
+  // program just because its dimensions happen to fit.
+  for (const target of targets) {
+    const { cabinet, part, partName, face, reference, explicit } = target;
+    const candidates = [
+      reference,
+      reference.replace(/\.(?:cix|cid|txt)$/i, ""),
+      part.barcode,
+      part.barcode.replace(/-\d+$/, ""),
+      partName,
+      `${cabinet.name} ${partName}`,
+      `${cabinet.name}-${partName}`,
+      ...(part.partSerial ? [`${cabinet.name} ${part.partSerial}`, `${cabinet.name}-${part.partSerial}`] : []),
+    ].filter(Boolean);
 
-      const scoreFor = (entry: CixEntry): number => {
-        let value = 0;
-        for (const candidate of candidates) {
-          const normalized = key(candidate);
-          const looseValue = loose(candidate);
-          if (!normalized) continue;
-          if (entry.fileKeys.has(normalized)) value = Math.max(value, 120);
-          else if (looseValue.length >= 3 && entry.looseFileKeys.has(looseValue) && dimensionsAgreeForName(entry, part)) {
-            value = Math.max(value, 100);
-          } else if ((entry.nameKeys.has(normalized) || entry.looseNameKeys.has(looseValue)) && dimensionsAgreeForName(entry, part)) {
-            value = Math.max(value, 80);
-          } else if (
-            looseValue.length >= 5 &&
-            dimensionsAgreeForName(entry, part) &&
-            Array.from(entry.looseFileKeys).concat(Array.from(entry.looseNameKeys)).some((other) => other.includes(looseValue) || looseValue.includes(other))
-          ) {
-            value = Math.max(value, 40);
-          }
-        }
-        return value;
-      };
-
-      const declaredReference = canonicalCixReference(part.cixFilename);
-      const explicitEntries = part.cixReferenceExplicit
-        ? entries.filter((entry) =>
-            canonicalCixReference(entry.filename) === declaredReference ||
-            canonicalCixReference(entry.parsed.programName) === declaredReference,
-          )
-        : [];
-      if (part.cixReferenceExplicit && declaredReference) declaredReferences.add(declaredReference);
-
-      // An explicit CIX name is authoritative, including when its file was not uploaded.
-      if (part.cixReferenceExplicit && explicitEntries.length === 0) {
-        const missingKey = `${cabinet.name}\u0000${declaredReference}`;
-        if (declaredReference && !missingSeen.has(missingKey)) {
-          missingSeen.add(missingKey);
-          missingCix.push({ reference: part.cixFilename || declaredReference, cabinetName: cabinet.name, partName });
-        }
-        continue;
-      }
-
-      const scored = part.cixReferenceExplicit
-        ? []
-        : entries
-            .map((entry) => ({ entry, value: scoreFor(entry) }))
-            .filter((candidate) => candidate.value > 0)
-            .sort((a, b) => b.value - a.value);
-
-      let chosen: CixEntry | undefined;
-      let method: PolyboardCixMatchMethod | undefined;
-      if (part.cixReferenceExplicit) {
-        chosen = explicitEntries.find((entry) => entry.used === 0) || explicitEntries[0];
-        if (chosen) method = "reference";
-      } else {
-        const available = scored.find((candidate) => candidate.entry.used === 0);
-        if (available) {
-          chosen = available.entry;
-          method = "name";
-        } else {
-          const bestScored = scored[0];
-          if (bestScored && bestScored.value >= 120) {
-            chosen = bestScored.entry;
-            method = "name";
-          } else if (bestScored && bestScored.value >= 80 && bestScored.entry.usedByCabinets.has(cabinet.name)) {
-            chosen = bestScored.entry; // identical part in the same cabinet (e.g. quantity > 1)
-            method = "name";
-          }
+    const scoreFor = (entry: CixEntry): number => {
+      let value = 0;
+      for (const candidate of candidates) {
+        const normalized = key(candidate);
+        const looseValue = loose(candidate);
+        if (!normalized) continue;
+        if (entry.fileKeys.has(normalized)) value = Math.max(value, 120);
+        else if (looseValue.length >= 3 && entry.looseFileKeys.has(looseValue) && dimensionsAgreeForName(entry, part)) {
+          value = Math.max(value, 100);
+        } else if ((entry.nameKeys.has(normalized) || entry.looseNameKeys.has(looseValue)) && dimensionsAgreeForName(entry, part)) {
+          value = Math.max(value, 80);
+        } else if (
+          looseValue.length >= 5 &&
+          dimensionsAgreeForName(entry, part) &&
+          Array.from(entry.looseFileKeys).concat(Array.from(entry.looseNameKeys)).some((other) => other.includes(looseValue) || looseValue.includes(other))
+        ) {
+          value = Math.max(value, 40);
         }
       }
+      return value;
+    };
 
-      if (chosen && method) recordMatch(cabinet, part, chosen, method);
+    const declaredReference = explicit ? canonicalCixReference(reference) : "";
+    const explicitEntries = explicit
+      ? entries.filter((entry) =>
+          canonicalCixReference(entry.filename) === declaredReference ||
+          canonicalCixReference(entry.parsed.programName) === declaredReference,
+        )
+      : [];
+    if (explicit && declaredReference) declaredReferences.add(declaredReference);
+
+    if (explicit && explicitEntries.length === 0) {
+      const missingKey = `${cabinet.name}\u0000${part.id}\u0000${face}\u0000${declaredReference}`;
+      if (declaredReference && !missingSeen.has(missingKey)) {
+        missingSeen.add(missingKey);
+        missingCix.push({
+          reference,
+          face,
+          cabinetName: cabinet.name,
+          partName,
+          ...(part.partSerial ? { partSerial: part.partSerial } : {}),
+        });
+      }
+      // The CSV does name machining for this face, but none of the uploaded
+      // files matches that reference. Let only the unique-size fallback try;
+      // never replace a blank face reference this way.
+      sizeFallbackTargets.add(target);
+      continue;
     }
+
+    const scored = explicit
+      ? []
+      : entries
+          .map((entry) => ({ entry, value: scoreFor(entry) }))
+          .filter((candidate) => candidate.value > 0)
+          .sort((a, b) => b.value - a.value);
+
+    let chosen: CixEntry | undefined;
+    let method: PolyboardCixMatchMethod | undefined;
+    if (explicit) {
+      chosen = explicitEntries.find((entry) => entry.used === 0) || explicitEntries[0];
+      if (chosen) method = "reference";
+    } else {
+      const available = scored.find((candidate) => candidate.entry.used === 0);
+      if (available) {
+        chosen = available.entry;
+        method = "name";
+      } else {
+        const bestScored = scored[0];
+        if (bestScored && bestScored.value >= 120) {
+          chosen = bestScored.entry;
+          method = "name";
+        } else if (bestScored && bestScored.value >= 80 && bestScored.entry.usedByCabinets.has(cabinet.name)) {
+          chosen = bestScored.entry;
+          method = "name";
+        }
+      }
+    }
+
+    if (chosen && method) recordMatch(target, chosen, method);
   }
 
-  // Last resort: use dimensions only when they distinguish a part/program pair.
-  // This deliberately avoids guessing between equal-size parts with different CNC
-  // operations; every dimensions-only link is tagged for review in the report.
-  interface PendingPart {
-    cabinet: PolyboardCabinet;
-    part: PolyboardPart;
-    partName: string;
-  }
-  let pendingParts: PendingPart[] = cabinets.flatMap((cabinet) =>
-    cabinet.parts
-      .filter((part) => !part.cixData && !part.cixReferenceExplicit)
-      .map((part) => ({ cabinet, part, partName: displayPartName(part) })),
+  // Size fallback applies only to eligible face targets (not a blank WoodTek
+  // face, which explicitly means no machining) and is accepted only when unique.
+  // Explicit but unavailable references are eligible for this last-resort path.
+  let pendingTargets = targets.filter((target) =>
+    !hasFaceData(target.part, target.face) && (!target.explicit || sizeFallbackTargets.has(target)),
   );
 
   const uniqueBest = <T extends object>(
@@ -1441,131 +1521,143 @@ export function matchCixToParts(
     return sorted[0].item;
   };
 
-  while (pendingParts.length > 0) {
+  while (pendingTargets.length > 0) {
     const availableEntries = entries.filter((entry) => entry.used === 0);
     if (availableEntries.length === 0) break;
 
-    const scoresByPart = new Map<PendingPart, Array<{ item: CixEntry; score: number }>>();
-    const scoresByEntry = new Map<CixEntry, Array<{ item: PendingPart; score: number }>>();
-    for (const pending of pendingParts) {
+    const scoresByTarget = new Map<CixTarget, Array<{ item: CixEntry; score: number }>>();
+    const scoresByEntry = new Map<CixEntry, Array<{ item: CixTarget; score: number }>>();
+    for (const target of pendingTargets) {
       const options: Array<{ item: CixEntry; score: number }> = [];
       for (const entry of availableEntries) {
-        const score = dimensionsMatchScore(entry, pending.part);
+        const score = dimensionsMatchScore(entry, target.part);
         if (score === null) continue;
         options.push({ item: entry, score });
         const reverse = scoresByEntry.get(entry) || [];
-        reverse.push({ item: pending, score });
+        reverse.push({ item: target, score });
         scoresByEntry.set(entry, reverse);
       }
-      scoresByPart.set(pending, options);
+      scoresByTarget.set(target, options);
     }
 
-    const mutualBest: Array<{ pending: PendingPart; entry: CixEntry }> = [];
-    for (const pending of pendingParts) {
-      const bestEntry = uniqueBest(scoresByPart.get(pending) || []);
+    const mutualBest: Array<{ target: CixTarget; entry: CixEntry }> = [];
+    for (const target of pendingTargets) {
+      const bestEntry = uniqueBest(scoresByTarget.get(target) || []);
       if (!bestEntry) continue;
-      const bestPart = uniqueBest(scoresByEntry.get(bestEntry) || []);
-      if (bestPart === pending) mutualBest.push({ pending, entry: bestEntry });
+      const bestTarget = uniqueBest(scoresByEntry.get(bestEntry) || []);
+      if (bestTarget === target) mutualBest.push({ target, entry: bestEntry });
     }
 
     if (mutualBest.length > 0) {
-      const matchedParts = new Set<PendingPart>();
+      const matchedTargets = new Set<CixTarget>();
       const matchedEntries = new Set<CixEntry>();
-      for (const { pending, entry } of mutualBest) {
-        if (matchedParts.has(pending) || matchedEntries.has(entry) || entry.used !== 0) continue;
-        recordMatch(pending.cabinet, pending.part, entry, "dimensions");
-        matchedParts.add(pending);
+      for (const { target, entry } of mutualBest) {
+        if (matchedTargets.has(target) || matchedEntries.has(entry) || entry.used !== 0) continue;
+        recordMatch(target, entry, "dimensions");
+        matchedTargets.add(target);
         matchedEntries.add(entry);
       }
-      if (matchedParts.size > 0) {
-        pendingParts = pendingParts.filter((pending) => !matchedParts.has(pending));
+      if (matchedTargets.size > 0) {
+        pendingTargets = pendingTargets.filter((target) => !matchedTargets.has(target));
         continue;
       }
     }
 
-    // One CNC program can be reused for an identical repeated piece (same cabinet,
-    // part label and size), but not for a different part that merely shares a size.
-    const repeatedPartGroups = new Map<string, PendingPart[]>();
-    for (const pending of pendingParts) {
-      const sortedAxes = [pending.part.length, pending.part.width].sort((a, b) => a - b);
+    // One program may be reused only for repeated identical pieces in the same
+    // cabinet, on the same face, with the same part label/serial/reference and dimensions.
+    const repeatedPartGroups = new Map<string, CixTarget[]>();
+    for (const target of pendingTargets) {
+      const sortedAxes = [target.part.length, target.part.width].sort((a, b) => a - b);
       const groupKey = [
-        normalizeKey(pending.cabinet.name),
-        normalizeKey(pending.partName),
+        normalizeKey(target.cabinet.name),
+        normalizeKey(target.partName),
+        normalizeKey(target.part.partSerial || ""),
+        target.explicit ? canonicalCixReference(target.reference) : "",
+        target.face,
         sortedAxes.join("x"),
-        pending.part.thickness,
+        target.part.thickness,
       ].join("\u0000");
       const group = repeatedPartGroups.get(groupKey) || [];
-      group.push(pending);
+      group.push(target);
       repeatedPartGroups.set(groupKey, group);
     }
 
-    const repeatedGroupsMatched = new Set<PendingPart>();
+    const repeatedGroupsMatched = new Set<CixTarget>();
     for (const group of repeatedPartGroups.values()) {
       if (group.length < 2) continue;
       const groupMembers = new Set(group);
       const groupEntries = availableEntries.filter((entry) =>
         entry.used === 0 &&
-        group.every((pending) => dimensionsMatchScore(entry, pending.part) !== null) &&
-        !pendingParts.some((pending) =>
-          !groupMembers.has(pending) && dimensionsMatchScore(entry, pending.part) !== null,
+        group.every((target) => dimensionsMatchScore(entry, target.part) !== null) &&
+        !pendingTargets.some((target) =>
+          !groupMembers.has(target) && dimensionsMatchScore(entry, target.part) !== null,
         ),
       );
       if (groupEntries.length !== 1) continue;
       const [entry] = groupEntries;
-      for (const pending of group) {
-        recordMatch(pending.cabinet, pending.part, entry, "dimensions");
-        repeatedGroupsMatched.add(pending);
+      for (const target of group) {
+        recordMatch(target, entry, "dimensions");
+        repeatedGroupsMatched.add(target);
       }
     }
     if (repeatedGroupsMatched.size > 0) {
-      pendingParts = pendingParts.filter((pending) => !repeatedGroupsMatched.has(pending));
+      pendingTargets = pendingTargets.filter((target) => !repeatedGroupsMatched.has(target));
       continue;
     }
 
     break;
   }
 
-  const totalParts = cabinets.reduce((sum, cabinet) => sum + cabinet.parts.length, 0);
   const unmatchedEntries = entries.filter((entry) => entry.used === 0);
-  const unlinkedPartRefs = cabinets.flatMap((cabinet) =>
-    cabinet.parts
-      .filter((part) => !part.cixData)
-      .map((part) => ({ cabinet, part, partName: displayPartName(part) })),
-  );
-  const unlinkedParts: PolyboardUnlinkedPart[] = unlinkedPartRefs.map(({ cabinet, part, partName }) => ({
-    cabinetName: cabinet.name,
-    partName,
-    reference: part.cixFilename || "",
-    referenceExplicit: !!part.cixReferenceExplicit,
-    length: part.length || 0,
-    width: part.width || 0,
-    thickness: part.thickness || 0,
+  const unlinkedTargets = targets.filter((target) => !hasFaceData(target.part, target.face));
+  const unlinkedParts: PolyboardUnlinkedPart[] = unlinkedTargets.map((target) => ({
+    cabinetName: target.cabinet.name,
+    partName: target.partName,
+    ...(target.part.partSerial ? { partSerial: target.part.partSerial } : {}),
+    face: target.face,
+    reference: target.reference,
+    referenceExplicit: target.explicit,
+    length: target.part.length || 0,
+    width: target.part.width || 0,
+    thickness: target.part.thickness || 0,
   }));
 
-  const ambiguousSizeMatches: PolyboardSizeMatchAmbiguity[] = unlinkedPartRefs.flatMap(({ cabinet, part, partName }) => {
-    if (part.cixReferenceExplicit) return [];
-    const matchingEntries = entries.filter((entry) => entry.used === 0 && dimensionsMatchScore(entry, part) !== null);
+  const ambiguousSizeMatches: PolyboardSizeMatchAmbiguity[] = unlinkedTargets.flatMap((target) => {
+    if (target.explicit && !sizeFallbackTargets.has(target)) return [];
+    const matchingEntries = entries.filter((entry) => entry.used === 0 && dimensionsMatchScore(entry, target.part) !== null);
     const contested = matchingEntries.some((entry) =>
-      unlinkedPartRefs.some((other) =>
-        other.part !== part &&
-        !other.part.cixReferenceExplicit &&
-        (other.cabinet.name !== cabinet.name || normalizeKey(other.partName) !== normalizeKey(partName)) &&
+      unlinkedTargets.some((other) =>
+        other !== target &&
+        (other.cabinet.name !== target.cabinet.name ||
+          normalizeKey(other.partName) !== normalizeKey(target.partName) ||
+          normalizeKey(other.part.partSerial || "") !== normalizeKey(target.part.partSerial || "") ||
+          other.face !== target.face ||
+          (target.explicit && other.explicit && canonicalCixReference(other.reference) !== canonicalCixReference(target.reference))) &&
         dimensionsMatchScore(entry, other.part) !== null,
       ),
     );
     if (matchingEntries.length < 2 && !contested) return [];
     return [{
-      cabinetName: cabinet.name,
-      partName,
-      length: part.length,
-      width: part.width,
-      thickness: part.thickness,
+      cabinetName: target.cabinet.name,
+      partName: target.partName,
+      ...(target.part.partSerial ? { partSerial: target.part.partSerial } : {}),
+      face: target.face,
+      length: target.part.length,
+      width: target.part.width,
+      thickness: target.part.thickness,
       candidateFiles: matchingEntries.map((entry) => entry.filename),
     }];
   });
 
+  const partsWithCix = new Set<PolyboardPart>(
+    cabinets.flatMap((cabinet) => cabinet.parts.filter((part) => !!part.cixData || !!part.cixDataFace6)),
+  ).size;
+  const expectedParts = new Set<PolyboardPart>(targets.map((target) => target.part));
+  const partsWithoutCix = [...expectedParts].filter((part) => !part.cixData && !part.cixDataFace6).length;
+
   return {
     matchedCount,
+    partsWithCix,
     totalCix: cixFiles.length,
     unmatchedCix: unmatchedEntries.map((entry) => entry.filename),
     unmatchedDetails: unmatchedEntries.map((entry) => {
@@ -1584,7 +1676,7 @@ export function matchCixToParts(
       };
     }),
     missingCix,
-    partsWithoutCix: Math.max(0, totalParts - matchedCount),
+    partsWithoutCix,
     matchedByCabinet,
     matchedByMethod,
     links,

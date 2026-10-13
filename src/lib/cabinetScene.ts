@@ -122,7 +122,10 @@ function buildCabinetMeshes(
     meshesMap.set(part.id, mesh);
 
     // Add CNC Rover A drilling holes onto the 3D part if CIX borings exist
-    const borings = part.cixData?.borings || [];
+    const borings = [
+      ...(part.cixData?.borings || []),
+      ...(part.cixDataFace6?.borings || []),
+    ];
     if (borings.length > 0) {
       const holeMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
       borings.forEach((b) => {

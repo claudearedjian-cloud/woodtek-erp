@@ -151,9 +151,7 @@ export async function POST(req: NextRequest) {
     // Match CIX files if provided
     const validCixList = Array.isArray(cixFiles) ? cixFiles : [];
     let cixMatch: PolyboardCixMatchResult | null = null;
-    if (validCixList.length > 0) {
-      cixMatch = matchCixToParts(cabinets, validCixList);
-    }
+    cixMatch = matchCixToParts(cabinets, validCixList);
 
     const totalParts = cabinets.reduce((sum, cabinet) => sum + cabinet.parts.length, 0);
 
@@ -181,12 +179,7 @@ export async function POST(req: NextRequest) {
     );
 
     const warnings: string[] = [...(csvDiagnostics?.warnings || [])];
-    if (cixMatch && validCixList.length > 0 && cixMatch.matchedCount === 0) {
-      warnings.push(
-        "None of the uploaded .cix files could be linked to a part. " +
-          "Check that the CIX reference column in the cutting list matches the .cix file names (or the part names in the CIX header).",
-      );
-    } else if (cixMatch && cixMatch.unmatchedCix.length > 0) {
+    if (cixMatch && cixMatch.unmatchedCix.length > 0) {
       const describe = (file: PolyboardCixMatchResult["unmatchedDetails"][number]) => {
         const size = file.length > 0 && file.width > 0
           ? ` ${Math.round(file.length)}×${Math.round(file.width)}${file.thickness > 0 ? `×${Math.round(file.thickness)}` : ""}`
@@ -199,12 +192,12 @@ export async function POST(req: NextRequest) {
       const list = (files: typeof notInCsv) => `${files.slice(0, 8).map(describe).join(", ")}${files.length > 8 ? "…" : ""}`;
       if (notInCsv.length > 0) {
         warnings.push(
-          `${notInCsv.length} CIX file(s) are not named in column 14 of any imported cutting-list row: ${list(notInCsv)}. ` +
-            "The parser now includes their CIX header size; check for a missing reference or a part-size mismatch.",
+          `${notInCsv.length} CIX file(s) are not named in column 14 or 15 of any imported cutting-list row: ${list(notInCsv)}. ` +
+            "They were left unassigned: CIX operation contents are not used to infer links, blank WoodTek face references mean no machining, and ambiguous size candidates stay unassigned.",
         );
       }
       if (otherUnlinked.length > 0) {
-        warnings.push(`Not linked to any part: ${list(otherUnlinked)}`);
+        warnings.push(`Not linked to any part/face: ${list(otherUnlinked)}`);
       }
     }
     if (cixMatch && cixMatch.matchedByMethod.dimensions > 0) {
@@ -213,10 +206,11 @@ export async function POST(req: NextRequest) {
         const size = link.length > 0 && link.width > 0
           ? ` (${Math.round(link.length)}×${Math.round(link.width)}${link.thickness > 0 ? `×${Math.round(link.thickness)}` : ""})`
           : "";
-        return `${link.filename} → ${link.cabinetName} / ${link.partName}${size}`;
+        const serial = link.partSerial ? ` #${link.partSerial}` : "";
+        return `${link.filename} → ${link.cabinetName} / ${link.partName}${serial} (face ${link.face})${size}`;
       };
       warnings.push(
-        `${sizeLinks.length} CIX link(s) were made by dimensions only (no matching file/name reference); verify the CNC operations: ` +
+        `${sizeLinks.length} CIX link(s) were attached by a unique size-only fallback without a matching uploaded face-specific filename; review the cabinet/part association: ` +
           `${sizeLinks.slice(0, 8).map(describe).join(", ")}${sizeLinks.length > 8 ? "…" : ""}.`,
       );
     }
@@ -226,36 +220,35 @@ export async function POST(req: NextRequest) {
         const size = match.length > 0 && match.width > 0
           ? ` ${Math.round(match.length)}×${Math.round(match.width)}${match.thickness > 0 ? `×${Math.round(match.thickness)}` : ""}`
           : "";
-        return `${match.cabinetName} / ${match.partName}${size}: ${match.candidateFiles.join(" / ")}`;
+        const serial = match.partSerial ? ` #${match.partSerial}` : "";
+        return `${match.cabinetName} / ${match.partName}${serial} (face ${match.face})${size}: ${match.candidateFiles.join(" / ")}`;
       };
       warnings.push(
-        `${ambiguous.length} unlinked part(s) have non-unique size matches across files/parts, so no automatic choice was made: ` +
+        `${ambiguous.length} unlinked face(s) have non-unique size matches across files/parts, so no automatic choice was made: ` +
           `${ambiguous.slice(0, 8).map(describe).join(", ")}${ambiguous.length > 8 ? "…" : ""}.`,
       );
     }
     if (cixMatch && cixMatch.unlinkedParts.length > 0) {
-      const unlinked = cixMatch.unlinkedParts;
+      const unlinked = cixMatch.unlinkedParts.filter((part) => !part.referenceExplicit);
       const describe = (part: (typeof unlinked)[number]) => {
         const size = part.length > 0 && part.width > 0
           ? ` (${Math.round(part.length)}×${Math.round(part.width)}${part.thickness > 0 ? `×${Math.round(part.thickness)}` : ""})`
           : "";
-        return `${part.cabinetName} / ${part.partName}${size}`;
+        const serial = part.partSerial ? ` #${part.partSerial}` : "";
+        return `${part.cabinetName} / ${part.partName}${serial} (face ${part.face})${size}`;
       };
-      warnings.push(
-        `${unlinked.length} part(s) still have no CIX data: ${unlinked.slice(0, 8).map(describe).join(", ")}${unlinked.length > 8 ? "…" : ""}.`,
-      );
+      if (unlinked.length > 0) {
+        warnings.push(
+          `${unlinked.length} eligible face(s) still have no CIX data: ${unlinked.slice(0, 8).map(describe).join(", ")}${unlinked.length > 8 ? "…" : ""}.`,
+        );
+      }
     }
-    if (cixMatch && validCixList.length > 0 && cixMatch.missingCix.length > 0) {
+    if (cixMatch && cixMatch.missingCix.length > 0) {
       const missing = cixMatch.missingCix;
       warnings.push(
-        `${missing.length} part(s) name a CIX file that was not uploaded: ` +
-          missing.slice(0, 8).map((m) => `${m.reference} (${m.cabinetName} / ${m.partName})`).join(", ") +
+        `${missing.length} face reference(s) name a CIX file that was not uploaded: ` +
+          missing.slice(0, 8).map((m) => `${m.reference} (face ${m.face}, ${m.cabinetName} / ${m.partName}${m.partSerial ? ` #${m.partSerial}` : ""})`).join(", ") +
           (missing.length > 8 ? "…" : "") + ".",
-      );
-    }
-    if (validCixList.length === 0) {
-      warnings.push(
-        "No .cix machine file was uploaded: parts can still be scanned with their barcode / CIX reference, but no CNC drilling data is attached.",
       );
     }
     if (cabinets.length === 0) {
