@@ -4369,6 +4369,11 @@ const restoreMigrationSource = fs.readFileSync("installer/restore-migration.ps1"
 const restoreMigrationBat = fs.readFileSync("installer/restore-migration.bat", "utf8");
 
 check(
+  prepareMigrationSource.includes("About to pack from:") && prepareMigrationSource.includes('$answer -ne "YES"')
+    && prepareMigrationSource.includes("$DbLabel"),
+  "migration pack: shows which folder/database it is packing and asks for YES (wrong-folder protection)",
+);
+check(
   prepareMigrationSource.includes("backup-woodtek.ps1") && prepareMigrationSource.includes("Copy-Item")
     && prepareMigrationSource.includes("README-MIGRATION.txt") && prepareMigrationSource.includes("WoodTek-Migration"),
   "migration pack: the old server takes a fresh backup and builds a copyable WoodTek-Migration folder",

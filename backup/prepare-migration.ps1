@@ -16,11 +16,12 @@
 #
 # Usage (double-click backup\prepare-migration.bat, or):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File backup\prepare-migration.ps1
-#   ... -PackDir D:\WoodTek-Migration
+#   ... -PackDir D:\WoodTek-Migration -Force   (skip the YES confirmation)
 # ============================================================================
 param(
     [string]$PackDir = "",
-    [string]$BackupRoot = ""
+    [string]$BackupRoot = "",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,8 +49,14 @@ if (-not (Test-Path $EnvFile)) {
 if (-not (Test-Path $Launcher)) {
     throw "$Launcher not found - this folder does not look like a WoodTek ERP installation."
 }
-if (-not (Select-String -Path $EnvFile -Pattern '^\s*DATABASE_URL\s*=' -Quiet)) {
+$UrlMatch = Select-String -Path $EnvFile -Pattern '^\s*DATABASE_URL\s*=\s*(.+?)\s*$' | Select-Object -First 1
+if (-not $UrlMatch) {
     throw "DATABASE_URL is missing from $EnvFile."
+}
+$DbUrl = $UrlMatch.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'")
+$DbLabel = $DbUrl
+if ($DbUrl -match '^(?:postgres|postgresql)://([^:@/]+)(?::([^@/]*))?@([^:/]+)(?::(\d+))?/(\w+)') {
+    $DbLabel = "$($Matches[5]) on $($Matches[3])" + $(if ($Matches[4]) { ":$($Matches[4])" } else { "" })
 }
 
 # ---------------------------------------------------------------------------
@@ -109,6 +116,19 @@ if ($DataZip) {
     Say "  data     : (the data\ folder is empty - nothing to carry over)"
 }
 Say ""
+
+if (-not $Force) {
+    Say "  About to pack from:"
+    Say "    app folder : $Root"
+    Say "    database   : $DbLabel"
+    Say "    data files : $DataFileCount"
+    Say "  (Run this from the folder the servers actually use - the one you update.)"
+    $answer = Read-Host "  Type YES to continue"
+    if ($answer -ne "YES") {
+        Say "  Cancelled - nothing was packed."
+        exit 1
+    }
+}
 
 # ---------------------------------------------------------------------------
 # 3. Build the pack

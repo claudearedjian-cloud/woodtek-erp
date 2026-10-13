@@ -80,9 +80,11 @@ MOVING THE APP TO A NEW SERVER (or VM)
   never changed by this - it is only read.
   1. ON THE OLD SERVER
        backup\prepare-migration.bat
-     It takes a fresh backup (database dump + data\ zip) and builds a folder
-     "WoodTek-Migration" next to the app, with a README inside. Copy that whole
-     folder to the new server (USB stick, or the new server's Desktop).
+     Run it from the folder the factory actually uses (the one you update).
+     It shows which folder/database it is about to pack and asks you to type
+     YES. Then it takes a fresh backup (database dump + data\ zip) and builds a
+     folder "WoodTek-Migration" next to the app, with a README inside. Copy that
+     whole folder to the new server (USB stick, or the new server's Desktop).
   2. ON THE NEW SERVER
        a. Install first: run WoodTek-ERP-Setup.exe and let it finish.
        b. Then double-click  installer\restore-migration.bat
