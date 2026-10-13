@@ -730,7 +730,7 @@ export default function WoodTekERP() {
           )}
           {activeTab === "machines" && <MachinesView machines={machines} loading={loading} onRefresh={refreshMachineData} users={users} onSelectOrder={handleSelectOrder} currentUser={currentUser} />}
           {activeTab === "station" && <OperatorStationView machines={machines} currentUser={currentUser} onRefresh={refreshStationShellData} onSelectOrder={handleSelectOrder} />}
-          {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={refreshCustomerData} onSelectOrder={handleSelectOrder} />}
+          {activeTab === "customers" && <CustomersView customers={customers} loading={loading} onRefresh={refreshCustomerData} onSelectOrder={handleSelectOrder} currentUser={currentUser} users={users} />}
           {activeTab === "inventory" && <InventoryView items={inventory} loading={loading} onRefresh={refreshInventoryData} currentUser={currentUser} canSeeMoney={canSeeMoney(currentUser, optionalConfig)} onCreatePurchaseOrder={canPurchase ? startPurchaseForItem : undefined} />}
           {activeTab === "purchasing" && canPurchase && <PurchasingView key={currentUser.id} initialItemId={purchaseReorderItemId} onInitialItemConsumed={() => setPurchaseReorderItemId(null)} onStockChanged={refreshInventoryData} />}
           {activeTab === "invoicing" && canInvoice && <InvoicingView key={currentUser.id} />}

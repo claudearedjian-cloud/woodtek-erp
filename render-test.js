@@ -34,6 +34,7 @@ compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
+compile("src/lib/clientOwnership.ts", "lib/clientOwnership.js");
 compile("src/lib/atomicFile.server.ts", "lib/atomicFile.server.js");
 compile("src/lib/dbIndexes.ts", "lib/dbIndexes.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
@@ -629,6 +630,37 @@ check(st.rows[2].invoiced === 0 && st.rows[2].paid === 400, "statement: payment 
 check(cs.buildStatement([]).balance === 0 && cs.buildStatement([]).rows.length === 0, "statement: empty ledger is safe");
 const neg = cs.buildStatement([{ type: "invoice", amount: -50, at: "2026-09-01T00:00:00Z" }]);
 check(neg.invoiced === 50, "statement: negative amounts clamp to positive");
+
+// ---- client book ownership (who may use a client file) ----
+// Rule: Manager sees every client; a Sales Coordinator sees the clients
+// assigned to them PLUS the shared pool nobody owns yet. Mirrors the SQL scope
+// in dataAccess.allowedCustomerIdsSubquery.
+const co = require("./compiled/lib/clientOwnership.js");
+const permsApi = require("./compiled/lib/permissions.js");
+const sharedClient = { assignedSalesId: null };
+const myClient = { assignedSalesId: 7 };
+const otherClient = { assignedSalesId: 8 };
+const salesUser = { id: 7, role: "Sales Coordinator" };
+check(co.canUseClient(salesUser, sharedClient) === true, "clients: a sales coordinator can work an unassigned (shared) client");
+check(co.canUseClient(salesUser, myClient) === true, "clients: a sales coordinator keeps their own clients");
+check(co.canUseClient(salesUser, otherClient) === false, "clients: another rep's client stays private");
+check(co.canUseClient({ id: 1, role: "Manager" }, otherClient) === true, "clients: a manager sees every client");
+check(co.canUseClient({ id: 3, role: "Machine Operator" }, sharedClient) === false, "clients: floor roles get no client access");
+check(co.canUseClient(null, sharedClient) === false, "clients: a signed-out viewer sees nothing");
+check(co.seesEveryClient({ id: 1, role: "Manager" }) === true && co.seesEveryClient(salesUser) === false, "clients: only a manager reads the whole book");
+check(co.isSharedClient(sharedClient) === true && co.isSharedClient(myClient) === false, "clients: shared pool detection");
+check(co.ownerIdOf({ assignedSalesId: 0 }) === null && co.ownerIdOf({ assignedSalesId: "" }) === null && co.ownerIdOf({}) === null, "clients: 0 / blank / missing owner all mean shared");
+check(co.ownerIdOf({ assignedSalesId: "8" }) === 8 && co.ownerIdOf({ assignedSalesId: -3 }) === null, "clients: owner ids are normalised (string ok, negative rejected)");
+permsApi.registerCustomRoles([{ name: "Sales Desk", base: "Sales Coordinator" }]);
+check(co.canUseClient({ id: 7, role: "Sales Desk" }, sharedClient) === true, "clients: a custom role inherits the sales scope for shared clients");
+check(co.canUseClient({ id: 7, role: "Sales Desk" }, otherClient) === false, "clients: a custom role still cannot take another rep's client");
+check(co.canOwnClients("Sales Desk") === true && co.canOwnClients("Machine Operator") === false, "clients: only manager/sales roles can own a client file");
+permsApi.registerCustomRoles([]);
+check(co.assignedRepLabel(sharedClient, []) === co.SHARED_CLIENT_LABEL, "clients: an unowned client is labelled shared");
+check(co.assignedRepLabel({ assignedSalesId: 7, assignedSalesName: "shadia" }, []) === "shadia", "clients: the owner name comes from the joined row");
+check(co.assignedRepLabel({ assignedSalesId: 7 }, [{ id: 7, name: "shadia" }]) === "shadia", "clients: the picker resolves the owner name from the staff list");
+check(co.assignedRepLabel({ assignedSalesId: 99 }, []) === "User #99", "clients: a missing staff row still names the owner id");
+check(co.salesRepOptions([{ id: 2, name: "maroun", role: "Machine Operator" }, { id: 3, name: "shadia", role: "Sales Coordinator" }, { id: 1, name: "Boss", role: "Manager" }]).map((u) => u.id).join(",") === "1,3", "clients: the rep picker lists managers + sales coordinators, sorted by name");
 
 // ---- audit trail (real filesystem via WOODTEK_DATA_DIR tmp dir) ----
 const os = require("os");

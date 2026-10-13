@@ -313,6 +313,17 @@ build-installer.bat
   Shop Floor Monitor are grouped under General Settings.
 - Matrix lives in `src/lib/moduleAccess.ts`; enforced by sidebar + page guard.
 
+## Client book ownership (since 2026-10-13)
+- Manager sees every client. A **Sales Coordinator** sees the clients **assigned
+  to them** plus the **shared pool** of clients nobody owns (`assigned sales
+  rep` empty — every account created before assignment existed). A client handed
+  to another rep stays private to that rep.
+- Managers hand an account to a rep (or release it back to the shared pool) in
+  the client file → **Edit Information → Assigned sales rep**. A client created
+  by a Sales Coordinator is assigned to them automatically.
+- One rule book: `src/lib/clientOwnership.ts` (list scope in
+  `src/lib/dataAccess.ts`, 403 on the single-client and ledger routes).
+
 ## Update flow
 Two different jobs. The full procedure — including rollback and a troubleshooting
 table — lives in **[UPDATING.md](UPDATING.md)**.
