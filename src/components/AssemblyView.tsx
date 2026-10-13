@@ -375,13 +375,24 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
               skippedLines.length ? ` (line${skippedLines.length === 1 ? "" : "s"} ${skippedLines.slice(0, 10).join(", ")}${skippedLines.length > 10 ? "…" : ""})` : ""
             }`,
           });
+          const missingCixRefs: Array<{ quantity: number }> = csvDiag.missingCixReferences || [];
+          const missingCixPartCount = missingCixRefs.reduce((sum, row) => sum + (row.quantity || 1), 0);
+          if (missingCixPartCount > 0) {
+            details.push({
+              label: "Column 14 refs",
+              value: `${missingCixPartCount} part(s) blank across ${missingCixRefs.length} row(s)`,
+            });
+          }
         }
         if (cixDiag) {
+          const dimensionLinks = cixDiag.matchedByMethod?.dimensions || 0;
+          const unmatchedFileCount = cixDiag.unmatchedCix?.length || 0;
+          const usedFileCount = Math.max(0, cixDiag.totalCix - unmatchedFileCount);
           details.push({
             label: "CIX linking",
-            value: `${cixDiag.matchedCount} part(s) linked to ${cixDiag.totalCix} file(s)${
-              cixDiag.unmatchedCix?.length ? ` • not linked: ${cixDiag.unmatchedCix.length}` : ""
-            }`,
+            value: `${cixDiag.matchedCount} part(s) linked across ${usedFileCount}/${cixDiag.totalCix} file(s)${
+              dimensionLinks ? ` • by size: ${dimensionLinks} (review)` : ""
+            }${unmatchedFileCount ? ` • not linked: ${unmatchedFileCount}` : ""}`,
           });
         }
 

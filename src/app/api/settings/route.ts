@@ -4,7 +4,7 @@ import { users, customers } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { authorize, hashPin } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
-import { baseRoleOf } from "@/lib/permissions";
+import { allRoles, baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
 
 const SAFE_USER_COLUMNS = {
@@ -90,8 +90,16 @@ export async function POST(request: Request) {
     const { entityType, data } = body;
 
     if (entityType === "users" || entityType === "operators" || entityType === "technicians") {
+      ensureRolesRegistered();
       const { id, name, email, role, avatarColor, pin, active, phone, notes } = data;
-      
+      let assignedRole = typeof role === "string" && role.trim() ? role.trim() : undefined;
+      if (!id && entityType === "operators") assignedRole = "Machine Operator";
+      if (!id && entityType === "technicians") assignedRole = "Technician";
+      if (!id && !assignedRole) assignedRole = "Machine Operator";
+      if (assignedRole && !allRoles().includes(assignedRole)) {
+        return NextResponse.json({ error: "Choose a valid access profile before saving this user." }, { status: 400 });
+      }
+
       // Validate PIN for new users
       if (!id && (!pin || !/^\d{4}$/.test(pin))) {
         return NextResponse.json({ error: "A four-digit PIN is required for new users." }, { status: 400 });
@@ -100,7 +108,7 @@ export async function POST(request: Request) {
       if (id) {
         // Update existing
         const updateData: any = { name, email, avatarColor, active, phone, notes };
-        if (role) updateData.role = role;
+        if (assignedRole) updateData.role = assignedRole;
         if (pin) {
           if (!/^\d{4}$/.test(String(pin))) {
             return NextResponse.json({ error: "PIN must be exactly four digits." }, { status: 400 });
@@ -109,11 +117,11 @@ export async function POST(request: Request) {
         }
         
         const [updated] = await db.update(users).set(updateData).where(eq(users.id, Number(id))).returning(SAFE_USER_COLUMNS);
-        logAudit(user, "user.update", "user", `${updated.name}: profile updated${pin ? " · PIN reset" : ""}${role ? ` · role ${role}` : ""}`, updated.id);
+        logAudit(user, "user.update", "user", `${updated.name}: profile updated${pin ? " · PIN reset" : ""}${assignedRole ? ` · role ${assignedRole}` : ""}`, updated.id);
         return NextResponse.json(updated);
       } else {
         // Create new
-        const finalRole = entityType === "operators" ? "Machine Operator" : entityType === "technicians" ? "Technician" : role || "Machine Operator";
+        const finalRole = assignedRole || "Machine Operator";
         const [created] = await db.insert(users).values({
           name,
           email,

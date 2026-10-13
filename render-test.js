@@ -403,11 +403,11 @@ const mgrCfg = renderToString(React.createElement(Sidebar, props("Manager", cfg)
 const opCfg = renderToString(React.createElement(Sidebar, props("Machine Operator", cfg)));
 
 check(mgrCfg.includes("Factory Reports"), "config: rename applied (manager)");
-check(!mgrCfg.includes("Executive Dashboard"), "config: role override hides dashboard for manager");
+check(mgrCfg.includes("Executive Dashboard"), "config: built-in screens follow the Manager access profile, not a menu-item override");
 check(mgrCfg.indexOf("Factory Reports") < mgrCfg.indexOf("Live WIP Board"), "config: reorder puts reports first");
 check(mgrCfg.includes("QA Corner") && mgrCfg.indexOf("General Settings") < mgrCfg.indexOf("QA Corner"), "config: item moved into settings group");
-check(opCfg.includes("Live WIP Board"), "config: override shows WIP for operator");
-check(!opCfg.includes("Executive Dashboard"), "config: manager-only override does not leak to operator");
+check(!opCfg.includes("Live WIP Board"), "config: a menu-item override cannot grant WIP outside the operator access profile");
+check(!opCfg.includes("Executive Dashboard"), "config: operator profile continues to hide the Manager dashboard");
 check(opCfg.includes("QA Corner"), "config: operator gets group-promoted moved item");
 
 // ---- Warehouse & BOM module ----
@@ -432,6 +432,8 @@ check(perms.baseRoleOf("Foreman") === "Machine Operator", "baseRoleOf maps custo
 check(perms.baseRoleOf("Manager") === "Manager", "baseRoleOf leaves built-ins alone");
 check(perms.can("Foreman", "users:manage") === false, "custom name has no direct matrix entry");
 check(perms.can(perms.baseRoleOf("Foreman"), "operations:update-status") === true, "base role actions apply to custom role");
+check(perms.actionsForRole("Foreman").includes("operations:update-status"), "access preview resolves custom-role API actions from its base role");
+check(perms.actionLabel("users:manage") === "manage staff accounts", "access preview exposes plain-language action labels");
 
 const fMenu = menuCfg.resolveMenu("Foreman", null);
 const fIds = [...fMenu.top.map((i) => i.id), ...fMenu.settings.map((i) => i.id)];
@@ -441,9 +443,15 @@ check(!fIds.includes("orders"), "custom operator role cannot see Orders");
 
 const hideStation = { version: 1, items: [{ id: "station", roles: { Foreman: false } }] };
 const fMenu2 = menuCfg.resolveMenu("Foreman", hideStation);
-check(![...fMenu2.top.map((i) => i.id), ...fMenu2.settings.map((i) => i.id)].includes("station"), "per-custom-role override hides station");
+check([...fMenu2.top.map((i) => i.id), ...fMenu2.settings.map((i) => i.id)].includes("station"), "legacy per-menu visibility does not override the role profile");
+perms.registerCustomRoles([{ name: "Foreman", base: "Machine Operator", modules: ["quality"] }]);
+const restrictedForemanMenu = menuCfg.resolveMenu("Foreman", null);
+const restrictedForemanIds = [...restrictedForemanMenu.top.map((i) => i.id), ...restrictedForemanMenu.settings.map((i) => i.id)];
+check(!restrictedForemanIds.includes("station") && restrictedForemanIds.includes("quality"), "custom profile screen allowlist controls its menu");
+check(!require("./compiled/lib/moduleAccess.js").canAccessModule("Foreman", "invoicing"), "custom profile screen allowlist also limits optional-screen navigation");
+perms.registerCustomRoles([{ name: "Foreman", base: "Machine Operator" }]);
 const oMenu = menuCfg.resolveMenu("Machine Operator", hideStation);
-check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includes("station"), "custom-role override does not leak to base role");
+check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includes("station"), "legacy custom-role screen override does not affect the base profile");
 
 const foreman = renderToString(React.createElement(Sidebar, props("Foreman")));
 check(foreman.includes("Operator Station Mode"), "Sidebar renders for custom role");
@@ -1277,6 +1285,7 @@ check(gm.healthBucket(mkOrder({ status: "Completed", dueDate: "2026-09-10T09:00:
 const delOrder = mkOrder({ status: "Delivered", dueDate: "2026-09-20T09:00:00Z", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-09-17T10:00:00Z" } });
 check(gm.healthBucket(delOrder, nowFix) === "delivered", "health: delivered order buckets to delivered");
 check(gm.recentlyDelivered(delOrder, nowFix, 14) === true && gm.recentlyDelivered(mkOrder({ status: "Delivered", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-08-20T10:00:00Z" } }), nowFix, 14) === false, "health: recently-delivered window is 14 days");
+check(gm.HEALTH_COLUMNS.every((column) => column.id !== "delivered"), "gantt model: delivered orders have no visible health-board column");
 
 check(gm.scheduleCrossesDue(mkOrder({ steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === true, "health: a schedule that crosses the due date is flagged");
 check(gm.scheduleCrossesDue(mkOrder({ status: "Delivered", steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === false, "health: delivered orders are never flagged for a crossing plan");
@@ -1302,6 +1311,12 @@ check(
     && ganttViewSource.includes("assignLanes")
     && ganttViewSource.includes("orderSpan"),
   "gantt view: timeline is driven by the pure model (true-dated steps, auto-fit window, health buckets)",
+);
+check(
+  ganttApiSource.includes("dispatch.deliveredCount >= dispatch.totalBatches")
+    && ganttViewSource.includes("orders.filter((order) => !isDeliveredOrder(order))")
+    && !ganttViewSource.includes("recentlyDelivered"),
+  "gantt: delivered orders are excluded by both the API and the view, with no Recently Delivered bucket",
 );
 
 // ---- bundle 29b: grey "claimed elsewhere" card on the operator station ----
@@ -1453,6 +1468,14 @@ check(
     stationAlertSource.includes("announceNewJobs(freshRows)") &&
     stationAlertSource.includes("Notification.requestPermission()"),
   "station alerts: beep + browser notification are wired to the fresh-queue detection",
+);
+check(
+  stationAlertSource.includes('handleTouchAction(op.id, "Paused")')
+    && stationAlertSource.includes('t("PAUSE JOB")')
+    && operationActionSource.includes('requestedStatus === "Paused"')
+    && operationActionSource.includes('currentOp.status === "Paused"')
+    && operationsSource.includes('"Paused"'),
+  "station pause: running jobs can be paused, remain resumable in the queue, and free the machine",
 );
 
 // ---- bundle 36: stock check at order issue ----
@@ -2226,6 +2249,10 @@ check(
 );
 check(settingsViewSource.includes("toggleModuleEnabled") && settingsViewSource.includes("toggleRoleModule") && settingsViewSource.includes("toggleUserModule"), "settings: SettingsView provides toggle handlers for master/role/user");
 check(settingsViewSource.includes("Blocks") && settingsViewSource.includes("Optional modules"), "settings: SettingsView renders Optional modules button and icon");
+check(settingsViewSource.includes("Access preview") && settingsViewSource.includes("resolveProfileScreens(selectedRole)"), "settings: user role selection previews the matching screen profile");
+check(settingsViewSource.includes("actionsForRole(selectedRole)") && settingsViewSource.includes("actionLabel(action)"), "settings: user role selection previews inherited API actions");
+const settingsApiSource = fs.readFileSync("src/app/api/settings/route.ts", "utf8");
+check(settingsApiSource.includes("ensureRolesRegistered()") && settingsApiSource.includes("allRoles().includes(assignedRole)"), "settings API: user creation and role changes reject roles without a registered access profile");
 
 // ---- money redaction wave (24 checks) ----
 check(repMoney.isMoneyOnlyReport("Order Profitability") === true && repMoney.isMoneyOnlyReport("Production Summary") === false, "report money: isMoneyOnlyReport identifies Order Profitability");
@@ -2557,6 +2584,8 @@ const jcZero = jc.costOrder({ order: jcOrder(), materials: jcMats, operations: j
 check(jcZero.laborCents === 0 && jcZero.overheadCents === 0 && jcZero.costCents === 94000, "job costing: unset labor rate / overhead add $0 (machine time still counts)");
 const jcRunning = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 21, stepOrder: 1, operationName: "Route", machineId: 1, machineCode: "BEAM-01", status: "In Progress", estimatedMinutes: 30, actualMinutes: 0, startTime: "2026-10-01T10:00:00Z", endTime: null }], quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
 check(jcRunning.operationLines[0].actualMinutes === 120 && jcRunning.operationLines[0].basis === "elapsed" && jcRunning.machineCents === 12000, "job costing: a step running right now costs its elapsed time once it overruns the plan");
+const jcResumed = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 22, stepOrder: 1, operationName: "Route", machineId: 1, machineCode: "BEAM-01", status: "In Progress", estimatedMinutes: 30, actualMinutes: 30, startTime: "2026-10-01T10:00:00Z", endTime: null }], quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
+check(jcResumed.operationLines[0].actualMinutes === 150, "job costing: elapsed time after a resume is added to minutes recorded before the pause");
 const jcLoss = jc.costOrder({ order: jcOrder({ totalValue: "500.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
 check(jcLoss.profitCents < 0 && jcLoss.flags.includes("loss") && jcLoss.marginBps < 0, "job costing: an order below cost is flagged as losing money");
 const jcThin = jc.costOrder({ order: jcOrder({ totalValue: "1100.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
@@ -3557,6 +3586,60 @@ const parsedPart = cixParser.parseCix(testCix, "test_side.cix");
 check(parsedPart.length === 800 && parsedPart.width === 550 && parsedPart.thickness === 18, "Polyboard CIX: correctly parses LPX, LPY, LPZ");
 check(parsedPart.borings.length === 2, "Polyboard CIX: correctly parses Rover A BG boring macros");
 
+const multilineCix = `BEGIN ID CID3
+BEGIN MAINDATA
+LPX=800
+LPY=550
+LPZ=18
+CUSTSTR=$B$VARIABLE_PART
+MATERIAL="MFC White"
+END MAINDATA
+BEGIN MACRO
+NAME=BV
+PARAM,NAME=SIDE,VALUE=2
+PARAM,NAME=X,VALUE=21.5
+PARAM,NAME=Y,VALUE=37
+PARAM,NAME=Z,VALUE=0
+PARAM,NAME=DIA,VALUE=5
+PARAM,NAME=DP,VALUE=13
+END MACRO
+BEGIN MACRO
+NAME=ROUT
+PARAM,NAME=ID,VALUE="GROOVE"
+PARAM,NAME=TNM,VALUE="10MILL"
+PARAM,NAME=DIA,VALUE=8
+PARAM,NAME=DP,VALUE=8
+END MACRO
+BEGIN MACRO
+NAME=START_POINT
+PARAM,NAME=X,VALUE=20
+PARAM,NAME=Y,VALUE=0
+END MACRO
+BEGIN MACRO
+NAME=LINE_EP
+PARAM,NAME=XE,VALUE=20
+PARAM,NAME=YE,VALUE=550
+PARAM,NAME=ZE,VALUE=8
+END MACRO
+END ID`;
+const multilineParsed = cixParser.parseCix(multilineCix, "00000048.cix");
+check(
+  multilineParsed.length === 800 && multilineParsed.width === 550 && multilineParsed.thickness === 18,
+  "Polyboard CIX: reads LPX/LPY/LPZ from separate MAINDATA lines",
+);
+check(
+  multilineParsed.borings.length === 1 && multilineParsed.borings[0].side === 2 && multilineParsed.borings[0].x === 21.5,
+  "Polyboard CIX: reads a multiline BEGIN MACRO / NAME=BV drilling macro",
+);
+check(
+  multilineParsed.partName === "00000048" && !multilineParsed.partName.startsWith("$B$"),
+  "Polyboard CIX: ignores CUSTSTR=$B$ placeholders instead of treating them as part names",
+);
+check(
+  multilineParsed.routings.length === 1 && multilineParsed.routings[0].points.length === 2,
+  "Polyboard CIX: preserves route geometry across line-oriented macro blocks",
+);
+
 
 // ---- Polyboard import robustness -------------------------------------------
 // Real Polyboard cutting lists are user configured (Cutting list > Cutting list
@@ -3569,6 +3652,78 @@ compile("src/lib/samplePolyboardData.ts", "lib/samplePolyboardData.js");
 const polyboard = require("./compiled/lib/polyboard");
 const polyboardParts = require("./compiled/lib/polyboardParts");
 const sampleData = require("./compiled/lib/samplePolyboardData.js");
+
+const woodtekNoCixHeader = [
+  "Field 1", "Material", "Length", "Width", "Thickness", "Qty", "Part name",
+  "Edge 1", "Edge 2", "Edge 3", "Edge 4", "Project", "Cabinet", "CIX filename",
+].join(";");
+const woodtekNoCixRow = [
+  "x", "MFC White", "800", "550", "18", "1", "Left side",
+  "", "", "", "", "Villa 42", "Base 600", "",
+].join(";");
+const woodtekNoCix = polyboard.parsePolyboardCsv(`${woodtekNoCixHeader}\n${woodtekNoCixRow}`, { layout: "woodtek" });
+check(
+  woodtekNoCix.diagnostics.missingCixReferences.length === 1 &&
+    woodtekNoCix.diagnostics.missingCixReferences[0].line === 2 &&
+    !woodtekNoCix.parts[0].cixReferenceExplicit,
+  "Polyboard CSV: audits a blank fixed column-14 reference with its source row and part details",
+);
+const noRefCabinets = Array.from(woodtekNoCix.cabinetsMap.values());
+const sizeOnlyMatch = polyboard.matchCixToParts(noRefCabinets, [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  sizeOnlyMatch.matchedCount === 1 &&
+    sizeOnlyMatch.matchedByMethod.dimensions === 1 &&
+    noRefCabinets[0].parts[0].cixMatchMethod === "dimensions" &&
+    noRefCabinets[0].parts[0].cixData?.borings.length === 1,
+  "Polyboard CIX linking: uses exact part dimensions when column 14 and CUSTSTR contain no usable name",
+);
+const sameSizeParts = ["Left side", "Right side"].map((name, index) => ({
+  ...noRefCabinets[0].parts[0],
+  id: `ambiguous-${index}`,
+  name,
+  cixFilename: `Base_600_${name.replace(/ /g, "_")}.cix`,
+  cixReferenceExplicit: false,
+  cixData: undefined,
+  cixMatchMethod: undefined,
+  barcode: `Base_600_${name.replace(/ /g, "_")}`,
+}));
+const ambiguousMatch = polyboard.matchCixToParts([
+  { ...noRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+], [
+  { filename: "00000048.cix", content: multilineCix },
+  { filename: "00000049.cix", content: multilineCix },
+]);
+check(
+  ambiguousMatch.matchedCount === 0 && ambiguousMatch.ambiguousSizeMatches.length === 2,
+  "Polyboard CIX linking: refuses to guess when two same-size parts and programs are indistinguishable by dimensions",
+);
+const contestedSizeMatch = polyboard.matchCixToParts([
+  { ...noRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+], [{ filename: "00000048.cix", content: multilineCix }]);
+check(
+  contestedSizeMatch.matchedCount === 0 && contestedSizeMatch.ambiguousSizeMatches.length === 2,
+  "Polyboard CIX linking: does not give one size-only program to a different part merely because it is the only candidate",
+);
+const repeatedUnreferencedParts = [1, 2].map((index) => ({
+  ...noRefCabinets[0].parts[0],
+  id: `repeated-${index}`,
+  name: "Repeated shelf",
+  cixFilename: "Base_600_Repeated_shelf.cix",
+  cixReferenceExplicit: false,
+  cixData: undefined,
+  cixMatchMethod: undefined,
+  barcode: `Base_600_Repeated_shelf-${index}`,
+}));
+const repeatedSizeMatch = polyboard.matchCixToParts([
+  { ...noRefCabinets[0], name: "Base 600", parts: repeatedUnreferencedParts },
+], [{ filename: "00000048.cix", content: multilineCix }]);
+check(
+  repeatedSizeMatch.matchedCount === 2 &&
+    repeatedSizeMatch.links.every((link) => link.method === "dimensions" && link.filename === "00000048.cix"),
+  "Polyboard CIX linking: reuses one size-matched program for repeated identical, unreferenced parts",
+);
 
 // A) Title block + French/accented headers, CIX reference column, quantities
 const frCutList = [

@@ -29,7 +29,7 @@ import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
 import { dateToYmd, workBlockingEnabled, workLeaveBlock } from "@/lib/hrLeaveGate.server";
 
-const allowedStatuses = ["Pending", "Ready", "In Progress", "Completed", "Rejected/Rework"];
+const allowedStatuses = ["Pending", "Ready", "In Progress", "Paused", "Completed", "Rejected/Rework"];
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, error: authError } = await authorize("operations:update-status");
@@ -117,6 +117,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
         throw new WorkflowError("Unsupported operation status.", 400);
+      }
+      if (requestedStatus === "Paused" && currentOp.status !== "In Progress") {
+        throw new WorkflowError("Only an operation currently in progress can be paused.", 409);
       }
 
       // ---- Leave gate ------------------------------------------------------
@@ -214,7 +217,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
       if (
         body.machineId !== undefined &&
-        (currentOp.status === "In Progress" || currentOp.status === "Completed") &&
+        (currentOp.status === "In Progress" || currentOp.status === "Paused" || currentOp.status === "Completed") &&
         (body.machineId ? Number(body.machineId) : null) !== currentOp.machineId
       ) {
         throw new WorkflowError("The machine can no longer be changed once work has started.", 409);
@@ -227,7 +230,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (!chosenMachineId) {
           throw new WorkflowError("A machine id is required.", 400);
         }
-        if (currentOp.status === "In Progress" || currentOp.status === "Completed") {
+        if (currentOp.status === "In Progress" || currentOp.status === "Paused" || currentOp.status === "Completed") {
           throw new WorkflowError("The machine can no longer be changed once work has started.", 409);
         }
         const [targetMachine] = await tx.select().from(machines).where(eq(machines.id, chosenMachineId));
@@ -457,7 +460,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
 
-      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      const transitionTime = new Date();
+      const updateData: Record<string, unknown> = { updatedAt: transitionTime };
       if (requestedStatus !== undefined) updateData.status = requestedStatus;
       if (body.machineId !== undefined || requestedCandidateMachineIds || firstStartClaim) {
         updateData.machineId = targetMachineId;
@@ -473,7 +477,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (body.rejectReason !== undefined) updateData.rejectReason = String(body.rejectReason).trim() || null;
 
       if (requestedStatus === "In Progress") {
-        updateData.startTime = currentOp.status === "Completed" ? new Date() : (currentOp.startTime || new Date());
+        updateData.startTime = currentOp.status === "Completed" || currentOp.status === "Paused"
+          ? transitionTime
+          : (currentOp.startTime || transitionTime);
         updateData.endTime = null;
         if (currentOp.status === "Completed") {
           updateData.actualMinutes = 0;
@@ -481,7 +487,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           updateData.scheduledEnd = null;
         }
       }
-      if (requestedStatus === "Completed") updateData.endTime = new Date();
+      if (requestedStatus === "Paused") {
+        const startedAt = currentOp.startTime ? new Date(currentOp.startTime).getTime() : NaN;
+        const elapsedMinutes = Number.isFinite(startedAt)
+          ? Math.max(0, Math.round((transitionTime.getTime() - startedAt) / 60000))
+          : 0;
+        updateData.actualMinutes = Math.max(0, Number(currentOp.actualMinutes) || 0) + elapsedMinutes;
+        updateData.endTime = null;
+      }
+      if (requestedStatus === "Completed") {
+        updateData.endTime = transitionTime;
+        if (body.actualMinutes === undefined && currentOp.startTime) {
+          const startedAt = new Date(currentOp.startTime).getTime();
+          if (Number.isFinite(startedAt)) {
+            const elapsedMinutes = Math.max(0, Math.round((transitionTime.getTime() - startedAt) / 60000));
+            updateData.actualMinutes = Math.max(0, Number(currentOp.actualMinutes) || 0) + elapsedMinutes;
+          }
+        }
+      }
 
       // Compare-and-set makes the first candidate Start the only winner. Two
       // stations may read the same Ready card, but only one can still match the
@@ -492,7 +515,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const compareWaitingSchedule = !firstStartClaim
         && candidateStatusIsClaimable(currentOp.status)
         && (body.scheduledStart !== undefined || body.scheduledEnd !== undefined);
-      const claimWhere = firstStartClaim || compareWaitingAssignment || compareWaitingSchedule
+      const comparePauseTransition = requestedStatus === "Paused"
+        || (requestedStatus === "In Progress" && currentOp.status === "Paused");
+      const claimWhere = firstStartClaim || compareWaitingAssignment || compareWaitingSchedule || comparePauseTransition
         ? and(
             eq(orderOperations.id, operationId),
             eq(orderOperations.status, currentOp.status),
@@ -512,7 +537,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             ? "Another station claimed this operation first. Refresh the station queue."
             : compareWaitingSchedule
               ? "This waiting operation changed while its Dispatch slot was being saved. Refresh and try again."
-              : "This waiting operation changed while stations were being saved. Refresh and try again.",
+              : comparePauseTransition
+                ? "This operation changed while it was being paused or resumed. Refresh the station queue and try again."
+                : "This waiting operation changed while stations were being saved. Refresh and try again.",
           409,
         );
       }

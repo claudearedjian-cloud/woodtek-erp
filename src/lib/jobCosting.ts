@@ -268,7 +268,7 @@ export function minutesCostCents(minutes: number, centsPerHour: number): number 
 /**
  * Minutes a single routed step has really cost, and where the number came from.
  *  • recorded  — actual_minutes written by the floor (or start→end of a finished step)
- *  • elapsed   — a step running right now: time since it started
+ *  • elapsed   — a step running right now: saved time before pauses + this run
  *  • planned   — a FINISHED step nobody timed: fall back to the estimate (flagged)
  * A step that has not started has 0 actual minutes.
  */
@@ -285,7 +285,7 @@ export function operationActualMinutes(op: CostOperationInput, now: Date): { min
   }
   if (op.status === "In Progress" && start && start <= now) {
     const elapsed = Math.round((now.getTime() - start.getTime()) / 60000);
-    return { minutes: Math.max(recorded, elapsed), basis: "elapsed" };
+    return { minutes: recorded + Math.max(0, elapsed), basis: "elapsed" };
   }
   return { minutes: recorded, basis: "recorded" };
 }

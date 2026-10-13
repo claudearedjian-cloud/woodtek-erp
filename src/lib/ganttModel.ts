@@ -83,7 +83,6 @@ export const HEALTH_COLUMNS: { id: HealthBucket; title: string }[] = [
   { id: "at-risk", title: "At Risk" },
   { id: "overdue", title: "Overdue" },
   { id: "ready", title: "Ready for Delivery" },
-  { id: "delivered", title: "Recently Delivered" },
 ];
 
 /** Orders still inside the production/delivery loop. */

@@ -207,7 +207,7 @@ export const orderOperations = pgTable("order_operations", {
   operationName: text("operation_name").notNull(), // e.g. "Automated Panel Cutting"
   estimatedMinutes: integer("estimated_minutes").notNull().default(45),
   actualMinutes: integer("actual_minutes").notNull().default(0),
-  status: text("status").notNull().default("Pending"), // Pending, Ready, In Progress, Completed, Rejected/Rework
+  status: text("status").notNull().default("Pending"), // Pending, Ready, In Progress, Paused, Completed, Rejected/Rework
   operatorId: integer("operator_id").references(() => users.id),
   startTime: timestamp("start_time"),
   endTime: timestamp("end_time"),

@@ -10,6 +10,7 @@ import { useT } from "@/lib/langContext";
 import {
   Tablet,
   Play,
+  Pause,
   CheckCircle2,
   AlertTriangle,
   Clock,
@@ -58,18 +59,27 @@ const DOWNTIME_REASONS = [
   "Other",
 ];
 
-/** Live elapsed-time counter for an operation that is "In Progress". */
-function ElapsedTimer({ startTime }: { startTime: string | null | undefined }) {
+/** Live timer for the current run plus whole minutes saved before a pause. */
+function ElapsedTimer({
+  startTime,
+  accumulatedMinutes = 0,
+  paused = false,
+}: {
+  startTime: string | null | undefined;
+  accumulatedMinutes?: number | null;
+  paused?: boolean;
+}) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!startTime) return;
+    if (!startTime || paused) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [startTime]);
+  }, [startTime, paused]);
 
-  if (!startTime) return <span className="text-slate-500">—</span>;
-  const elapsedMs = Math.max(0, now - new Date(startTime).getTime());
+  const accumulatedMs = Math.max(0, Number(accumulatedMinutes) || 0) * 60000;
+  const activeMs = startTime && !paused ? Math.max(0, now - new Date(startTime).getTime()) : 0;
+  const elapsedMs = accumulatedMs + activeMs;
   const pad = (n: number) => String(n).padStart(2, "0");
   const h = Math.floor(elapsedMs / 3600000);
   const m = Math.floor((elapsedMs % 3600000) / 60000);
@@ -585,6 +595,7 @@ export default function OperatorStationView({
     setBusyOperationId(op0.id);
     setActionError("");
     try {
+      const resumingPausedJob = op0.status === "Paused";
       if (op0.status !== "In Progress") {
         const res = await fetch(`/api/operations/${op0.id}`, {
           method: "PATCH",
@@ -602,7 +613,10 @@ export default function OperatorStationView({
           return;
         }
       }
-      if (!(await advanceMaterial(matId, targetStage, false))) {
+      const materialAlreadyAtTarget = (op0.materials ?? []).some(
+        (material: any) => material.id === matId && material.stage === targetStage,
+      );
+      if (!(resumingPausedJob && materialAlreadyAtTarget) && !(await advanceMaterial(matId, targetStage, false))) {
         await fetchMachineQueue({ force: true });
         return;
       }
@@ -995,6 +1009,7 @@ export default function OperatorStationView({
           <div className="space-y-4">
             {operations.map((op: any) => {
               const isRunning = op.status === "In Progress";
+              const isPaused = op.status === "Paused";
               const isRejecting = rejectingId === op.id;
               const isConfirmingFinish = confirmingFinishId === op.id;
               const lockedByMate = jobLockedByOther(op, currentUser?.id, operatorBasedViewer);
@@ -1006,7 +1021,9 @@ export default function OperatorStationView({
                   className={`p-6 rounded-3xl border-2 transition shadow-xl ${scannedOpId === op.id ? "ring-4 ring-sky-400 " : ""}${
                     isRunning
                       ? "bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/30 border-amber-500 shadow-amber-950/30"
-                      : "bg-slate-900/95 border-slate-800 hover:border-slate-700"
+                      : isPaused
+                        ? "bg-gradient-to-r from-slate-900 via-slate-900 to-violet-950/30 border-violet-500/60 shadow-violet-950/20"
+                        : "bg-slate-900/95 border-slate-800 hover:border-slate-700"
                   }`}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -1014,9 +1031,13 @@ export default function OperatorStationView({
                     <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex flex-wrap items-center gap-2.5">
                         <span className={`text-xs font-extrabold px-3 py-1 rounded-xl uppercase tracking-wider ${
-                          isRunning ? "bg-amber-500 text-slate-950 animate-pulse font-black" : "bg-blue-600 text-white"
+                          isRunning
+                            ? "bg-amber-500 text-slate-950 animate-pulse font-black"
+                            : isPaused
+                              ? "bg-violet-500/20 text-violet-200 border border-violet-400/40"
+                              : "bg-blue-600 text-white"
                         }`}>
-                          {op.status}
+                          {t(op.status)}
                         </span>
                         <span className="font-mono text-lg font-black text-amber-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
                           {op.orderNumber}
@@ -1024,9 +1045,10 @@ export default function OperatorStationView({
 <span className="text-xs text-slate-400 font-bold bg-slate-800 px-2.5 py-1 rounded-xl">
                           {op.productionItem ? `Pass ${op.productionItem.routePosition}/${op.productionItem.routeLength}` : `Step #${op.stepOrder}`}
                         </span>
-                        {isRunning && (
-                          <span className="flex items-center gap-1.5 text-xs font-black bg-slate-950 border border-amber-500/40 px-2.5 py-1 rounded-xl text-amber-300">
-                            <Timer className="w-4 h-4" /> <ElapsedTimer startTime={op.startTime} />
+                        {(isRunning || isPaused) && (
+                          <span className={`flex items-center gap-1.5 text-xs font-black bg-slate-950 px-2.5 py-1 rounded-xl ${isPaused ? "border border-violet-500/40 text-violet-200" : "border border-amber-500/40 text-amber-300"}`}>
+                            <Timer className="w-4 h-4" />
+                            <ElapsedTimer startTime={op.startTime} accumulatedMinutes={op.actualMinutes} paused={isPaused} />
                           </span>
                         )}
                       </div>
@@ -1233,7 +1255,7 @@ export default function OperatorStationView({
                             className="flex items-center justify-center gap-2.5 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-8 py-5 rounded-2xl text-base shadow-xl shadow-amber-600/30 transition uppercase tracking-wider w-full sm:w-auto disabled:opacity-40 disabled:cursor-wait"
                           >
                             <Play className="w-6 h-6 fill-slate-950 stroke-[2.5]" />
-                            <span>{t(op.productionItem ? "START MATERIAL JOB" : "START MACHINING")}</span>
+                            <span>{t(isPaused ? "RESUME JOB" : op.productionItem ? "START MATERIAL JOB" : "START MACHINING")}</span>
                           </button>
                         ) : (
                           <button
@@ -1255,6 +1277,17 @@ export default function OperatorStationView({
                         </div>
                       )}
 
+                      {isRunning && !isRejecting && (
+                        <button
+                          onClick={() => handleTouchAction(op.id, "Paused")}
+                          disabled={busyOperationId !== null || lockedByMate}
+                          className="flex items-center justify-center gap-2 rounded-2xl border-2 border-violet-400/50 bg-violet-500/10 px-5 py-4 text-sm font-black uppercase tracking-wider text-violet-200 transition hover:bg-violet-500/20 active:scale-95 disabled:cursor-wait disabled:opacity-40"
+                          title="Pause this job and free the machine for another order"
+                        >
+                          <Pause className="h-5 w-5 fill-current" />
+                          <span>{t("PAUSE JOB")}</span>
+                        </button>
+                      )}
                       {lockedByMate && (
                         <div className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-300">
                           Run by {op.operatorName || "another operator"} — view only
@@ -1358,7 +1391,7 @@ export default function OperatorStationView({
                                         className="flex flex-1 items-center justify-center gap-2 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700 active:scale-95 text-slate-950 font-black px-6 py-4 rounded-xl text-base shadow-lg shadow-amber-600/30 transition uppercase tracking-wider disabled:opacity-40 disabled:cursor-wait"
                                         title="Start THIS material on this machine — opens the machine job if it is not running yet"
                                       >
-                                        <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" /> {t("START")}
+                                        <Play className="w-5 h-5 fill-slate-950 stroke-[2.5]" /> {t(isPaused ? "RESUME" : "START")}
                                       </button>
                                     )}
                                     {atThisStep && isRunning && !lockedByMate && (

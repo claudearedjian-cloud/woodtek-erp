@@ -200,12 +200,50 @@ export async function POST(req: NextRequest) {
       if (notInCsv.length > 0) {
         warnings.push(
           `${notInCsv.length} CIX file(s) are not named in column 14 of any imported cutting-list row: ${list(notInCsv)}. ` +
-            "Check that the cutting list and the CIX files were exported from the same Polyboard project at the same time (no parts filtered out of the list).",
+            "The parser now includes their CIX header size; check for a missing reference or a part-size mismatch.",
         );
       }
       if (otherUnlinked.length > 0) {
         warnings.push(`Not linked to any part: ${list(otherUnlinked)}`);
       }
+    }
+    if (cixMatch && cixMatch.matchedByMethod.dimensions > 0) {
+      const sizeLinks = cixMatch.links.filter((link) => link.method === "dimensions");
+      const describe = (link: (typeof sizeLinks)[number]) => {
+        const size = link.length > 0 && link.width > 0
+          ? ` (${Math.round(link.length)}×${Math.round(link.width)}${link.thickness > 0 ? `×${Math.round(link.thickness)}` : ""})`
+          : "";
+        return `${link.filename} → ${link.cabinetName} / ${link.partName}${size}`;
+      };
+      warnings.push(
+        `${sizeLinks.length} CIX link(s) were made by dimensions only (no matching file/name reference); verify the CNC operations: ` +
+          `${sizeLinks.slice(0, 8).map(describe).join(", ")}${sizeLinks.length > 8 ? "…" : ""}.`,
+      );
+    }
+    if (cixMatch && cixMatch.ambiguousSizeMatches.length > 0) {
+      const ambiguous = cixMatch.ambiguousSizeMatches;
+      const describe = (match: (typeof ambiguous)[number]) => {
+        const size = match.length > 0 && match.width > 0
+          ? ` ${Math.round(match.length)}×${Math.round(match.width)}${match.thickness > 0 ? `×${Math.round(match.thickness)}` : ""}`
+          : "";
+        return `${match.cabinetName} / ${match.partName}${size}: ${match.candidateFiles.join(" / ")}`;
+      };
+      warnings.push(
+        `${ambiguous.length} unlinked part(s) have non-unique size matches across files/parts, so no automatic choice was made: ` +
+          `${ambiguous.slice(0, 8).map(describe).join(", ")}${ambiguous.length > 8 ? "…" : ""}.`,
+      );
+    }
+    if (cixMatch && cixMatch.unlinkedParts.length > 0) {
+      const unlinked = cixMatch.unlinkedParts;
+      const describe = (part: (typeof unlinked)[number]) => {
+        const size = part.length > 0 && part.width > 0
+          ? ` (${Math.round(part.length)}×${Math.round(part.width)}${part.thickness > 0 ? `×${Math.round(part.thickness)}` : ""})`
+          : "";
+        return `${part.cabinetName} / ${part.partName}${size}`;
+      };
+      warnings.push(
+        `${unlinked.length} part(s) still have no CIX data: ${unlinked.slice(0, 8).map(describe).join(", ")}${unlinked.length > 8 ? "…" : ""}.`,
+      );
     }
     if (cixMatch && validCixList.length > 0 && cixMatch.missingCix.length > 0) {
       const missing = cixMatch.missingCix;

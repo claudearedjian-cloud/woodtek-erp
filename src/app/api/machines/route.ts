@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const summaryOnly = new URL(request.url).searchParams.get("summary") === "true";
     const [scopedMachines, scopedOps] = await Promise.all([
       listMachinesForUser(user),
-      listOperationsForUser(user, { statuses: ["Ready", "In Progress", "Pending"] }),
+      listOperationsForUser(user, { statuses: ["Ready", "In Progress", "Pending", "Paused"] }),
     ]);
 
     const crews = readMachineOperators();
