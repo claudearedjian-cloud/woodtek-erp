@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authorize, authorizeModule } from "@/lib/auth";
 import { MONEY_MODULE } from "@/lib/optionalModules";
+import { canSeeCustomerForUser } from "@/lib/dataAccess";
 import {
   loadMergedLedger,
   readLedgerFile,
@@ -25,7 +26,7 @@ import {
 // ============================================================================
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("customers:read");
+  const { user, error: authError } = await authorize("customers:read");
   if (authError) return authError;
   // The ledger is money: it belongs to the Invoicing & Money module, so the
   // grant - not the role - decides whether it can be read at all.
@@ -33,6 +34,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   if (moneyError) return moneyError;
   try {
     const { id } = await context.params;
+    // A client's money follows the client book scope: a rep cannot read the
+    // ledger of an account that belongs to somebody else.
+    if (user && !(await canSeeCustomerForUser(user, Number(id)))) {
+      return NextResponse.json(
+        { error: "This client is not in your client book — it belongs to another sales rep." },
+        { status: 403 },
+      );
+    }
     const merged = await loadMergedLedger(Number(id));
     return NextResponse.json(merged);
   } catch (error: any) {
@@ -41,7 +50,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("customers:write");
+  const { user, error: authError } = await authorize("customers:write");
   if (authError) return authError;
   // The ledger is money: adding or removing an entry needs the Invoicing &
   // Money grant, not just customers:write.
@@ -50,6 +59,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     const customerId = Number(id);
+    if (user && !(await canSeeCustomerForUser(user, customerId))) {
+      return NextResponse.json(
+        { error: "This client is not in your client book — it belongs to another sales rep." },
+        { status: 403 },
+      );
+    }
     const body = await request.json();
     const type = body.type === "payment" ? "payment" : "invoice";
     const amount = Math.round(Math.abs(Number(body.amount)) * 100) / 100;
@@ -80,7 +95,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { error: authError } = await authorize("customers:write");
+  const { user, error: authError } = await authorize("customers:write");
   if (authError) return authError;
   // The ledger is money: adding or removing an entry needs the Invoicing &
   // Money grant, not just customers:write.
@@ -89,6 +104,12 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const { id } = await context.params;
     const customerId = Number(id);
+    if (user && !(await canSeeCustomerForUser(user, customerId))) {
+      return NextResponse.json(
+        { error: "This client is not in your client book — it belongs to another sales rep." },
+        { status: 403 },
+      );
+    }
     const rawId = new URL(request.url).searchParams.get("entryId");
     const entryId = Number(rawId);
     if (!entryId || !Number.isFinite(entryId)) {

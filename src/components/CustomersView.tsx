@@ -5,6 +5,7 @@ import {
   Users,
   Plus,
   Mail,
+  UserCheck,
   Phone,
   MapPin,
   Trash2,
@@ -24,6 +25,12 @@ import { currentAppearance } from "@/lib/appearance";
 import { drawBrandBand, drawContactFooter } from "@/lib/brandPdf";
 import autoTable from "jspdf-autotable";
 import { buildStatement } from "@/lib/clientStatement";
+import {
+  SHARED_CLIENT_LABEL,
+  assignedRepLabel,
+  isManagerViewer,
+  salesRepOptions,
+} from "@/lib/clientOwnership";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
 interface CustomersViewProps {
@@ -31,6 +38,10 @@ interface CustomersViewProps {
   loading: boolean;
   onRefresh: () => void;
   onSelectOrder: (orderId: number) => void;
+  /** Signed-in user — only a Manager may hand a client to a sales rep. */
+  currentUser?: any;
+  /** Staff list for the "Assigned sales rep" picker. */
+  users?: any[];
 }
 
 function statusChip(s: string) {
@@ -48,7 +59,14 @@ export default function CustomersView({
   loading,
   onRefresh,
   onSelectOrder,
+  currentUser,
+  users = [],
 }: CustomersViewProps) {
+  // Assignment is a Manager decision: sales reps cannot take a colleague's
+  // client. The rule itself lives in src/lib/clientOwnership.ts (server-side
+  // enforced) — this only decides whether the picker is shown.
+  const canAssignRep = isManagerViewer(currentUser);
+  const repOptions = salesRepOptions(users);
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
@@ -56,6 +74,7 @@ export default function CustomersView({
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [creditLimit] = useState("25000.00");
+  const [newAssignedSalesId, setNewAssignedSalesId] = useState("");
 
   // ---- search + filter + view mode ----------------------------------------
   const [search, setSearch] = useState("");
@@ -242,6 +261,7 @@ export default function CustomersView({
       creditLimit: String(detail.creditLimit ?? ""),
       currentBalance: String(detail.currentBalance ?? ""),
       notes: detail.notes ?? "",
+      assignedSalesId: detail.assignedSalesId != null ? String(detail.assignedSalesId) : "",
     });
     setEditing(true);
     setDetailMsg("");
@@ -256,7 +276,7 @@ export default function CustomersView({
       const res = await fetch(`/api/customers/${detail.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(canAssignRep ? editForm : { ...editForm, assignedSalesId: undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update client");
@@ -295,7 +315,15 @@ export default function CustomersView({
       const res = await fetch("/api/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, company, email, phone, address, creditLimit }),
+        body: JSON.stringify({
+          name,
+          company,
+          email,
+          phone,
+          address,
+          creditLimit,
+          ...(canAssignRep && newAssignedSalesId ? { assignedSalesId: Number(newAssignedSalesId) } : {}),
+        }),
       });
       if (!res.ok) throw new Error("Failed to register customer");
       setShowModal(false);
@@ -304,6 +332,7 @@ export default function CustomersView({
       setEmail("");
       setPhone("");
       setAddress("");
+      setNewAssignedSalesId("");
       onRefresh();
     } catch (err) {
       console.error("Create customer error:", err);
@@ -561,6 +590,9 @@ export default function CustomersView({
                 <div className="text-[10px] text-amber-400 font-extrabold uppercase tracking-wider mb-0.5">Trade Client ID #{detail.id}</div>
                 <h3 className="text-lg font-black text-white truncate">{detail.company}</h3>
                 <p className="text-xs text-slate-400 truncate">{detail.name}</p>
+                <span className="mt-1 inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] font-bold text-slate-300">
+                  <UserCheck className="h-3 w-3 text-amber-400" /> {assignedRepLabel(detail, users)}
+                </span>
               </div>
               <button onClick={() => setDetail(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
                 <X className="w-5 h-5" />
@@ -630,6 +662,22 @@ export default function CustomersView({
                       <label className="block text-xs font-bold text-slate-300 mb-1">Address</label>
                       <input value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
                     </div>
+                    {canAssignRep && (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-300 mb-1">Assigned sales rep</label>
+                        <select
+                          value={editForm.assignedSalesId ?? ""}
+                          onChange={e => setEditForm({ ...editForm, assignedSalesId: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                        >
+                          <option value="">{SHARED_CLIENT_LABEL} — every sales rep can use it</option>
+                          {repOptions.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                        </select>
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          A client handed to one rep disappears from every other rep&apos;s client list and New Order window.
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <label className="block text-xs font-bold text-slate-300 mb-1">Notes</label>
                       <textarea rows={3} value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
@@ -648,6 +696,7 @@ export default function CustomersView({
                       <InfoRow icon={DollarSign} label="Total WIP Spend" value={detail.totalSpend != null ? `$${Number(detail.totalSpend).toLocaleString()}` : "restricted"} mono />
                       <InfoRow icon={Wallet} label="Credit Limit" value={detail.creditLimit != null ? `$${Number(detail.creditLimit).toLocaleString()}` : "—"} mono />
                       <InfoRow icon={Wallet} label="Current Balance" value={detail.currentBalance != null ? `$${Number(detail.currentBalance).toLocaleString()}` : "—"} mono />
+                      <InfoRow icon={UserCheck} label="Assigned sales rep" value={assignedRepLabel(detail, users)} />
                     </div>
                     {detail.notes && (
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
@@ -855,6 +904,19 @@ export default function CustomersView({
                 <label className="block text-xs font-bold text-slate-300 mb-1">Address</label>
                 <input type="text" placeholder="Hamngatan 14, Stockholm" value={address} onChange={e => setAddress(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white" />
               </div>
+              {canAssignRep && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Assigned sales rep</label>
+                  <select
+                    value={newAssignedSalesId}
+                    onChange={e => setNewAssignedSalesId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    <option value="">{SHARED_CLIENT_LABEL} — every sales rep can use it</option>
+                    {repOptions.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                  </select>
+                </div>
+              )}
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl">Cancel</button>
                 <button type="submit" className="px-5 py-2 bg-amber-600 text-slate-950 text-xs font-black rounded-xl shadow">Create Client</button>

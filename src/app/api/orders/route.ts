@@ -7,6 +7,7 @@ import { setBomStatus } from "@/lib/bomStatus.server";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { listOrdersForUser } from "@/lib/dataAccess";
+import { canUseClient, isSalesCoordinatorViewer } from "@/lib/clientOwnership";
 import { nextOrderNumber } from "@/lib/orderNumbers.server";
 import {
   productionStageKey,
@@ -282,9 +283,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Sales Coordinator creating an order: ensure the customer belongs to them.
-    // Manager can create orders for any customer.
-    if (user.role === "Sales Coordinator") {
+    // Sales Coordinator creating an order: the client must be theirs OR sit in
+    // the shared pool nobody owns yet (one rule: src/lib/clientOwnership.ts —
+    // the same predicate backs the client book scope). Manager: any customer.
+    if (isSalesCoordinatorViewer(user)) {
       const [customer] = await db
         .select({ id: customers.id, assignedSalesId: customers.assignedSalesId })
         .from(customers)
@@ -292,7 +294,7 @@ export async function POST(request: Request) {
       if (!customer) {
         return NextResponse.json({ error: "Customer not found." }, { status: 404 });
       }
-      if (customer.assignedSalesId && customer.assignedSalesId !== user.id) {
+      if (!canUseClient(user, customer)) {
         return NextResponse.json(
           { error: "This customer is assigned to another sales rep." },
           { status: 403 },

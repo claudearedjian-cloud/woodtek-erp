@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { customers, orders } from "@/db/schema";
+import { customers, orders, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
+import { canSeeCustomerForUser } from "@/lib/dataAccess";
+import { canOwnClients, isManagerViewer } from "@/lib/clientOwnership";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 
@@ -14,6 +16,15 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const { id } = await context.params;
     const [customer] = await db.select().from(customers).where(eq(customers.id, Number(id)));
     if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+
+    // Same record-level rule as the client list: opening a client file by id
+    // must not be a way around the client book scope.
+    if (user && !(await canSeeCustomerForUser(user, customer.id))) {
+      return NextResponse.json(
+        { error: "This client is not in your client book — it belongs to another sales rep." },
+        { status: 403 },
+      );
+    }
 
     const customerOrders = await db.select().from(orders).where(eq(orders.customerId, customer.id)).orderBy(desc(orders.createdAt));
 
@@ -43,6 +54,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const { id } = await context.params;
     const body = await request.json();
 
+    const [existing] = await db.select().from(customers).where(eq(customers.id, Number(id)));
+    if (!existing) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+    // Editing a client file follows the same scope as reading it.
+    if (user && !(await canSeeCustomerForUser(user, existing.id))) {
+      return NextResponse.json(
+        { error: "This client is not in your client book — it belongs to another sales rep." },
+        { status: 403 },
+      );
+    }
+
     // Writing money is a grant, not a role: without Invoicing & Money a user can
     // edit a client's contact details but never its limit or balance.
     if ((body.creditLimit !== undefined || body.currentBalance !== undefined)
@@ -62,6 +83,40 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.creditLimit !== undefined) updateFields.creditLimit = String(body.creditLimit);
     if (body.currentBalance !== undefined) updateFields.currentBalance = String(body.currentBalance);
     if (body.notes !== undefined) updateFields.notes = body.notes;
+
+    // Who owns the client relationship — Managers hand the account to a sales
+    // rep (or release it back to the shared pool). A Sales Coordinator cannot
+    // take a colleague's client with a hand-crafted request: the field is
+    // refused outright, not silently ignored.
+    if (body.assignedSalesId !== undefined) {
+      if (!isManagerViewer(user)) {
+        return NextResponse.json(
+          { error: "Only a Manager can change the assigned sales rep of a client." },
+          { status: 403 },
+        );
+      }
+      const rawOwner = body.assignedSalesId;
+      if (rawOwner === null || rawOwner === "" || rawOwner === undefined) {
+        updateFields.assignedSalesId = null;
+      } else {
+        const ownerId = Number(rawOwner);
+        if (!Number.isInteger(ownerId) || ownerId <= 0) {
+          return NextResponse.json({ error: "Invalid sales rep." }, { status: 400 });
+        }
+        const [owner] = await db
+          .select({ id: users.id, role: users.role })
+          .from(users)
+          .where(eq(users.id, ownerId));
+        if (!owner) return NextResponse.json({ error: "That user no longer exists." }, { status: 404 });
+        if (!canOwnClients(owner.role)) {
+          return NextResponse.json(
+            { error: "Only a Manager or a Sales Coordinator can own a client file." },
+            { status: 400 },
+          );
+        }
+        updateFields.assignedSalesId = ownerId;
+      }
+    }
 
     const [updated] = await db.update(customers).set(updateFields).where(eq(customers.id, Number(id))).returning();
     return NextResponse.json(updated);

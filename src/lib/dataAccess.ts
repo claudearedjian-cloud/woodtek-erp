@@ -37,6 +37,7 @@ import {
 import { CANDIDATE_CLAIMABLE_STATUSES, isWithinClaimedElsewhereGrace } from "@/lib/operationMachineCandidates";
 import type { SessionUser } from "@/lib/auth";
 import { baseRoleOf } from "@/lib/permissions";
+import { canUseClient, isSalesCoordinatorViewer } from "@/lib/clientOwnership";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 
@@ -201,14 +202,39 @@ async function allowedOrderIdsSubquery(user: SessionUser) {
 
 async function allowedCustomerIdsSubquery(user: SessionUser) {
   if (isManager(user)) return undefined;
-  if (user.role === "Sales Coordinator") {
+  if (isSalesCoordinatorViewer(user)) {
+    // Sales works the clients assigned to them AND the shared pool of clients
+    // nobody owns yet (assigned_sales_id IS NULL — every account created
+    // before assignment existed). A client handed to ANOTHER rep stays private
+    // to that rep. Rule book: src/lib/clientOwnership.ts (canUseClient).
     return db
       .select({ id: customers.id })
       .from(customers)
-      .where(eq(customers.assignedSalesId, user.id));
+      .where(
+        or(
+          eq(customers.assignedSalesId, user.id),
+          isNull(customers.assignedSalesId),
+        ),
+      );
   }
   // Operators, QA, Technicians: no customer access
   return db.select({ id: customers.id }).from(customers).where(eq(customers.id, -1));
+}
+
+/**
+ * Single-record check for the routes that take a client id straight from the
+ * URL (client file, ledger). Uses the same rule as the list scope above —
+ * canUseClient() is the one predicate both read from.
+ */
+export async function canSeeCustomerForUser(user: SessionUser, customerId: number): Promise<boolean> {
+  const id = Number(customerId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const [row] = await db
+    .select({ id: customers.id, assignedSalesId: customers.assignedSalesId })
+    .from(customers)
+    .where(eq(customers.id, id));
+  if (!row) return false;
+  return canUseClient(user, row);
 }
 
 async function allowedMachineIdsSubquery(user: SessionUser) {

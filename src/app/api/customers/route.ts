@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { customers, orders } from "@/db/schema";
+import { customers, orders, users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { listCustomersForUser, isManager as userIsManager } from "@/lib/dataAccess";
+import { canOwnClients, isSalesCoordinatorViewer } from "@/lib/clientOwnership";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 
@@ -62,11 +64,27 @@ export async function POST(request: Request) {
       ? creditLimit
       : DEFAULT_CREDIT_LIMIT;
 
-    // Sales users creating a customer: auto-assign to themselves.
-    // Managers can optionally pass assignedSalesId in the body.
-    const assignedSalesId = user.role === "Sales Coordinator"
-      ? user.id
-      : (body.assignedSalesId ? Number(body.assignedSalesId) : null);
+    // Sales users creating a customer: auto-assign to themselves (they own the
+    // relationship they just opened). A Manager can hand the new account to a
+    // rep straight away, or leave it unassigned — the shared pool every sales
+    // coordinator can work (see src/lib/clientOwnership.ts).
+    let assignedSalesId: number | null = null;
+    if (isSalesCoordinatorViewer(user)) {
+      assignedSalesId = user.id;
+    } else if (body.assignedSalesId !== undefined && body.assignedSalesId !== null && body.assignedSalesId !== "") {
+      const ownerId = Number(body.assignedSalesId);
+      const [owner] = Number.isInteger(ownerId) && ownerId > 0
+        ? await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, ownerId))
+        : [];
+      if (!owner) return NextResponse.json({ error: "That sales rep no longer exists." }, { status: 400 });
+      if (!canOwnClients(owner.role)) {
+        return NextResponse.json(
+          { error: "Only a Manager or a Sales Coordinator can own a client file." },
+          { status: 400 },
+        );
+      }
+      assignedSalesId = ownerId;
+    }
 
     const [newCustomer] = await db.insert(customers).values({
       name,
