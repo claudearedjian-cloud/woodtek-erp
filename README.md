@@ -306,6 +306,27 @@ build-installer.bat
   - The installer writes your selection to `data\installed-edition.json`. Any add-on **not** ticked during setup is **hard-locked** on that PC (hidden from the sidebar, blocked with 403 on all API routes even for Manager, and locked as `NOT INSTALLED` in Settings → System Settings → Optional modules). To add or remove modules later, simply re-run `WoodTek-ERP-Setup.exe` (or run `powershell -ExecutionPolicy Bypass -File installer\configure-edition.ps1 -Addons "invoicing,cmms"`).
   - Existing factory PCs without `data\installed-edition.json` default to the **Full Edition** (all 4 add-ons installed).
 
+## Older Windows servers: Windows 8.1 / Server 2012 R2 (since 2026-10-13)
+- Node.js **23 and newer refuse to start** on Windows 8.1 / Server 2012 R2:
+  `Node.js is only supported on Windows 10, Windows Server 2016, or higher`.
+  The turnkey installer ships the build PC's own `node.exe`, so on such a server
+  the old install stopped at the database bootstrap with only that warning on
+  screen (and `start-woodtek-prod.bat` sat at `Press any key`).
+- Now `installer\install-engine.ps1` **probes the runtime** (`node --version`)
+  before using it and, on those Windows versions, installs **Node.js 22 LTS** —
+  the newest line that officially supports them and still satisfies the app
+  (Next.js needs >= 20.9; CI runs Node 22). The zip travels inside the payload
+  as `prereqs\node-win-x64.zip` when it is present, otherwise it is downloaded
+  from nodejs.org.
+- Only if that is impossible does it fall back to Node.js' own documented
+  workaround, `NODE_SKIP_PLATFORM_CHECK=1`; the start scripts
+  (`start-woodtek-prod.bat`, `start-woodtek-prod-silent.bat`),
+  `installer\apply-update.ps1` and `installer\configure-edition.ps1` set that
+  flag on those Windows versions as well, so a hand-copied `runtime\node`
+  folder still works. `start-prod.cjs` records the situation in the log.
+- Windows Server 2012 R2 left Microsoft support in October 2023 and PostgreSQL
+  16 is not tested on it: use it as a spare, not as the main server.
+
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
   Workforce & Shifts.

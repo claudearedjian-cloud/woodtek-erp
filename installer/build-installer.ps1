@@ -5,7 +5,9 @@
 #
 # What gets packed into WoodTek-ERP-Setup.exe:
 #   1. The production Next.js standalone build (.next\standalone + static)
-#   2. Portable Node.js runtime (runtime\node\node.exe copied from this PC)
+#   2. Portable Node.js runtime (runtime\node\node.exe copied from this PC; the
+#      setup engine replaces it with Node.js 22 LTS on Windows 8.1 /
+#      Server 2012 R2, where Node.js 23+ refuses to start)
 #   3. Database schema & bootstrapper (installer\schema.sql + bootstrap-db.cjs)
 #   4. Turnkey setup engine (installer\install-engine.ps1) + backup scripts
 #   5. Optional offline PostgreSQL 16 setup (pass -BundlePostgres or place
@@ -110,13 +112,39 @@ try {
         }
     }
 
-    # Bundle portable Node.js binary from current machine so target PC works offline
+    # Bundle portable Node.js binary from current machine so target PC works offline.
+    # Node.js 23+ refuses to start on Windows 8.1 / Server 2012 R2, so a build PC
+    # on a newer Node.js would otherwise pack a runtime that cannot run on an old
+    # spare server. The setup engine handles that (it installs Node.js 22 LTS
+    # there), but say it out loud - and support a fully offline install by
+    # carrying node-v22.*-win-x64.zip as installer\prereqs\node-win-x64.zip.
     $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
     if ($nodeCmd -and (Test-Path $nodeCmd.Source)) {
         $stageNodeDir = Join-Path $stageDir "runtime\node"
         New-Item -ItemType Directory -Path $stageNodeDir -Force | Out-Null
         Copy-Item -Path $nodeCmd.Source -Destination (Join-Path $stageNodeDir "node.exe") -Force
         Write-Host "  -> Bundled Node.js runtime ($($nodeCmd.Source))" -ForegroundColor Gray
+
+        $bundledMajor = 0
+        try {
+            $bundledVersion = & $nodeCmd.Source "--version" 2>$null
+            if ("$bundledVersion" -match "^v(\d+)") { $bundledMajor = [int]$Matches[1] }
+        } catch { }
+        if ($bundledMajor -ge 23) {
+            Write-Host "  !! Node.js $bundledMajor cannot start on Windows 8.1 / Server 2012 R2." -ForegroundColor Yellow
+            Write-Host "     Setup installs Node.js 22 LTS on such a PC automatically (needs internet)." -ForegroundColor Yellow
+            Write-Host "     For an offline install, drop node-v22.x-win-x64.zip in installer\prereqs\" -ForegroundColor Yellow
+            Write-Host "     as node-win-x64.zip and build again - it will travel inside the .exe." -ForegroundColor Yellow
+        }
+    }
+
+    # Optional offline Node.js 22 LTS zip (installer\prereqs\node-win-x64.zip).
+    $prereqNodeZip = Join-Path $Root "installer\prereqs\node-win-x64.zip"
+    if (Test-Path $prereqNodeZip) {
+        $stagePrereqNode = Join-Path $stageDir "prereqs"
+        New-Item -ItemType Directory -Path $stagePrereqNode -Force | Out-Null
+        Copy-Item -Path $prereqNodeZip -Destination (Join-Path $stagePrereqNode "node-win-x64.zip") -Force
+        Write-Host "  -> Bundled offline Node.js zip (prereqs\node-win-x64.zip)" -ForegroundColor Gray
     }
 
     # Optional offline PostgreSQL installer bundling
@@ -220,8 +248,10 @@ try {
     Write-Banner "SUCCESS: Single-File Installer Created!"
     Write-Host "  File : $setupExePath" -ForegroundColor Green
     Write-Host "  Size : $finalSizeMb MB" -ForegroundColor Green
-    Write-Host "`n  Copy WoodTek-ERP-Setup.exe to any Windows 10/11 PC and double-click it" -ForegroundColor White
-    Write-Host "  to choose which modules to install and set up the entire system.`n" -ForegroundColor White
+    Write-Host "`n  Copy WoodTek-ERP-Setup.exe to the target PC and double-click it" -ForegroundColor White
+    Write-Host "  to choose which modules to install and set up the entire system." -ForegroundColor White
+    Write-Host "  Windows 10 / 11 or Windows Server 2016+; on Windows 8.1 / Server 2012 R2" -ForegroundColor White
+    Write-Host "  setup installs the Node.js 22 LTS runtime that those servers can start.`n" -ForegroundColor White
 } finally {
     Remove-Item -Path $stageDir -Recurse -Force -ErrorAction SilentlyContinue
 }

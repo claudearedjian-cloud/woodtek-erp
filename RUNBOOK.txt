@@ -51,6 +51,28 @@ WORKING WITH ARENA (AI) SAFELY
   - Keep the three patched files from this session in mind; they are now part
     of your source (Sidebar.tsx, moduleAccess.ts, page.tsx).
 
+OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
+  Node.js 23 and newer refuse to start on those Windows versions and print
+    "Node.js is only supported on Windows 10, Windows Server 2016, or higher"
+  then exit - nothing runs, and the black window just sits at "Press any key".
+  What the installer does now:
+  - It starts every candidate node.exe once ("node --version") before using it,
+    so it never trusts a runtime blindly again.
+  - On Windows 8.1 / Server 2012 R2 it installs Node.js 22 LTS (the newest
+    line that officially supports them) - from the zip inside the installer
+    when present, from nodejs.org otherwise - and only if that is impossible
+    does it fall back to Node.js' own escape hatch,
+    NODE_SKIP_PLATFORM_CHECK=1, which the start scripts set on those PCs too.
+  If the server still refuses to start on such a PC:
+  - Copy runtime\node from a working install (it is one folder, no setup), or
+  - set the system variable NODE_SKIP_PLATFORM_CHECK to 1
+    (Control Panel > System > Advanced system settings > Environment
+    Variables > System variables > New) and start the server again.
+  Keep it honest: Microsoft ended support for Windows Server 2012 R2 in
+  October 2023 (no security updates) and PostgreSQL 16 is not tested on it.
+  It is fine as a spare PC - a server that runs the shop every day should be
+  Windows Server 2016 or newer.
+
 QUICK REFERENCE
   App on this PC:      http://localhost:3000
   App on the network:  http://192.168.220.179:3000

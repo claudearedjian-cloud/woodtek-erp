@@ -24,6 +24,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Windows 8.1 / Server 2012 R2 and older: Node.js 23+ refuses to start there
+# ("Node.js is only supported on Windows 10, Windows Server 2016, or higher").
+# The database bootstrap below runs through node.exe, so skip the platform
+# check on those Windows versions. See RUNBOOK.txt, "OLD WINDOWS SERVERS".
+$windowsMajor = 6
+try {
+    $currentMajor = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" `
+        -Name CurrentMajorVersionNumber -ErrorAction Stop).CurrentMajorVersionNumber
+    if ($currentMajor) { $windowsMajor = [int]$currentMajor }
+} catch { }
+if ($windowsMajor -lt 10) { $env:NODE_SKIP_PLATFORM_CHECK = "1" }
+
 $Root = if ($InstallDir) { $InstallDir } else { Split-Path -Parent $PSScriptRoot }
 
 $bundledNode = Join-Path $Root "runtime\node\node.exe"

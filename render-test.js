@@ -4286,6 +4286,67 @@ check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && 
 check(assemblyViewSource.includes("cixMatchedFilenameFace0") && assemblyViewSource.includes("cixMatchedFilenameFace6") && assemblyViewSource.includes("CSV ref:"), "assembly workspace: face details distinguish an uploaded fallback filename from the original CSV reference");
 check(assemblyViewSource.includes("Project Name (Optional Override)") && !assemblyViewSource.includes("setImportProjName(file.name"), "assembly import dialog: uploading a file does not override column 12 with the filename");
 
+// --- Windows Server 2012 R2 / Windows 8.1 install support (2026-10-13) -----
+// Node.js 23 and newer refuse to start on those Windows versions ("Node.js is
+// only supported on Windows 10, Windows Server 2016, or higher") and exit
+// before running anything, so a turnkey install on such a server used to stop
+// at the database bootstrap with nothing but that warning on screen. The
+// installer, the start scripts and the update engine must keep covering it.
+const prodBatSource = fs.readFileSync("start-woodtek-prod.bat", "utf8");
+const silentBatSource = fs.readFileSync("start-woodtek-prod-silent.bat", "utf8");
+const installEngineSource = fs.readFileSync("installer/install-engine.ps1", "utf8");
+const applyUpdateSource = fs.readFileSync("installer/apply-update.ps1", "utf8");
+const configureEditionSource = fs.readFileSync("installer/configure-edition.ps1", "utf8");
+const buildInstallerSource = fs.readFileSync("installer/build-installer.ps1", "utf8");
+const launcherSource = fs.readFileSync("start-prod.cjs", "utf8");
+const runbookSource = fs.readFileSync("RUNBOOK.txt", "utf8");
+
+check(
+  prodBatSource.includes("CurrentMajorVersionNumber") && prodBatSource.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+  "old Windows start script: detects Windows 8.1 / Server 2012 R2 and skips Node's platform check",
+);
+check(
+  silentBatSource.includes("CurrentMajorVersionNumber") && silentBatSource.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+  "old Windows scheduled task: the silent starter sets the same flag before node runs",
+);
+check(
+  prodBatSource.includes('if "%WT_EXIT%"=="216"') && prodBatSource.includes("RUNBOOK.txt")
+    && silentBatSource.includes('if "%WT_EXIT%"=="216"'),
+  "old Windows start scripts: the node refusal (exit 216) is explained instead of sitting at Press any key",
+);
+check(
+  installEngineSource.includes("Test-NodeRuntime") && installEngineSource.includes('"--version"'),
+  "setup engine: probes every candidate runtime with node --version instead of trusting node.exe",
+);
+check(
+  installEngineSource.includes("$legacyWindows") && installEngineSource.includes("Get-WindowsMajorVersion"),
+  "setup engine: Windows 8.1 / Server 2012 R2 is detected from the registry, not assumed",
+);
+check(
+  installEngineSource.includes("Install-PortableNode") && installEngineSource.includes("nodejs.org/dist/") && installEngineSource.includes('prereqs\\node-win-x64.zip'),
+  "setup engine: installs Node.js 22 LTS on old Windows, offline from prereqs or downloaded from nodejs.org",
+);
+check(
+  installEngineSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"') && installEngineSource.includes("No Node.js runtime could start on this PC"),
+  "setup engine: platform-check fallback stays the last resort, and failure is explained instead of hidden",
+);
+check(
+  applyUpdateSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"') && configureEditionSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"'),
+  "update + edition scripts: schema-sync node calls skip the platform check on old Windows too",
+);
+check(
+  launcherSource.includes("os.release()") && launcherSource.includes("NODE_SKIP_PLATFORM_CHECK=1"),
+  "server launcher: an unsupported Windows version is recorded in the log",
+);
+check(
+  buildInstallerSource.includes("node-win-x64.zip") && buildInstallerSource.includes("-ge 23"),
+  "installer builder: warns when the packed Node.js cannot start on an old server and accepts an offline zip",
+);
+check(
+  runbookSource.includes("OLD WINDOWS SERVERS") && runbookSource.includes("NODE_SKIP_PLATFORM_CHECK"),
+  "runbook: the Press any key / Windows Server 2012 R2 case is documented for the owner",
+);
+
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
 // dependency. Only authentication is substituted; the permission matrix,
 // parser, atomic file writes and audit log are the production implementations.
