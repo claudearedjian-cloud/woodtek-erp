@@ -10,6 +10,7 @@
 #      Server 2012 R2, where Node.js 23+ refuses to start)
 #   3. Database schema & bootstrapper (installer\schema.sql + bootstrap-db.cjs)
 #   4. Turnkey setup engine (installer\install-engine.ps1) + backup scripts
+#      (+ installer\restore-migration.ps1: put an old server's data on the new PC)
 #   5. Optional offline PostgreSQL 16 setup (pass -BundlePostgres or place
 #      postgresql-setup.exe in installer\prereqs\)
 #   6. Native Windows GUI Setup Wizard with Module Pack checkboxes (Core +
@@ -95,7 +96,7 @@ try {
     # Copy nightly backup scripts
     $stageBackup = Join-Path $stageDir "backup"
     New-Item -ItemType Directory -Path $stageBackup -Force | Out-Null
-    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat")) {
+    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat")) {
         $bSrc = Join-Path $Root "backup\$bf"
         if (Test-Path $bSrc) {
             Copy-Item -Path $bSrc -Destination (Join-Path $stageBackup $bf) -Force
@@ -105,7 +106,7 @@ try {
     # Copy installer engine, schema & DB bootstrapper
     $stageInstaller = Join-Path $stageDir "installer"
     New-Item -ItemType Directory -Path $stageInstaller -Force | Out-Null
-    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1")) {
+    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1", "restore-migration.ps1", "restore-migration.bat")) {
         $iSrc = Join-Path $Root "installer\$inf"
         if (Test-Path $iSrc) {
             Copy-Item -Path $iSrc -Destination (Join-Path $stageInstaller $inf) -Force

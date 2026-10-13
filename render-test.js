@@ -4358,6 +4358,77 @@ check(
   "readme: the old-Windows section points VM users at the Hyper-V notes",
 );
 
+// --- moving the factory data to a new server (2026-10-13) ------------------
+// Two double-clicks move the whole company book: the pack builder runs on the
+// old server (read-only), the restore runs on the new one and must verify what
+// it restored instead of trusting exit codes. The old server must never be
+// touched by the restore path.
+const prepareMigrationSource = fs.readFileSync("backup/prepare-migration.ps1", "utf8");
+const prepareMigrationBat = fs.readFileSync("backup/prepare-migration.bat", "utf8");
+const restoreMigrationSource = fs.readFileSync("installer/restore-migration.ps1", "utf8");
+const restoreMigrationBat = fs.readFileSync("installer/restore-migration.bat", "utf8");
+
+check(
+  prepareMigrationSource.includes("backup-woodtek.ps1") && prepareMigrationSource.includes("Copy-Item")
+    && prepareMigrationSource.includes("README-MIGRATION.txt") && prepareMigrationSource.includes("WoodTek-Migration"),
+  "migration pack: the old server takes a fresh backup and builds a copyable WoodTek-Migration folder",
+);
+check(
+  prepareMigrationSource.includes("refusing to pack an incomplete migration") && prepareMigrationSource.includes("DATABASE_URL"),
+  "migration pack: refuses to pack when the data\ folder has files but no zip, and re-checks .env/DATABASE_URL",
+);
+check(
+  prepareMigrationSource.includes('".env.from-old-pc"')
+    && prepareMigrationSource.includes("for reference only. Do not overwrite the new")
+    && !/Copy-Item[^\n]*\.env"\s+-Destination\s+\(Join-Path \$PackDir "\.env"\)/.test(prepareMigrationSource),
+  "migration pack: the old .env travels as a reference copy only (the new server keeps its own)",
+);
+check(
+  restoreMigrationSource.includes("DROP DATABASE IF EXISTS") && restoreMigrationSource.includes("CREATE DATABASE")
+    && restoreMigrationSource.includes("--no-owner") && restoreMigrationSource.includes("pg_restore"),
+  "migration restore: recreates the database and pg_restore's the pack into it",
+);
+check(
+  restoreMigrationSource.includes("ZipFile]::ExtractToDirectory") && restoreMigrationSource.includes("data-before-migration-"),
+  "migration restore: restores the data\ overlay and keeps the fresh server's own folder aside",
+);
+check(
+  restoreMigrationSource.includes("pre-migration-") && restoreMigrationSource.includes("pg_dump"),
+  "migration restore: dumps the fresh database before replacing it (cheap insurance)",
+);
+check(
+  restoreMigrationSource.includes("SELECT count(*)") && restoreMigrationSource.includes('"users", "machines", "orders", "order_operations"'),
+  "migration restore: reads the row counts back after restoring - verified, not assumed",
+);
+check(
+  restoreMigrationSource.includes("/api/health") && restoreMigrationSource.includes("schtasks /Run"),
+  "migration restore: starts the service again and waits for /api/health",
+);
+check(
+  restoreMigrationSource.includes("IsInRole") && restoreMigrationSource.includes("-Verb RunAs"),
+  "migration restore: asks for administrator rights itself (it restarts the SYSTEM task)",
+);
+check(
+  restoreMigrationSource.indexOf("schtasks /End") > 0
+    && restoreMigrationSource.indexOf("schtasks /End") < restoreMigrationSource.indexOf("DROP DATABASE IF EXISTS")
+    && restoreMigrationSource.indexOf("DROP DATABASE IF EXISTS") < restoreMigrationSource.indexOf("ExtractToDirectory"),
+  "migration restore: the server is stopped, then the database, then the data files - in that order",
+);
+check(
+  prepareMigrationBat.includes("prepare-migration.ps1") && restoreMigrationBat.includes("restore-migration.ps1")
+    && prepareMigrationBat.includes("%~dp0") && restoreMigrationBat.includes("%~dp0"),
+  "migration: both steps are double-clickable .bat files that run from their own folder",
+);
+check(
+  buildInstallerSource.includes("restore-migration.ps1") && buildInstallerSource.includes("prepare-migration.ps1"),
+  "migration: the installer payload ships both scripts (so the new PC has them)",
+);
+check(
+  runbookSource.includes("MOVING THE APP TO A NEW SERVER") && runbookSource.includes("prepare-migration.bat")
+    && runbookSource.includes("restore-migration.bat") && runbookSource.includes("MANUAL FALLBACK"),
+  "runbook: the two double-clicks and the manual fallback are documented for the owner",
+);
+
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
 // dependency. Only authentication is substituted; the permission matrix,
 // parser, atomic file writes and audit log are the production implementations.

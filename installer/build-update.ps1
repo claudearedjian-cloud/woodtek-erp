@@ -192,7 +192,9 @@ try {
         "install-engine.ps1",
         "configure-edition.ps1",
         "apply-update.ps1",
-        "apply-update.bat"
+        "apply-update.bat",
+        "restore-migration.ps1",
+        "restore-migration.bat"
     )) {
         $iSrc = Join-Path $Root "installer\$inf"
         if (Test-Path $iSrc) {
@@ -207,7 +209,7 @@ try {
     # 3d. Nightly backup scripts (the scheduled task needs them).
     $stageBackup = Join-Path $stageDir "backup"
     New-Item -ItemType Directory -Path $stageBackup -Force | Out-Null
-    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat")) {
+    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat")) {
         $bSrc = Join-Path $Root "backup\$bf"
         if (Test-Path $bSrc) {
             Copy-Item -Path $bSrc -Destination (Join-Path $stageBackup $bf) -Force

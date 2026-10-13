@@ -75,6 +75,46 @@ OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
   build the VM with a newer Windows Server guest and the workaround is not
   needed at all (and the guest keeps getting security updates).
 
+MOVING THE APP TO A NEW SERVER (or VM)
+  Two double-clicks, and your factory data moves to the new PC. The old PC is
+  never changed by this - it is only read.
+  1. ON THE OLD SERVER
+       backup\prepare-migration.bat
+     It takes a fresh backup (database dump + data\ zip) and builds a folder
+     "WoodTek-Migration" next to the app, with a README inside. Copy that whole
+     folder to the new server (USB stick, or the new server's Desktop).
+  2. ON THE NEW SERVER
+       a. Install first: run WoodTek-ERP-Setup.exe and let it finish.
+       b. Then double-click  installer\restore-migration.bat
+          It asks you to type YES, then replaces the new server's fresh, empty
+          database with the factory data, restores the data\ files, starts the
+          service again and prints the row counts of users / orders / machines
+          it read back, so you can see the data really arrived.
+          If the folder is not on the Desktop: drag it there, or run
+          installer\restore-migration.bat -PackDir "D:\WoodTek-Migration"
+  3. CHECK, THEN SWITCH
+       Sign in with your usual PIN (the users came across), open Orders &
+       Dispatch & Assembly, print one job ticket. Only then point the factory
+       PCs at the new server (http://<new-ip>:3000) and stop using the old one.
+       Keep the old PC switched off-but-intact for a week.
+  MANUAL FALLBACK (if the .bat refuses to run)
+     - the two files it needs are  WoodTek-Migration\db-*.dump  (the database)
+       and  WoodTek-Migration\data-*.zip  (the JSON overlay - dispatch,
+       production plans, roles/menus, assembly projects, email settings).
+     - database:  "C:\Program Files\PostgreSQL\16\bin\pg_restore.exe"
+       --no-owner --no-privileges -d "<DATABASE_URL from .env>" db-....dump
+     - data:      unzip data-....zip into  <app folder>\data  (replace it)
+     - then start the server again (the "\WoodTek ERP" task) and open it.
+  WHAT MOVES, WHAT DOES NOT
+     - moves: the whole database (orders, users + PINs, stock, machines,
+       audit) and the data\ folder (dispatch state, production plans, material
+       progress, roles/menus, assembly projects, email config).
+     - moves for reference only: the old .env (as ".env.from-old-pc"). The new
+       server keeps its own .env: its own DATABASE_URL and its own AUTH_SECRET
+       (that only means everybody signs in once on the new server).
+     - does not move: the app code (the new PC installs its own copy), and
+       anything you saved outside the app folder.
+
 RUNNING IN A HYPER-V VIRTUAL MACHINE (FS200)
   The app runs fine on a virtual machine, and the Node.js version message is
   about the GUEST Windows version - not about virtualization. Host settings

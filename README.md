@@ -367,6 +367,22 @@ build-installer.bat
 - One rule book: `src/lib/clientOwnership.ts` (list scope in
   `src/lib/dataAccess.ts`, 403 on the single-client and ledger routes).
 
+## Moving the app to a new server (since 2026-10-13)
+- **On the old server:** `backup\prepare-migration.bat` takes a fresh backup
+  (custom-format `pg_dump` of the database + a zip of the `data\` JSON overlay)
+  and builds a `WoodTek-Migration\` folder with the two files, a reference copy
+  of `.env` and a README. The old server is only read.
+- **On the new server:** install first (`WoodTek-ERP-Setup.exe`), copy the folder
+  over, then `installer\restore-migration.bat`: it stops the service, keeps the
+  fresh database aside (`backups\pre-migration-*.dump`), drops/recreates the
+  database, `pg_restore`s the pack, restores `data\` (the previous folder is
+  kept as `data-before-migration-*`), restarts the service, waits for
+  `/api/health` and prints the row counts it reads back (`users`, `machines`,
+  `orders`, `order_operations`) so the move is **verified, not assumed**.
+- The scripts ship inside the installer payload and in update packs
+  (`prepare-migration.*` into `backup\`, `restore-migration.*` into
+  `installer\`); `RUNBOOK.txt` has the owner-facing steps plus a manual fallback.
+
 ## Update flow
 Two different jobs. The full procedure — including rollback and a troubleshooting
 table — lives in **[UPDATING.md](UPDATING.md)**.
