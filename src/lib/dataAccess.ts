@@ -262,10 +262,19 @@ async function allowedMachineIdsSubquery(user: SessionUser) {
   }
   // Floor Supervisors (and custom roles based on them) assign machines to
   // steps, so they need the full machine list like the Manager.
-  if (user.role === "Floor Supervisor" || baseRoleOf(user.role) === "Floor Supervisor") {
+  if (baseRoleOf(user.role) === "Floor Supervisor") {
     return undefined;
   }
-  // Sales, QA: no machine access
+  // QA & Dispatch (and custom roles based on them) route work to stations and
+  // read the order workflow, which shows each step's candidate/claimed machine
+  // by name. Without the machine list the workflow said "No active matching
+  // station" for them while a Manager saw the station assigned — same order,
+  // same data, different visibility. Machines are reference data here (rates
+  // stay hidden behind the money grant, exactly like the Manager's view).
+  if (baseRoleOf(user.role) === "QA & Dispatch") {
+    return undefined;
+  }
+  // Sales and the remaining roles: no machine access
   return db.select({ id: machines.id }).from(machines).where(eq(machines.id, -1));
 }
 

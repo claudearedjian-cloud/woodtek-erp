@@ -6,6 +6,12 @@ import { authorize, hashPin } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
 import { allRoles, baseRoleOf } from "@/lib/permissions";
 import { ensureRolesRegistered } from "@/lib/rolesConfig.server";
+import {
+  UserDeleteError,
+  deleteUserAccount,
+  explainUserDeleteError,
+  previewUserDeletion,
+} from "@/lib/userDeletion.server";
 
 const SAFE_USER_COLUMNS = {
   id: users.id,
@@ -20,8 +26,9 @@ const SAFE_USER_COLUMNS = {
 };
 
 export async function GET(request: Request) {
-  const { error: authError } = await authorize("users:read");
+  const { user: actor, error: authError } = await authorize("users:read");
   if (authError) return authError;
+  const actorId = Number(actor?.id ?? 0);
 
   try {
     ensureRolesRegistered();
@@ -45,6 +52,13 @@ export async function GET(request: Request) {
       if (entityId) {
         const user = allUsers.find(u => String(u.id) === entityId);
         if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+        // ?preview=1 = "what happens if I delete this account?" — the dialog
+        // shows the blockers and the pointers that would be cleared instead of
+        // letting the raw foreign-key error reach the Manager.
+        if (url.searchParams.get("preview") === "1") {
+          const preview = await previewUserDeletion(user.id, actorId);
+          return NextResponse.json(preview);
+        }
         return NextResponse.json(user);
       }
 
@@ -179,7 +193,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const { error: authError } = await authorize("users:manage");
+  const { user: actor, error: authError } = await authorize("users:manage");
   if (authError) return authError;
 
   try {
@@ -192,15 +206,25 @@ export async function DELETE(request: Request) {
     }
 
     if (entityType === "users" || entityType === "operators" || entityType === "technicians") {
-      // Check if user has assigned operations
-      const { orderOperations } = await import("@/db/schema");
-      const { eq: eqOp } = await import("drizzle-orm");
-      const userOps = await db.select().from(orderOperations).where(eqOp(orderOperations.operatorId, Number(entityId)));
-      if (userOps.length > 0) {
-        return NextResponse.json({ error: "Cannot delete user with assigned operations. Deactivate instead." }, { status: 400 });
+      // One deletion engine for every path (src/lib/userDeletion.server.ts):
+      // it releases the pointers that only reference this person, refuses while
+      // something operational still holds them, and audits what it touched.
+      // The dialog confirms first (?preview=1); confirm=1 is the go-ahead.
+      if (url.searchParams.get("confirm") !== "1") {
+        const preview = await previewUserDeletion(Number(entityId), actor?.id ?? 0);
+        return NextResponse.json(
+          {
+            error: "Confirm the deletion first — this account is not deleted until you confirm.",
+            requiresConfirmation: true,
+            user: preview.user,
+            blockers: preview.blockers,
+            notes: preview.notes,
+          },
+          { status: 409 },
+        );
       }
-      await db.delete(users).where(eq(users.id, Number(entityId)));
-      return NextResponse.json({ success: true });
+      const deleted = await deleteUserAccount(Number(entityId), actor);
+      return NextResponse.json({ success: true, deleted: { id: deleted.id, name: deleted.name }, notes: deleted.notes });
     }
 
     if (entityType === "clients") {
@@ -216,7 +240,13 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ error: "Invalid entity type" }, { status: 400 });
   } catch (error: any) {
+    if (error instanceof UserDeleteError) {
+      return NextResponse.json(
+        { error: error.message, blockers: error.blockers },
+        { status: error.status },
+      );
+    }
     console.error("DELETE settings error:", error);
-    return NextResponse.json({ error: error?.message || "Failed to delete" }, { status: 500 });
+    return NextResponse.json({ error: explainUserDeleteError(error?.message) || "Failed to delete" }, { status: 500 });
   }
 }

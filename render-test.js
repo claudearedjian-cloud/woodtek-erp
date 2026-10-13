@@ -35,6 +35,7 @@ compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
 compile("src/lib/clientOwnership.ts", "lib/clientOwnership.js");
+compile("src/lib/userDeletionRules.ts", "lib/userDeletionRules.js");
 compile("src/lib/atomicFile.server.ts", "lib/atomicFile.server.js");
 compile("src/lib/dbIndexes.ts", "lib/dbIndexes.js");
 compile("src/lib/audit.server.ts", "lib/audit.server.js");
@@ -321,9 +322,6 @@ const props = (role, menuConfig = null, lang) => ({
   currentUser: role
     ? { id: 1, name: "maroun rahme", role, avatarColor: "bg-teal-600" }
     : null,
-  allUsers: [{ id: 2, name: "Claude Aredjian", role: "Manager", avatarColor: "bg-rose-600" }],
-  onSwitchUser: () => {},
-  onRequestSwitch: () => {},
   menuConfig,
   isOpen: true,
   onClose: () => {},
@@ -358,21 +356,27 @@ const hiddenForOperator = [
   "Orders &amp; Routing",
   "Downtime Log",
   "Inventory",
-  "Active Role Persona",
   "Menu Designer",
 ];
 hiddenForOperator.forEach((l) => check(!op.includes(l), `operator hides "${l}"`));
 
-["Operator Station Mode", "Scrap &amp; Rework", "Workforce &amp; Shifts", "Switch profile (PIN required)"].forEach((l) =>
+["Operator Station Mode", "Scrap &amp; Rework", "Workforce &amp; Shifts"].forEach((l) =>
   check(op.includes(l), `operator keeps "${l}"`),
 );
 
-["Executive Dashboard", "Live WIP Board", "Orders &amp; Routing", "Downtime Log", "Inventory", "Active Role Persona", "Switch profile (PIN required)", "Menu Designer"].forEach((l) =>
+["Executive Dashboard", "Live WIP Board", "Orders &amp; Routing", "Downtime Log", "Inventory", "Menu Designer"].forEach((l) =>
   check(mgr.includes(l), `manager still sees "${l}"`),
 );
 
-check(!op.includes("Switch Operational Role"), "operator has no hover role-switcher popup");
-check(mgr.includes("Switch Operational Role"), "manager keeps hover role-switcher popup");
+// Sidebar footer (owner rule, 2026-10-13): the active-role persona card and the
+// profile switcher are gone from EVERY screen and replaced by a copyright.
+["Active Role Persona", "Switch Operational Role", "Switch profile (PIN required)"].forEach((l) => {
+  check(!op.includes(l), `removed from the sidebar for an operator: "${l}"`);
+  check(!mgr.includes(l), `removed from the sidebar for a manager: "${l}"`);
+});
+check(op.includes("Claude Aredjian") && op.includes("\u00a9"), "operator sidebar footer shows the Claude Aredjian copyright");
+check(mgr.includes("Claude Aredjian") && mgr.includes("\u00a9"), "manager sidebar footer shows the Claude Aredjian copyright");
+check(!require("./compiled/components/Sidebar.js").default.toString().includes("onSwitchUser"), "sidebar no longer accepts the persona switcher wiring");
 
 // --- Manager defaults: plant modules grouped under General Settings ---
 const tech = renderToString(React.createElement(Sidebar, props("Technician")));
@@ -661,6 +665,41 @@ check(co.assignedRepLabel({ assignedSalesId: 7, assignedSalesName: "shadia" }, [
 check(co.assignedRepLabel({ assignedSalesId: 7 }, [{ id: 7, name: "shadia" }]) === "shadia", "clients: the picker resolves the owner name from the staff list");
 check(co.assignedRepLabel({ assignedSalesId: 99 }, []) === "User #99", "clients: a missing staff row still names the owner id");
 check(co.salesRepOptions([{ id: 2, name: "maroun", role: "Machine Operator" }, { id: 3, name: "shadia", role: "Sales Coordinator" }, { id: 1, name: "Boss", role: "Manager" }]).map((u) => u.id).join(",") === "1,3", "clients: the rep picker lists managers + sales coordinators, sorted by name");
+
+// ---- user deletion rules (deleting an account must never die on a raw FK) ----
+const udr = require("./compiled/lib/userDeletionRules.js");
+const ref = (table, column, onDelete, rows = 1, nullable = true) => ({ table, column, onDelete, rows, nullable });
+check(udr.refAction(ref("orders", "created_by_id", "no action")) === "release", "user delete: an order author pointer is released");
+check(udr.refAction(ref("customers", "assigned_sales_id", "no action")) === "release", "user delete: a client ownership pointer returns to the shared pool");
+check(udr.refAction(ref("maintenance_logs", "performed_by_id", "no action")) === "release", "user delete: a maintenance log author is released");
+check(udr.refAction(ref("orders", "created_by_id", "no action", 1, false)) === "block", "user delete: a NOT NULL pointer is never silently released");
+check(udr.refAction(ref("machines", "assigned_operator_id", "no action")) === "block", "user delete: an assigned machine blocks until it is reassigned");
+check(udr.refAction(ref("order_operations", "operator_id", "no action")) === "block", "user delete: a station step blocks until it is reassigned");
+check(udr.refAction(ref("future_table", "user_id", "no action")) === "block", "user delete: an unknown no-action table is never gutted silently");
+check(udr.refAction(ref("attendance", "user_id", "cascade")) === "removed", "user delete: cascade tables are reported as removed with the account");
+check(udr.refAction(ref("invoices", "created_by_id", "set null")) === "kept", "user delete: set-null documents are kept");
+check(udr.refAction(ref("supplier_bills", "created_by_id", "restrict")) === "block", "user delete: RESTRICT references block");
+check(udr.refHasRows({ rows: 0 }) === false && udr.refHasRows({ rows: null }) === true, "user delete: an unreadable count is treated as still in use");
+check(udr.isActiveOperationStatus("In Progress") && udr.isActiveOperationStatus("Paused") && !udr.isActiveOperationStatus("Completed") && !udr.isActiveOperationStatus(null), "user delete: only Ready/In Progress/Paused steps block");
+check(udr.explainUserDeleteError('update or delete on table "users" violates foreign key constraint "x" on table "y"').includes("still has records"), "user delete: a foreign-key error becomes a readable sentence");
+check(udr.explainUserDeleteError("connection refused") === "connection refused", "user delete: an unknown error is passed through unchanged");
+check(new Set(udr.RELEASABLE_REFERENCES).size === udr.RELEASABLE_REFERENCES.length && udr.RELEASABLE_REFERENCES.every((r) => r.includes(".")), "user delete: the release list holds unique table.column pairs");
+check(udr.selfDeleteMessage().includes("signed in") && udr.lastManagerMessage().includes("last active Manager"), "user delete: self-delete and last-manager messages are explicit");
+
+// The Settings dialog previews first: the delete engine is the only path that
+// touches users, and no screen sends a bare DELETE any more.
+check(settingsViewSource.includes("preview=1") && settingsViewSource.includes("confirm=1"), "settings UI: deleting a user previews then confirms");
+check(settingsViewSource.includes("blockers.join") && settingsViewSource.includes("whitespace-pre-line"), "settings UI: blockers are listed, not swallowed into one line");
+const settingsRouteSource = fs.readFileSync("src/app/api/settings/route.ts", "utf8");
+check(!settingsRouteSource.includes("db.delete(users)"), "settings API: the raw user DELETE is gone (the engine owns it)");
+check(settingsRouteSource.includes("deleteUserAccount(") && settingsRouteSource.includes("previewUserDeletion("), "settings API: preview + shared deletion engine are wired");
+check(fs.readFileSync("src/lib/userDeletion.server.ts", "utf8").includes("confdeltype"), "user deletion engine: foreign keys are read from the live Postgres catalog");
+check(fs.readFileSync("src/lib/userDeletion.server.ts", "utf8").includes('"user.delete"'), "user deletion engine: every successful delete is audited");
+
+// ---- machine visibility for the order workflow (dispatch roles) ----
+check(dataAccessSource.includes('baseRoleOf(user.role) === "QA & Dispatch"'), "machines: QA & Dispatch reads the station list its workflow screen shows");
+check(orderWorkflowSource.includes("Not assigned to a station yet") && !orderWorkflowSource.includes("No active matching station"), "order workflow: a viewer without the machine list reads the assigned station instead of a false error");
+check(orderWorkflowSource.includes("canPickStations"), "order workflow: only station-assigning roles get the candidate picker");
 
 // ---- audit trail (real filesystem via WOODTEK_DATA_DIR tmp dir) ----
 const os = require("os");

@@ -126,7 +126,7 @@ export async function DELETE(request: Request) {
   if (error) return privateResponse(error);
   try {
     const userId = Number(new URL(request.url).searchParams.get("userId"));
-    const removed = await deleteNoLoginEmployee(userId, user.id);
+    const removed = await deleteNoLoginEmployee(userId, user.id, user);
     logAudit(user, "hr.employee.delete", "hr-employee", `HR-only employee ${removed.name} deleted`, removed.id);
     return NextResponse.json({ success: true }, { headers: PRIVATE_HEADERS });
   } catch (cause) {

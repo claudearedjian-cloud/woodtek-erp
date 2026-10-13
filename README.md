@@ -308,10 +308,26 @@ build-installer.bat
 
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
-  Workforce & Shifts; Active Role Persona panel hidden; PIN switch kept.
+  Workforce & Shifts.
 - Manager: Routing Recipes, Downtime Log, Workforce & Shifts, PIMS Import and
   Shop Floor Monitor are grouped under General Settings.
 - Matrix lives in `src/lib/moduleAccess.ts`; enforced by sidebar + page guard.
+- The sidebar footer shows the copyright (© Claude Aredjian) only — the
+  Active Role Persona card and its profile switcher were removed from every
+  screen on the owner's request (2026-10-13). Switching profiles stays on the
+  top bar (Header → "Switch profile").
+
+## Deleting a user account (since 2026-10-13)
+- Settings → Users → **Delete** runs one engine (`src/lib/userDeletion.server.ts`,
+  policy in `src/lib/userDeletionRules.ts`). The live foreign keys pointing at
+  the account are read from the Postgres catalog and each one is released,
+  removed with the account, kept, or refused by name.
+- It **refuses** while the person is the assigned operator of a machine, is the
+  operator on a Ready / In Progress / Paused station step, is the account you
+  are signed in with, or is the last active Manager sign-in — the dialog lists
+  exactly what to fix.
+- Everything the cleaner touches is written to the audit trail, and releases +
+  delete run in a single transaction.
 
 ## Client book ownership (since 2026-10-13)
 - Manager sees every client. A **Sales Coordinator** sees the clients **assigned

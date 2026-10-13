@@ -926,18 +926,45 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
   };
 
   const deleteEntity = async (entity: any) => {
-    const confirmMsg = activeTab === "clients" 
-      ? `Delete client ${entity.company}? This cannot be undone.`
-      : `Delete ${entity.name}? This cannot be undone.`;
-    
-    if (!confirm(confirmMsg)) return;
-    
+    const entityType = activeTab === "clients" ? "clients" : activeTab === "operators" ? "operators" : activeTab === "technicians" ? "technicians" : "users";
+    setError("");
+
+    // Users: ask the server FIRST what still points at this account. Deleting
+    // used to die on a raw foreign-key error ("Failed query: delete from
+    // "users"…"); now the dialog says what will be cleared, what goes with the
+    // account, and what must be fixed before it can go at all.
+    if (entityType !== "clients") {
+      try {
+        const previewRes = await fetch(`/api/settings?entity=${entityType}&entityId=${entity.id}&preview=1`, { cache: "no-store" });
+        const preview = await previewRes.json();
+        if (!previewRes.ok) throw new Error(preview.error || "Failed to check this account");
+        const blockers: string[] = Array.isArray(preview.blockers) ? preview.blockers : [];
+        if (blockers.length > 0) {
+          setError(`${preview.user?.name ?? "This account"} cannot be deleted yet:\n• ${blockers.join("\n• ")}`);
+          setTimeout(() => setError(""), 12000);
+          return;
+        }
+        const notes: string[] = Array.isArray(preview.notes) ? preview.notes : [];
+        const extra = notes.length > 0 ? `\n\nThis will also:\n• ${notes.join("\n• ")}` : "";
+        const ok = confirm(`Delete ${preview.user?.name ?? entity.name} (${preview.user?.role ?? entity.role}) permanently?${extra}\n\nThis cannot be undone and the sign-in stops working immediately.`);
+        if (!ok) return;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to check this account");
+        return;
+      }
+    } else {
+      const confirmMsg = `Delete client ${entity.company}? This cannot be undone.`;
+      if (!confirm(confirmMsg)) return;
+    }
+
     try {
-      const entityType = activeTab === "clients" ? "clients" : activeTab === "operators" ? "operators" : activeTab === "technicians" ? "technicians" : "users";
-      const res = await fetch(`/api/settings?entity=${entityType}&entityId=${entity.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/settings?entity=${entityType}&entityId=${entity.id}&confirm=1`, { method: "DELETE" });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Failed to delete");
-      
+      if (!res.ok) {
+        const blockers: string[] = Array.isArray(result.blockers) ? result.blockers : [];
+        throw new Error([result.error || "Failed to delete", ...blockers].join(blockers.length ? "\n• " : ""));
+      }
+
       setNotice("Deleted successfully");
       setTimeout(() => setNotice(""), 3000);
       fetchEntities();
@@ -1012,9 +1039,10 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
             </p>
           </div>
           {(error || notice) && (
-            <div className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold ${error ? "border-rose-500/40 bg-rose-500/10 text-rose-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>
-              {error ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-              <span>{error || notice}</span>
+            <div className={`flex items-start gap-2 rounded-xl border px-4 py-2 text-xs font-bold ${error ? "border-rose-500/40 bg-rose-500/10 text-rose-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>
+              {error ? <AlertTriangle className="mt-0.5 w-4 h-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 w-4 h-4 shrink-0" />}
+              {/* whitespace-pre-line: delete blockers arrive as a bulleted list */}
+              <span className="whitespace-pre-line">{error || notice}</span>
               <button onClick={() => { setError(""); setNotice(""); }} className="ml-2 hover:opacity-70"><X className="w-4 h-4" /></button>
             </div>
           )}

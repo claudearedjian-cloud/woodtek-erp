@@ -9,8 +9,6 @@ import {
   Users,
   Package,
   ShieldCheck,
-  UserCheck,
-  ChevronRight,
   Sparkles,
   Layers,
   CalendarDays,
@@ -144,9 +142,6 @@ interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   currentUser: any;
-  allUsers: any[];
-  onSwitchUser: (user: any) => void;
-  onRequestSwitch: () => void;
   menuConfig: MenuConfig | null;
   optionalModulesConfig?: OptionalModulesConfig | null;
   isOpen: boolean;
@@ -158,9 +153,6 @@ export default function Sidebar({
   activeTab,
   setActiveTab,
   currentUser,
-  allUsers,
-  onSwitchUser,
-  onRequestSwitch,
   menuConfig,
   optionalModulesConfig,
   isOpen,
@@ -181,11 +173,6 @@ export default function Sidebar({
     settings: rawMenu.settings.filter(visible),
     sections: rawMenu.sections.map((s) => ({ ...s, items: s.items.filter(visible) })),
   };
-
-  // Shop-floor operators get a clean touchscreen: the Active Role Persona
-  // panel (profile card + hover role switcher) is hidden for them. They
-  // keep the PIN switch button so they can still sign in/out.
-  const isOperator = currentUser?.role === "Machine Operator";
 
   const renderItem = (
     item: ResolvedMenuItem,
@@ -359,62 +346,15 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Role Switcher & Auth Section */}
-      <div className="p-4 border-t border-slate-800 bg-slate-950/80">
-        {!isOperator && (<>
-        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
-          <span>{tt(lang, "Active Role Persona")}</span>
-          <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+      {/* Footer: copyright only. The active-role persona card and the
+          "switch profile" button were removed on the owner's request from
+          every screen; the top bar still carries the switch-profile control
+          (Header → "Switch profile"), so signing in as someone else is
+          unchanged. */}
+      <div className="border-t border-slate-800 bg-slate-950/80 px-4 py-3">
+        <div className="text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          © {new Date().getFullYear()} Claude Aredjian
         </div>
-
-        {/* Current logged in profile */}
-        <div className="relative group mb-3">
-          <div className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-900 border border-slate-700/80 hover:border-amber-500/50 transition cursor-pointer">
-            <div className={`w-9 h-9 rounded-lg ${currentUser?.avatarColor || "bg-slate-700"} flex items-center justify-center text-white font-bold text-sm shadow-md`}>
-              {currentUser?.name?.charAt(0) || "?"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-white truncate">{currentUser?.name || tt(lang, "Not signed in")}</div>
-              <div className="text-[11px] text-slate-400 font-semibold truncate flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 inline" /> {currentUser?.displayRole || currentUser?.role || tt(lang, "Sign in required")}
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transform group-hover:translate-x-0.5 transition" />
-          </div>
-
-          {/* Popup Persona Selector */}
-          <div className="absolute bottom-full left-0 right-0 mb-2 p-2 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 space-y-1 max-h-52 overflow-y-auto">
-            <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">
-              Switch Operational Role
-            </div>
-            {allUsers.map((user) => (
-              <button
-                key={user.id}
-                onClick={() => onSwitchUser(user)}
-                className={`w-full flex items-center gap-2.5 p-2 rounded-lg text-left text-xs transition ${
-                  currentUser?.id === user.id ? "bg-amber-500/20 text-white font-bold border border-amber-500/30" : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-md ${user.avatarColor} flex items-center justify-center text-[10px] text-white font-bold`}>
-                  {user.name.charAt(0)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold text-slate-200">{user.name}</div>
-                  <div className="text-[10px] text-slate-400 truncate">{user.role}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-        </>)}
-
-        <button
-          onClick={onRequestSwitch}
-          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30 transition"
-        >
-          <ShieldCheck className="w-3.5 h-3.5" />
-          <span>{tt(lang, "Switch profile (PIN required)")}</span>
-        </button>
       </div>
     </aside>
   );
