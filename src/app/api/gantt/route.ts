@@ -20,9 +20,6 @@ import { readProductionPlanStore } from "@/lib/productionPlan.server";
 import { readDispatchStore, type DispatchStore } from "@/lib/dispatch.server";
 import { ALL_STAGES, type DispatchStage } from "@/lib/dispatch";
 
-const DAY_MS = 86_400_000;
-const RECENT_DELIVERY_DAYS = 14;
-
 interface DispatchSummary {
   stage: string | null;
   mixed: boolean;
@@ -72,17 +69,13 @@ export async function GET() {
     const allOrders = await listOrdersForUser(user);
     const now = Date.now();
 
-    // Active orders always; delivered orders only while "recent" so the
-    // Recently Delivered column stays meaningful instead of stretching the
-    // auto-fit window across months of history.
+    // The Gantt is an active-work view: hide cancelled orders and fully
+    // delivered orders, whether delivery came from the order roll-up or every
+    // dispatch batch has reached the delivered stage.
     const included = allOrders.filter((order) => {
-      if (order.status === "Cancelled") return false;
-      if (order.status === "Delivered") {
-        const summary = dispatchSummaryFor(order.id, store);
-        if (!summary.deliveredAt) return false;
-        return now - new Date(summary.deliveredAt).getTime() <= (RECENT_DELIVERY_DAYS + 1) * DAY_MS;
-      }
-      return true;
+      if (order.status === "Cancelled" || order.status === "Delivered") return false;
+      const dispatch = dispatchSummaryFor(order.id, store);
+      return !(dispatch.totalBatches > 0 && dispatch.deliveredCount >= dispatch.totalBatches);
     });
     const includedIds = new Set(included.map((order) => order.id));
 

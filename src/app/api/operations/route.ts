@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     const status = url.searchParams.get("status");
     const activeOnly = url.searchParams.get("activeOnly") === "true";
     const stationMode = url.searchParams.get("station") === "true" || Boolean(machineId && activeOnly);
-    const activeStatuses = ["Ready", "In Progress", "Rejected/Rework"];
+    const activeStatuses = ["Ready", "In Progress", "Paused", "Rejected/Rework"];
 
     // Apply record scope and the station/status filters in SQL. The former
     // endpoint loaded every operation, then discarded almost all of them in JS.

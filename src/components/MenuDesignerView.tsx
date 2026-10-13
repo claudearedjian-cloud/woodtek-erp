@@ -38,6 +38,7 @@ interface Row {
   badge: string;
   group: string; // "top" | "settings" | custom section name
   icon: string; // "" = automatic
+  /** Audience is configurable only for external website links. */
   roles: Record<string, boolean>;
   custom?: boolean;
   kind?: "tab" | "link";
@@ -76,8 +77,10 @@ function buildRows(cfg: MenuConfig | null): Row[] {
       const c = byId.get(id);
       const custom = isCustomId(id);
       const roles: Record<string, boolean> = {};
-      for (const r of allRoles()) {
-        roles[r] = typeof c?.roles?.[r] === "boolean" ? c.roles[r]! : defaultVisibleFor(r, id);
+      if (custom && c?.kind === "link") {
+        for (const r of allRoles()) {
+          roles[r] = typeof c.roles?.[r] === "boolean" ? c.roles[r]! : defaultVisibleFor(r, id, c);
+        }
       }
       return {
         id,
@@ -147,7 +150,7 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
       },
       ...rs,
     ]);
-    setStatus("New item added at the top — give it a name, pick where it points and who sees it, then Save.");
+    setStatus("New item added at the top — name it and choose a screen or website. Screen access follows each user's Access Profile.");
   };
 
   // Custom section names currently in use (drives the group dropdown).
@@ -220,7 +223,7 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
         badge: r.badge,
         group: r.group,
         icon: r.icon || undefined,
-        roles: r.roles,
+        ...(r.custom && r.kind === "link" ? { roles: r.roles } : {}),
         ...(r.custom
           ? {
               custom: true as const,
@@ -274,9 +277,9 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
           <div className="flex-1">
             <h2 className="text-lg font-extrabold text-white tracking-tight">Menu Designer</h2>
             <p className="text-xs text-slate-400">
-              Rename, reorder, regroup, pick icons and control per-role visibility of every sidebar item —
-              plus each role&apos;s landing screen. Create your own sections and menu entries; names up to {LABEL_MAX} characters.
-              Changes apply to all devices on the network after Save.
+              Arrange the sidebar: rename, reorder, regroup, choose icons and set each role&apos;s landing screen.
+              Screen access is controlled by Access Profiles, not by individual menu items. Website shortcuts can
+              have their own audience. Changes apply to all devices after Save.
             </p>
           </div>
           <button
@@ -449,12 +452,16 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
                 </span>
                 <select
                   value={row.kind === "link" ? "link" : "tab"}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const nextKind = e.target.value === "link" ? "link" : "tab";
                     patch(i, {
-                      kind: e.target.value === "link" ? "link" : "tab",
-                      target: e.target.value === "link" ? "" : "dashboard",
-                    })
-                  }
+                      kind: nextKind,
+                      target: nextKind === "link" ? "" : "dashboard",
+                      ...(nextKind === "link" && row.kind !== "link"
+                        ? { roles: Object.fromEntries(allRoles().map((r) => [r, r === "Manager"])) }
+                        : {}),
+                    });
+                  }}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
                 >
                   <option value="tab">Opens a screen</option>
@@ -483,20 +490,22 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
                 )}
               </div>
             )}
-            <div className="mt-2 flex flex-wrap items-center gap-3 pl-9">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Visible for:</span>
-              {allRoles().map((r) => (
-                <label key={r} className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!row.roles[r]}
-                    onChange={(e) => patch(i, { roles: { ...row.roles, [r]: e.target.checked } })}
-                    className="accent-amber-500"
-                  />
-                  {r}
-                </label>
-              ))}
-            </div>
+            {row.custom && row.kind === "link" && (
+              <div className="mt-2 flex flex-wrap items-center gap-3 pl-9">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Website link audience:</span>
+                {allRoles().map((r) => (
+                  <label key={r} className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!row.roles[r]}
+                      onChange={(e) => patch(i, { roles: { ...row.roles, [r]: e.target.checked } })}
+                      className="accent-amber-500"
+                    />
+                    {r}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -506,9 +515,10 @@ export default function MenuDesignerView({ menuConfig, onSaved }: Props) {
         <p>
           <span className="font-bold text-slate-300">Tips:</span> pick <b>➕ New section…</b> in the
           placement dropdown to create your own sidebar section, then move more items into it.
-          Blue rows are entries you created yourself — they can open any screen or any website
-          (https) in a new tab, and can be deleted with the trash button. A section header only
-          appears for people who can see at least one item inside it.
+          Blue rows are entries you created yourself — an in-app shortcut follows the target screen&apos;s
+          Access Profile, while an external https website has its own audience controls. Custom entries
+          can be deleted with the trash button. A section header only appears for people who can see at
+          least one item inside it.
         </p>
       </div>
     </div>

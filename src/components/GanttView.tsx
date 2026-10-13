@@ -28,7 +28,6 @@ import {
   maxLanes,
   nextOpenStep,
   orderSpan,
-  recentlyDelivered,
   scheduleCrossesDue,
   startOfDayMs,
   stepWindow,
@@ -189,8 +188,9 @@ export default function GanttView({ machines = [], onSelectOrder, searchQuery = 
 
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter((o) =>
+    const activeOrders = orders.filter((order) => !isDeliveredOrder(order));
+    if (!q) return activeOrders;
+    return activeOrders.filter((o) =>
       [o.orderNumber, o.title, o.customerLabel, o.projectType, o.status]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q)),
@@ -305,7 +305,6 @@ export default function GanttView({ machines = [], onSelectOrder, searchQuery = 
     return HEALTH_COLUMNS.map((col) => {
       const list = open
         .filter((o) => healthBucket(o, now) === col.id)
-        .filter((o) => (col.id === "delivered" ? recentlyDelivered(o, now, 14) : true))
         .sort((a, b) => daysToDue(a, now) - daysToDue(b, now));
       return { ...col, orders: list };
     });

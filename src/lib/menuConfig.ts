@@ -82,7 +82,8 @@ export interface MenuConfigItem {
   badge?: string;
   group?: string; // "top" | "settings" | a custom section name
   icon?: string; // MENU_ICON_KEYS entry; ""/absent = automatic
-  roles?: Record<string, boolean>; // per-role visibility overrides
+  /** Per-role display for custom website links only; screen access comes from access profiles. */
+  roles?: Record<string, boolean>;
   // Designer-created entries only (id starts with "custom-"):
   custom?: true;
   kind?: "tab" | "link"; // default "tab" (opens an existing screen)
@@ -117,11 +118,24 @@ const moduleFor = (id: string): ModuleId =>
 export const isCustomId = (id: string): boolean =>
   typeof id === "string" && id.startsWith("custom-");
 
-export function defaultVisibleFor(role: string, id: string): boolean {
-  // Designer-created items start visible to the Manager only; every other
-  // role must be ticked explicitly in the Menu Designer.
-  if (isCustomId(id)) return role === "Manager";
-  // canAccessModule resolves custom roles (explicit allowlist or base fallback).
+export function defaultVisibleFor(
+  role: string,
+  id: string,
+  item?: MenuConfigItem,
+): boolean {
+  if (isCustomId(id)) {
+    const nav = safeCustomNav(item);
+    if (nav.kind === "link") {
+      // External links have no app permission profile, so keep their audience
+      // explicit and default them to Manager-only.
+      const override = item?.roles?.[role];
+      return typeof override === "boolean" ? override : role === "Manager";
+    }
+    // A custom shortcut to an app screen inherits that screen's role profile.
+    return canAccessModule(role, moduleFor(nav.target));
+  }
+  // Internal screen visibility always follows the access profile, never a
+  // per-menu-item override.
   return canAccessModule(role, moduleFor(id));
 }
 
@@ -180,9 +194,7 @@ export function resolveMenu(
   for (const id of ordered) {
     const reg = MENU_REGISTRY.find((r) => r.id === id);
     const cfg = byId.get(id);
-    const override = cfg?.roles ? cfg.roles[role] : undefined;
-    const visible =
-      typeof override === "boolean" ? override : defaultVisibleFor(role, id);
+    const visible = defaultVisibleFor(role, id, cfg);
     if (!visible) continue;
     const item: ResolvedMenuItem = {
       id,
@@ -274,7 +286,9 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
           : "dashboard";
       }
     }
-    if (e.roles && typeof e.roles === "object") {
+    // Menu-level audiences are retained only for external website links.
+    // Built-in screens and custom in-app shortcuts are always profile-driven.
+    if (customItem && item.kind === "link" && e.roles && typeof e.roles === "object") {
       const roles: Record<string, boolean> = {};
       for (const r of allRoles()) {
         const v = (e.roles as Record<string, unknown>)[r];

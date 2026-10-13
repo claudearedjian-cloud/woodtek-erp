@@ -51,6 +51,31 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
   const activeProject = projects.find((project) => project.id === activeProjectId) || null;
   const selectedCabinet = activeProject?.cabinets.find((cabinet) => cabinet.id === selectedCabinetId) || null;
   const selectedPart = selectedCabinet?.parts.find((part) => part.id === selectedPartId) || null;
+  const selectedCixPrograms = selectedPart ? [
+    {
+      face: 0 as const,
+      filename: selectedPart.cixMatchedFilenameFace0 || selectedPart.cixData?.filename || selectedPart.cixFilenameFace0 || (selectedPart.cixReferenceExplicit || selectedPart.cixData ? selectedPart.cixFilename : ""),
+      reference: selectedPart.cixMatchMethod === "dimensions" && selectedPart.cixReferenceExplicit
+        ? selectedPart.cixFilenameFace0 || selectedPart.cixFilename || ""
+        : "",
+      data: selectedPart.cixData,
+    },
+    {
+      face: 6 as const,
+      filename: selectedPart.cixMatchedFilenameFace6 || selectedPart.cixDataFace6?.filename || selectedPart.cixFilenameFace6 || "",
+      reference: selectedPart.cixMatchMethodFace6 === "dimensions" && selectedPart.cixReferenceFace6Explicit
+        ? selectedPart.cixFilenameFace6 || ""
+        : "",
+      data: selectedPart.cixDataFace6,
+    },
+  ].filter((program) => !!program.filename || !!program.data) : [];
+  const selectedBorings = selectedCixPrograms.flatMap((program) =>
+    (program.data?.borings || []).map((boring, index) => ({
+      ...boring,
+      sourceFace: program.face,
+      key: `${program.face}-${index}`,
+    })),
+  );
   const canManageProject = can(currentUser?.role, "orders:write");
   const [projectDialog, setProjectDialog] = useState<{
     mode: "edit" | "delete";
@@ -343,7 +368,9 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
         if (csvDiag) {
           details.push({
             label: "CSV layout",
-            value: csvDiag.layout === "woodtek" ? "part 7 • project 12 • cabinet 13 • CIX 14" : "automatic headers / content",
+            value: csvDiag.layout === "woodtek"
+              ? `part ${WOODTEK_CSV_COLUMNS.part} • project ${WOODTEK_CSV_COLUMNS.project} • cabinet ${WOODTEK_CSV_COLUMNS.cabinet} • face 0 CIX ${WOODTEK_CSV_COLUMNS.cix} • face 6 CIX ${WOODTEK_CSV_COLUMNS.cixFace6} • serial ${WOODTEK_CSV_COLUMNS.partSerial}`
+              : "automatic headers / content",
           });
           if (csvDiag.projectNames?.length) details.push({ label: "CSV project", value: csvDiag.projectNames.join(", ") });
           details.push({ label: "Separator", value: csvDiag.delimiterLabel });
@@ -377,10 +404,17 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
           });
         }
         if (cixDiag) {
+          const dimensionLinks = cixDiag.matchedByMethod?.dimensions || 0;
+          const unmatchedFileCount = cixDiag.unmatchedCix?.length || 0;
+          const usedFileCount = Math.max(0, cixDiag.totalCix - unmatchedFileCount);
+          const linkedParts = cixDiag.partsWithCix ?? cixDiag.matchedCount;
+          const extraFaceLinks = Math.max(0, cixDiag.matchedCount - linkedParts);
           details.push({
             label: "CIX linking",
-            value: `${cixDiag.matchedCount} part(s) linked to ${cixDiag.totalCix} file(s)${
-              cixDiag.unmatchedCix?.length ? ` • not linked: ${cixDiag.unmatchedCix.length}` : ""
+            value: `${linkedParts} part(s) linked across ${usedFileCount}/${cixDiag.totalCix} file(s)${
+              extraFaceLinks ? ` • ${extraFaceLinks} additional face program(s)` : ""
+            }${dimensionLinks ? ` • by size: ${dimensionLinks} (review)` : ""}${
+              unmatchedFileCount ? ` • not linked: ${unmatchedFileCount}` : ""
             }`,
           });
         }
@@ -871,7 +905,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                   <div className="flex flex-col gap-2 overflow-y-auto max-h-[360px] pr-1">
                     {selectedCabinet.parts.map((part) => {
                       const isSelected = selectedPart?.id === part.id;
-                      const hasCix = !!part.cixData;
+                      const hasCix = !!part.cixData || !!part.cixDataFace6;
 
                       return (
                         <div
@@ -1005,34 +1039,36 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                       <div className="bg-slate-950 p-2 rounded-xl border border-slate-800/80">
                         <div className="text-[10px] text-slate-500 uppercase">CIX Machine File</div>
                         <div className="font-mono text-sky-400 font-bold truncate">
-                          {selectedPart.cixFilename || "Not attached"}
+                          {selectedCixPrograms.length
+                            ? selectedCixPrograms.map((program) => `Face ${program.face}: ${program.filename || "attached"}${program.reference && program.reference !== program.filename ? ` (CSV ref: ${program.reference})` : ""}`).join(" · ")
+                            : "No machining files"}
                         </div>
                       </div>
                       <div className="bg-slate-950 p-2 rounded-xl border border-slate-800/80">
                         <div className="text-[10px] text-slate-500 uppercase">Rover A Borings</div>
                         <div className="font-mono text-emerald-400 font-bold">
-                          {selectedPart.cixData?.borings.length || 0} Drills
+                          {selectedBorings.length} Drills
                         </div>
                       </div>
                     </div>
 
                     {/* Rover A Boring List Preview */}
-                    {selectedPart.cixData && selectedPart.cixData.borings.length > 0 && (
+                    {selectedBorings.length > 0 && (
                       <div className="mt-3">
                         <div className="text-[11px] font-bold text-slate-400 mb-1.5">
-                          Biesse Rover A Boring Operations (Face 0 & Edges):
+                          Biesse Rover A Boring Operations:
                         </div>
                         <div className="max-h-28 overflow-y-auto flex flex-col gap-1 pr-1 font-mono text-[11px]">
-                          {selectedPart.cixData.borings.map((b, idx) => (
+                          {selectedBorings.map((boring, idx) => (
                             <div
-                              key={idx}
+                              key={boring.key}
                               className="bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/60 flex items-center justify-between text-slate-300"
                             >
                               <span>
-                                Hole #{idx + 1} (Face {b.side}): X={b.x} Y={b.y}
+                                Hole #{idx + 1} (CIX face {boring.sourceFace}, side {boring.side}): X={boring.x} Y={boring.y}
                               </span>
                               <span className="text-emerald-400">
-                                Ø{b.diameter}mm × {b.depth}mm
+                                Ø{boring.diameter}mm × {boring.depth}mm
                               </span>
                             </div>
                           ))}
@@ -1145,12 +1181,12 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                     onChange={(e) => setImportCsvLayout(e.target.value as PolyboardCsvLayout)}
                     className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-200 outline-none focus:border-amber-500"
                   >
-                    <option value="woodtek">WoodTek export — columns 7 / 12 / 13 / 14</option>
+                    <option value="woodtek">WoodTek export — columns 7 / 12 / 13 / 14–16</option>
                     <option value="auto">Other layout — detect headers / content</option>
                   </select>
                   <p className="mt-2 text-[11px] text-slate-400">
                     {importCsvLayout === "woodtek"
-                      ? `Part name: ${WOODTEK_CSV_COLUMNS.part} • Project name: ${WOODTEK_CSV_COLUMNS.project} • Cabinet name: ${WOODTEK_CSV_COLUMNS.cabinet} • CIX filename: ${WOODTEK_CSV_COLUMNS.cix}. Column numbers start at 1. Shorter CSVs, including the sample, use automatic detection.`
+                      ? `Part name: ${WOODTEK_CSV_COLUMNS.part} • Project: ${WOODTEK_CSV_COLUMNS.project} • Cabinet: ${WOODTEK_CSV_COLUMNS.cabinet} • Face 0 CIX: ${WOODTEK_CSV_COLUMNS.cix} • Face 6 CIX: ${WOODTEK_CSV_COLUMNS.cixFace6} • Part serial: ${WOODTEK_CSV_COLUMNS.partSerial}. Column numbers start at 1. Shorter CSVs, including the sample, use automatic detection.`
                       : "Project and cabinet fields are detected separately from the headers. Sizes, material and quantities are detected from their headers or content."}
                   </p>
                 </div>

@@ -51,7 +51,7 @@ export async function GET() {
       const currentJob = currentOp
         ? { ...currentOp, customerName: orderCustomerById.get(currentOp.orderId) ?? null }
         : null;
-      const queue = machineOps.filter(o => o.status === "Ready" || o.status === "Pending");
+      const queue = machineOps.filter(o => o.status === "Ready" || o.status === "Pending" || o.status === "Paused");
       const openDown = activeDowntime.find(d => d.machineId === m.id) || null;
 
       let state: string;

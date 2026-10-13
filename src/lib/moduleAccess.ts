@@ -178,19 +178,25 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
 export function canAccessModule(role: Role | string | null | undefined, module: ModuleId): boolean {
   if (!role) return false;
   const custom = getCustomRoles().find((r) => r.name === role);
-  // Optional screens (purchasing, invoicing & A/R, HR/payroll) are independent
-  // of the legacy screen matrix. The sidebar/page must ALSO check
-  // screenAllowedForSubject(user, config), including a personal grant — a
-  // bare role cannot resolve that by itself.
-  if (module === "purchasing" || module === "invoicing" || module === "jobcosting" || module === "hr") return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
-  if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
-  // Manager-saved screen override for this exact role name wins over defaults.
   const overrides = getModuleOverrides();
-  const own = overrides[role as string];
+
+  // An explicit screen allowlist on a custom profile (or a saved profile-level
+  // override) is authoritative for navigation, including optional screens.
+  // The optional-module grant is still checked separately by the sidebar/page
+  // and, critically, by authorizeModule() on every API route.
+  if (custom?.modules && custom.modules.length > 0) return custom.modules.includes(module);
+  const own = overrides[role];
   if (own && own.length > 0) return own.includes(module);
-  const key = custom ? custom.base : (role as string);
+  const key = custom ? custom.base : role;
   const baseOwn = custom ? overrides[custom.base] : undefined;
   if (baseOwn && baseOwn.length > 0) return baseOwn.includes(module);
+
+  // Optional modules are granted separately from the built-in screen defaults.
+  // If a profile has no explicit screen allowlist, a role/module grant can add
+  // its screen; the required module grant remains an independent gate.
+  if (module === "purchasing" || module === "invoicing" || module === "jobcosting" || module === "hr") {
+    return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
+  }
   return ((MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? []).includes(module);
 }
 

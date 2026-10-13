@@ -295,6 +295,17 @@ const LABELS: Record<Action, string> = {
   "admin:seed": "reset demo data",
 };
 
+/** Effective built-in API actions for a role, including custom-role inheritance. */
+export function actionsForRole(role: string | null | undefined): Action[] {
+  const base = baseRoleOf(role);
+  return [...(MATRIX[base] ?? [])];
+}
+
+/** Plain-language label used by the access-profile preview in Settings. */
+export function actionLabel(action: Action): string {
+  return LABELS[action] ?? action;
+}
+
 export function deniedMessage(role: string | null | undefined, action: Action): string {
   return `Your role (${role ?? "guest"}) is not permitted to ${LABELS[action]}.`;
 }

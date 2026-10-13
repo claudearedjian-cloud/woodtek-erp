@@ -44,6 +44,19 @@ export async function generatePartLabelsHtml(
   const labelCards = parts
     .map((part) => {
       const qrSrc = barcodeUrls[part.id];
+      const face0Reference = part.cixFilenameFace0 || (part.cixReferenceExplicit ? part.cixFilename || "" : "");
+      const face0Filename = part.cixMatchedFilenameFace0 || part.cixData?.filename || face0Reference || (part.cixData ? part.cixFilename || "" : "");
+      const face6Reference = part.cixFilenameFace6 || "";
+      const face6Filename = part.cixMatchedFilenameFace6 || part.cixDataFace6?.filename || face6Reference;
+      const cixRefs = [
+        face0Filename
+          ? `Face 0: ${face0Filename}${part.cixMatchMethod === "dimensions" && face0Reference && face0Reference !== face0Filename ? ` (CSV ref: ${face0Reference})` : ""}`
+          : "",
+        face6Filename
+          ? `Face 6: ${face6Filename}${part.cixMatchMethodFace6 === "dimensions" && face6Reference && face6Reference !== face6Filename ? ` (CSV ref: ${face6Reference})` : ""}`
+          : "",
+      ].filter(Boolean);
+      const cixLabel = cixRefs.length ? cixRefs.join(" · ") : "No machining";
       const eb = part.edgeBanding || {
         top: "1.0mm",
         bottom: "1.0mm",
@@ -73,7 +86,7 @@ export async function generatePartLabelsHtml(
             </div>
 
             <div class="cix-prog">
-              <span class="label-tag">CIX:</span> <code>${part.cixFilename || part.barcode + ".cix"}</code>
+              <span class="label-tag">CIX:</span> <code>${cixLabel}</code>
             </div>
           </div>
 

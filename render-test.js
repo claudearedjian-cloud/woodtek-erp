@@ -403,11 +403,11 @@ const mgrCfg = renderToString(React.createElement(Sidebar, props("Manager", cfg)
 const opCfg = renderToString(React.createElement(Sidebar, props("Machine Operator", cfg)));
 
 check(mgrCfg.includes("Factory Reports"), "config: rename applied (manager)");
-check(!mgrCfg.includes("Executive Dashboard"), "config: role override hides dashboard for manager");
+check(mgrCfg.includes("Executive Dashboard"), "config: built-in screens follow the Manager access profile, not a menu-item override");
 check(mgrCfg.indexOf("Factory Reports") < mgrCfg.indexOf("Live WIP Board"), "config: reorder puts reports first");
 check(mgrCfg.includes("QA Corner") && mgrCfg.indexOf("General Settings") < mgrCfg.indexOf("QA Corner"), "config: item moved into settings group");
-check(opCfg.includes("Live WIP Board"), "config: override shows WIP for operator");
-check(!opCfg.includes("Executive Dashboard"), "config: manager-only override does not leak to operator");
+check(!opCfg.includes("Live WIP Board"), "config: a menu-item override cannot grant WIP outside the operator access profile");
+check(!opCfg.includes("Executive Dashboard"), "config: operator profile continues to hide the Manager dashboard");
 check(opCfg.includes("QA Corner"), "config: operator gets group-promoted moved item");
 
 // ---- Warehouse & BOM module ----
@@ -432,6 +432,8 @@ check(perms.baseRoleOf("Foreman") === "Machine Operator", "baseRoleOf maps custo
 check(perms.baseRoleOf("Manager") === "Manager", "baseRoleOf leaves built-ins alone");
 check(perms.can("Foreman", "users:manage") === false, "custom name has no direct matrix entry");
 check(perms.can(perms.baseRoleOf("Foreman"), "operations:update-status") === true, "base role actions apply to custom role");
+check(perms.actionsForRole("Foreman").includes("operations:update-status"), "access preview resolves custom-role API actions from its base role");
+check(perms.actionLabel("users:manage") === "manage staff accounts", "access preview exposes plain-language action labels");
 
 const fMenu = menuCfg.resolveMenu("Foreman", null);
 const fIds = [...fMenu.top.map((i) => i.id), ...fMenu.settings.map((i) => i.id)];
@@ -441,9 +443,15 @@ check(!fIds.includes("orders"), "custom operator role cannot see Orders");
 
 const hideStation = { version: 1, items: [{ id: "station", roles: { Foreman: false } }] };
 const fMenu2 = menuCfg.resolveMenu("Foreman", hideStation);
-check(![...fMenu2.top.map((i) => i.id), ...fMenu2.settings.map((i) => i.id)].includes("station"), "per-custom-role override hides station");
+check([...fMenu2.top.map((i) => i.id), ...fMenu2.settings.map((i) => i.id)].includes("station"), "legacy per-menu visibility does not override the role profile");
+perms.registerCustomRoles([{ name: "Foreman", base: "Machine Operator", modules: ["quality"] }]);
+const restrictedForemanMenu = menuCfg.resolveMenu("Foreman", null);
+const restrictedForemanIds = [...restrictedForemanMenu.top.map((i) => i.id), ...restrictedForemanMenu.settings.map((i) => i.id)];
+check(!restrictedForemanIds.includes("station") && restrictedForemanIds.includes("quality"), "custom profile screen allowlist controls its menu");
+check(!require("./compiled/lib/moduleAccess.js").canAccessModule("Foreman", "invoicing"), "custom profile screen allowlist also limits optional-screen navigation");
+perms.registerCustomRoles([{ name: "Foreman", base: "Machine Operator" }]);
 const oMenu = menuCfg.resolveMenu("Machine Operator", hideStation);
-check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includes("station"), "custom-role override does not leak to base role");
+check([...oMenu.top.map((i) => i.id), ...oMenu.settings.map((i) => i.id)].includes("station"), "legacy custom-role screen override does not affect the base profile");
 
 const foreman = renderToString(React.createElement(Sidebar, props("Foreman")));
 check(foreman.includes("Operator Station Mode"), "Sidebar renders for custom role");
@@ -1277,6 +1285,7 @@ check(gm.healthBucket(mkOrder({ status: "Completed", dueDate: "2026-09-10T09:00:
 const delOrder = mkOrder({ status: "Delivered", dueDate: "2026-09-20T09:00:00Z", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-09-17T10:00:00Z" } });
 check(gm.healthBucket(delOrder, nowFix) === "delivered", "health: delivered order buckets to delivered");
 check(gm.recentlyDelivered(delOrder, nowFix, 14) === true && gm.recentlyDelivered(mkOrder({ status: "Delivered", dispatch: { stage: "delivered", mixed: false, deliveredCount: 1, totalBatches: 1, deliveredAt: "2026-08-20T10:00:00Z" } }), nowFix, 14) === false, "health: recently-delivered window is 14 days");
+check(gm.HEALTH_COLUMNS.every((column) => column.id !== "delivered"), "gantt model: delivered orders have no visible health-board column");
 
 check(gm.scheduleCrossesDue(mkOrder({ steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === true, "health: a schedule that crosses the due date is flagged");
 check(gm.scheduleCrossesDue(mkOrder({ status: "Delivered", steps: [mkStep({ id: 7, scheduledStart: "2026-09-30T08:00:00Z", scheduledEnd: "2026-10-01T18:00:00Z" })] })) === false, "health: delivered orders are never flagged for a crossing plan");
@@ -1302,6 +1311,12 @@ check(
     && ganttViewSource.includes("assignLanes")
     && ganttViewSource.includes("orderSpan"),
   "gantt view: timeline is driven by the pure model (true-dated steps, auto-fit window, health buckets)",
+);
+check(
+  ganttApiSource.includes("dispatch.deliveredCount >= dispatch.totalBatches")
+    && ganttViewSource.includes("orders.filter((order) => !isDeliveredOrder(order))")
+    && !ganttViewSource.includes("recentlyDelivered"),
+  "gantt: delivered orders are excluded by both the API and the view, with no Recently Delivered bucket",
 );
 
 // ---- bundle 29b: grey "claimed elsewhere" card on the operator station ----
@@ -1453,6 +1468,14 @@ check(
     stationAlertSource.includes("announceNewJobs(freshRows)") &&
     stationAlertSource.includes("Notification.requestPermission()"),
   "station alerts: beep + browser notification are wired to the fresh-queue detection",
+);
+check(
+  stationAlertSource.includes('handleTouchAction(op.id, "Paused")')
+    && stationAlertSource.includes('t("PAUSE JOB")')
+    && operationActionSource.includes('requestedStatus === "Paused"')
+    && operationActionSource.includes('currentOp.status === "Paused"')
+    && operationsSource.includes('"Paused"'),
+  "station pause: running jobs can be paused, remain resumable in the queue, and free the machine",
 );
 
 // ---- bundle 36: stock check at order issue ----
@@ -2226,6 +2249,10 @@ check(
 );
 check(settingsViewSource.includes("toggleModuleEnabled") && settingsViewSource.includes("toggleRoleModule") && settingsViewSource.includes("toggleUserModule"), "settings: SettingsView provides toggle handlers for master/role/user");
 check(settingsViewSource.includes("Blocks") && settingsViewSource.includes("Optional modules"), "settings: SettingsView renders Optional modules button and icon");
+check(settingsViewSource.includes("Access preview") && settingsViewSource.includes("resolveProfileScreens(selectedRole)"), "settings: user role selection previews the matching screen profile");
+check(settingsViewSource.includes("actionsForRole(selectedRole)") && settingsViewSource.includes("actionLabel(action)"), "settings: user role selection previews inherited API actions");
+const settingsApiSource = fs.readFileSync("src/app/api/settings/route.ts", "utf8");
+check(settingsApiSource.includes("ensureRolesRegistered()") && settingsApiSource.includes("allRoles().includes(assignedRole)"), "settings API: user creation and role changes reject roles without a registered access profile");
 
 // ---- money redaction wave (24 checks) ----
 check(repMoney.isMoneyOnlyReport("Order Profitability") === true && repMoney.isMoneyOnlyReport("Production Summary") === false, "report money: isMoneyOnlyReport identifies Order Profitability");
@@ -2557,6 +2584,8 @@ const jcZero = jc.costOrder({ order: jcOrder(), materials: jcMats, operations: j
 check(jcZero.laborCents === 0 && jcZero.overheadCents === 0 && jcZero.costCents === 94000, "job costing: unset labor rate / overhead add $0 (machine time still counts)");
 const jcRunning = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 21, stepOrder: 1, operationName: "Route", machineId: 1, machineCode: "BEAM-01", status: "In Progress", estimatedMinutes: 30, actualMinutes: 0, startTime: "2026-10-01T10:00:00Z", endTime: null }], quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
 check(jcRunning.operationLines[0].actualMinutes === 120 && jcRunning.operationLines[0].basis === "elapsed" && jcRunning.machineCents === 12000, "job costing: a step running right now costs its elapsed time once it overruns the plan");
+const jcResumed = jc.costOrder({ order: jcOrder(), materials: [], operations: [{ id: 22, stepOrder: 1, operationName: "Route", machineId: 1, machineCode: "BEAM-01", status: "In Progress", estimatedMinutes: 30, actualMinutes: 30, startTime: "2026-10-01T10:00:00Z", endTime: null }], quality: [], machineRates: jcRates, settings: jc.DEFAULT_JOB_COST_SETTINGS, now: jcNow });
+check(jcResumed.operationLines[0].actualMinutes === 150, "job costing: elapsed time after a resume is added to minutes recorded before the pause");
 const jcLoss = jc.costOrder({ order: jcOrder({ totalValue: "500.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
 check(jcLoss.profitCents < 0 && jcLoss.flags.includes("loss") && jcLoss.marginBps < 0, "job costing: an order below cost is flagged as losing money");
 const jcThin = jc.costOrder({ order: jcOrder({ totalValue: "1100.00", status: "Completed" }), materials: jcMats, operations: jcOps, quality: [], machineRates: jcRates, settings: jcSettings, now: jcNow });
@@ -3557,6 +3586,60 @@ const parsedPart = cixParser.parseCix(testCix, "test_side.cix");
 check(parsedPart.length === 800 && parsedPart.width === 550 && parsedPart.thickness === 18, "Polyboard CIX: correctly parses LPX, LPY, LPZ");
 check(parsedPart.borings.length === 2, "Polyboard CIX: correctly parses Rover A BG boring macros");
 
+const multilineCix = `BEGIN ID CID3
+BEGIN MAINDATA
+LPX=800
+LPY=550
+LPZ=18
+CUSTSTR=$B$VARIABLE_PART
+MATERIAL="MFC White"
+END MAINDATA
+BEGIN MACRO
+NAME=BV
+PARAM,NAME=SIDE,VALUE=2
+PARAM,NAME=X,VALUE=21.5
+PARAM,NAME=Y,VALUE=37
+PARAM,NAME=Z,VALUE=0
+PARAM,NAME=DIA,VALUE=5
+PARAM,NAME=DP,VALUE=13
+END MACRO
+BEGIN MACRO
+NAME=ROUT
+PARAM,NAME=ID,VALUE="GROOVE"
+PARAM,NAME=TNM,VALUE="10MILL"
+PARAM,NAME=DIA,VALUE=8
+PARAM,NAME=DP,VALUE=8
+END MACRO
+BEGIN MACRO
+NAME=START_POINT
+PARAM,NAME=X,VALUE=20
+PARAM,NAME=Y,VALUE=0
+END MACRO
+BEGIN MACRO
+NAME=LINE_EP
+PARAM,NAME=XE,VALUE=20
+PARAM,NAME=YE,VALUE=550
+PARAM,NAME=ZE,VALUE=8
+END MACRO
+END ID`;
+const multilineParsed = cixParser.parseCix(multilineCix, "00000048.cix");
+check(
+  multilineParsed.length === 800 && multilineParsed.width === 550 && multilineParsed.thickness === 18,
+  "Polyboard CIX: reads LPX/LPY/LPZ from separate MAINDATA lines",
+);
+check(
+  multilineParsed.borings.length === 1 && multilineParsed.borings[0].side === 2 && multilineParsed.borings[0].x === 21.5,
+  "Polyboard CIX: reads a multiline BEGIN MACRO / NAME=BV drilling macro",
+);
+check(
+  multilineParsed.partName === "00000048" && !multilineParsed.partName.startsWith("$B$"),
+  "Polyboard CIX: ignores CUSTSTR=$B$ placeholders instead of treating them as part names",
+);
+check(
+  multilineParsed.routings.length === 1 && multilineParsed.routings[0].points.length === 2,
+  "Polyboard CIX: preserves route geometry across line-oriented macro blocks",
+);
+
 
 // ---- Polyboard import robustness -------------------------------------------
 // Real Polyboard cutting lists are user configured (Cutting list > Cutting list
@@ -3569,6 +3652,236 @@ compile("src/lib/samplePolyboardData.ts", "lib/samplePolyboardData.js");
 const polyboard = require("./compiled/lib/polyboard");
 const polyboardParts = require("./compiled/lib/polyboardParts");
 const sampleData = require("./compiled/lib/samplePolyboardData.js");
+
+const woodtekNoCixHeader = [
+  "Length", "Width", "Thickness", "Quantity", "Material", "Grain", "Part name",
+  "Edge L1", "Edge L2", "Edge W1", "Edge W2", "Project", "Cabinet", "Face 0 CIX",
+  "Face 6 CIX", "Part serial",
+].join(";");
+const woodtekNoCixRow = [
+  "800", "550", "18", "1", "MFC White", "0", "Left side",
+  "", "", "", "", "Villa 42", "Base 600", "", "", "7",
+].join(";");
+const woodtekNoCix = polyboard.parsePolyboardCsv(`${woodtekNoCixHeader}\n${woodtekNoCixRow}`, { layout: "woodtek" });
+check(
+  !woodtekNoCix.parts[0].cixReferenceExplicit &&
+    woodtekNoCix.parts[0].cixFace0Expected === false &&
+    woodtekNoCix.parts[0].cixFace6Expected === false &&
+    !woodtekNoCix.parts[0].cixFilename &&
+    !woodtekNoCix.diagnostics.warnings.some((warning) => warning.includes("blank")),
+  "Polyboard CSV: blank face-0 and face-6 CIX columns mean no machining, not missing references",
+);
+const noRefCabinets = Array.from(woodtekNoCix.cabinetsMap.values());
+const intentionallyUnmachined = polyboard.matchCixToParts(noRefCabinets, [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  intentionallyUnmachined.matchedCount === 0 &&
+    intentionallyUnmachined.partsWithCix === 0 &&
+    intentionallyUnmachined.unlinkedParts.length === 0 &&
+    intentionallyUnmachined.unmatchedCix.includes("00000048.cix"),
+  "Polyboard CIX linking: does not attach an orphan program to a WoodTek face marked as unmachined",
+);
+
+const woodtekTwoFaceCsv = [
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model;00000056.cix;00000057.cix;1",
+  "832;582;5;1;0_mazonite 5mm;0;Back;;;;;test;Model;;;5",
+  "700;500;18;1;0_white 18mm;1;Shelf;a grain;;;;test;Model[1];;00000070.cix;6",
+].join("\n");
+const woodtekTwoFace = polyboard.parsePolyboardCsv(woodtekTwoFaceCsv, { layout: "woodtek" });
+const twoFaceParts = woodtekTwoFace.parts;
+check(
+  twoFaceParts.length === 3 &&
+    twoFaceParts[0].cixFilenameFace0 === "00000056.cix" &&
+    twoFaceParts[0].cixFilenameFace6 === "00000057.cix" &&
+    twoFaceParts[0].partSerial === "1" &&
+    twoFaceParts[1].cixFace0Expected === false &&
+    twoFaceParts[1].cixFace6Expected === false &&
+    twoFaceParts[2].cixFace0Expected === false &&
+    twoFaceParts[2].cixFilenameFace6 === "00000070.cix" &&
+    twoFaceParts[2].partSerial === "6" &&
+    woodtekTwoFace.diagnostics.detectedColumns.cix === "column 14 (face 0 CIX filename)" &&
+    woodtekTwoFace.diagnostics.detectedColumns.cixFace6 === "column 15 (face 6 CIX filename)" &&
+    woodtekTwoFace.diagnostics.detectedColumns.partSerial === "column 16 (cabinet part serial)",
+  "Polyboard CSV: columns 14/15 map independent face programs and column 16 preserves the cabinet part serial",
+);
+const twoFaceMatch = polyboard.matchCixToParts(Array.from(woodtekTwoFace.cabinetsMap.values()), [
+  { filename: "00000056.cix", content: multilineCix },
+  { filename: "00000057.cix", content: multilineCix },
+  { filename: "00000070.cix", content: multilineCix },
+]);
+check(
+  twoFaceMatch.matchedCount === 3 &&
+    twoFaceMatch.partsWithCix === 2 &&
+    twoFaceMatch.links.map((link) => link.face).sort().join(",") === "0,6,6" &&
+    twoFaceParts[0].cixData?.borings.length === 1 &&
+    twoFaceParts[0].cixDataFace6?.borings.length === 1 &&
+    twoFaceParts[2].cixDataFace6?.borings.length === 1 &&
+    twoFaceMatch.partsWithoutCix === 0 &&
+    twoFaceMatch.unlinkedParts.length === 0,
+  "Polyboard CIX linking: explicit face-0 and face-6 filenames attach to the correct cabinet parts, while blank faces stay empty",
+);
+const missingOneFaceCsv = polyboard.parsePolyboardCsv(woodtekTwoFaceCsv, { layout: "woodtek" });
+const missingOneFace = polyboard.matchCixToParts(Array.from(missingOneFaceCsv.cabinetsMap.values()), [
+  { filename: "00000056.cix", content: multilineCix },
+  { filename: "00000070.cix", content: multilineCix },
+]);
+check(
+  missingOneFace.missingCix.length === 1 &&
+    missingOneFace.missingCix[0].reference === "00000057.cix" &&
+    missingOneFace.missingCix[0].face === 6 &&
+    missingOneFace.missingCix[0].partSerial === "1",
+  "Polyboard CIX linking: a missing face-specific file is reported with face, cabinet part and serial",
+);
+const unresolvedFace0Csv = polyboard.parsePolyboardCsv(
+  "800;550;18;1;0_white 18mm;1;Fallback side;;;;;test;Cabinet;missing-face0.cix;;11",
+  { layout: "woodtek" },
+);
+const unresolvedFace0Match = polyboard.matchCixToParts(Array.from(unresolvedFace0Csv.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  unresolvedFace0Match.matchedCount === 1 &&
+    unresolvedFace0Match.matchedByMethod.dimensions === 1 &&
+    unresolvedFace0Match.links[0].filename === "00000048.cix" &&
+    unresolvedFace0Match.links[0].face === 0 &&
+    unresolvedFace0Match.links[0].partSerial === "11" &&
+    unresolvedFace0Csv.parts[0].cixFilenameFace0 === "missing-face0.cix" &&
+    unresolvedFace0Csv.parts[0].cixMatchedFilenameFace0 === "00000048.cix" &&
+    unresolvedFace0Csv.parts[0].cixData.filename === "00000048.cix" &&
+    unresolvedFace0Match.missingCix.length === 1 &&
+    unresolvedFace0Match.unlinkedParts.length === 0,
+  "Polyboard CIX linking: a nonblank face-0 reference with no uploaded file may use a unique size fallback and remains flagged for review",
+);
+const unresolvedFace0AmbiguousCsv = polyboard.parsePolyboardCsv(
+  "800;550;18;1;0_white 18mm;1;Fallback side;;;;;test;Cabinet;missing-face0.cix;;11",
+  { layout: "woodtek" },
+);
+const ambiguousUnresolvedFace0Match = polyboard.matchCixToParts(
+  Array.from(unresolvedFace0AmbiguousCsv.cabinetsMap.values()),
+  [
+    { filename: "00000048.cix", content: multilineCix },
+    { filename: "00000049.cix", content: multilineCix },
+  ],
+);
+check(
+  ambiguousUnresolvedFace0Match.matchedCount === 0 &&
+    ambiguousUnresolvedFace0Match.ambiguousSizeMatches.length === 1 &&
+    ambiguousUnresolvedFace0Match.ambiguousSizeMatches[0].candidateFiles.length === 2 &&
+    ambiguousUnresolvedFace0Match.missingCix.length === 1,
+  "Polyboard CIX linking: an unresolved explicit reference with ambiguous same-size programs stays unassigned",
+);
+const differentSerialCsv = polyboard.parsePolyboardCsv([
+  "800;550;18;1;0_white 18mm;1;Repeated side;;;;;test;Cabinet;missing-face0.cix;;11",
+  "800;550;18;1;0_white 18mm;1;Repeated side;;;;;test;Cabinet;missing-face0.cix;;12",
+].join("\n"), { layout: "woodtek" });
+const differentSerialMatch = polyboard.matchCixToParts(Array.from(differentSerialCsv.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  differentSerialMatch.matchedCount === 0 &&
+    differentSerialMatch.ambiguousSizeMatches.length === 2 &&
+    differentSerialMatch.ambiguousSizeMatches.every((match) => ["11", "12"].includes(match.partSerial)),
+  "Polyboard CIX linking: same-size parts with different cabinet serials do not share one guessed fallback file",
+);
+
+const userStyleTopCix = multilineCix.replace("LPX=800", "LPX=564").replace("LPY=550", "LPY=600");
+const duplicateCabinetCsv = [
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model;00000056.cix;;1",
+  "564;600;18;1;0_white 18mm;1;Top;a grain;p color;;;test;Model[1];00000060.cix;;1",
+].join("\n");
+const duplicateCabinetParts = polyboard.parsePolyboardCsv(duplicateCabinetCsv, { layout: "woodtek" });
+const duplicateCabinetMatch = polyboard.matchCixToParts(Array.from(duplicateCabinetParts.cabinetsMap.values()), [
+  { filename: "00000048.cix", content: userStyleTopCix },
+  { filename: "00000056.cix", content: userStyleTopCix },
+  { filename: "00000060.cix", content: userStyleTopCix },
+]);
+check(
+  duplicateCabinetMatch.matchedCount === 2 &&
+    duplicateCabinetMatch.partsWithCix === 2 &&
+    duplicateCabinetMatch.matchedByMethod.reference === 2 &&
+    duplicateCabinetMatch.matchedByMethod.dimensions === 0 &&
+    duplicateCabinetMatch.unmatchedCix.includes("00000048.cix") &&
+    duplicateCabinetMatch.links.some((link) => link.cabinetName === "Model" && link.partName === "Top" && link.partSerial === "1") &&
+    duplicateCabinetMatch.links.some((link) => link.cabinetName === "Model[1]" && link.partName === "Top" && link.partSerial === "1"),
+  "Polyboard CIX linking: CSV filenames bind duplicate-size Top parts to their own cabinets; an unreferenced same-size file stays unlinked",
+);
+
+const genericNoCixCsv = [
+  "Length;Width;Thickness;Quantity;Part;Project;Cabinet",
+  "800;550;18;1;Left side;Villa 42;Base 600",
+].join("\n");
+const genericNoCix = polyboard.parsePolyboardCsv(genericNoCixCsv);
+const genericNoRefCabinets = Array.from(genericNoCix.cabinetsMap.values());
+const sizeOnlyMatch = polyboard.matchCixToParts(genericNoRefCabinets, [
+  { filename: "00000048.cix", content: multilineCix },
+]);
+check(
+  sizeOnlyMatch.matchedCount === 1 &&
+    sizeOnlyMatch.matchedByMethod.dimensions === 1 &&
+    genericNoRefCabinets[0].parts[0].cixMatchMethod === "dimensions" &&
+    genericNoRefCabinets[0].parts[0].cixData?.borings.length === 1,
+  "Polyboard CIX linking: generic layouts still allow a unique dimensions-only match when no face reference columns exist",
+);
+const sameSizeParts = ["Left side", "Right side"].map((name, index) => ({
+  ...genericNoRefCabinets[0].parts[0],
+  id: `ambiguous-${index}`,
+  name,
+  cixFilename: `Base_600_${name.replace(/ /g, "_")}.cix`,
+  cixFilenameFace0: undefined,
+  cixFilenameFace6: undefined,
+  cixMatchedFilenameFace0: undefined,
+  cixMatchedFilenameFace6: undefined,
+  cixReferenceExplicit: false,
+  cixReferenceFace6Explicit: false,
+  cixData: undefined,
+  cixDataFace6: undefined,
+  cixMatchMethod: undefined,
+  cixMatchMethodFace6: undefined,
+  barcode: `Base_600_${name.replace(/ /g, "_")}`,
+}));
+const ambiguousMatch = polyboard.matchCixToParts([
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+], [
+  { filename: "00000048.cix", content: multilineCix },
+  { filename: "00000049.cix", content: multilineCix },
+]);
+check(
+  ambiguousMatch.matchedCount === 0 && ambiguousMatch.ambiguousSizeMatches.length === 2,
+  "Polyboard CIX linking: refuses to guess when same-size parts and programs are indistinguishable by dimensions",
+);
+const contestedSizeMatch = polyboard.matchCixToParts([
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: sameSizeParts },
+], [{ filename: "00000048.cix", content: multilineCix }]);
+check(
+  contestedSizeMatch.matchedCount === 0 && contestedSizeMatch.ambiguousSizeMatches.length === 2,
+  "Polyboard CIX linking: does not give one size-only program to a different part merely because it is the only candidate",
+);
+const repeatedUnreferencedParts = [1, 2].map((index) => ({
+  ...genericNoRefCabinets[0].parts[0],
+  id: `repeated-${index}`,
+  name: "Repeated shelf",
+  cixFilename: "Base_600_Repeated_shelf.cix",
+  cixFilenameFace0: undefined,
+  cixFilenameFace6: undefined,
+  cixMatchedFilenameFace0: undefined,
+  cixMatchedFilenameFace6: undefined,
+  cixReferenceExplicit: false,
+  cixReferenceFace6Explicit: false,
+  cixData: undefined,
+  cixDataFace6: undefined,
+  cixMatchMethod: undefined,
+  cixMatchMethodFace6: undefined,
+  barcode: `Base_600_Repeated_shelf-${index}`,
+}));
+const repeatedSizeMatch = polyboard.matchCixToParts([
+  { ...genericNoRefCabinets[0], name: "Base 600", parts: repeatedUnreferencedParts },
+], [{ filename: "00000048.cix", content: multilineCix }]);
+check(
+  repeatedSizeMatch.matchedCount === 2 &&
+    repeatedSizeMatch.links.every((link) => link.method === "dimensions" && link.filename === "00000048.cix"),
+  "Polyboard CIX linking: reuses one size-matched program for repeated identical, unreferenced parts on the same face",
+);
 
 // A) Title block + French/accented headers, CIX reference column, quantities
 const frCutList = [
@@ -3728,11 +4041,15 @@ check(
 );
 
 // ---- Owner-specified Polyboard CSV positions (one-based 7/12/13/14) ---------
-const woodtekHeader = ["Length", "Width", "Thickness", "Qty", "Edge1", "Grain", "Part", "Material", "Edge2", "Edge3", "Edge4", "Project", "Cabinet", "CIX"];
+const woodtekHeader = [
+  "Length", "Width", "Thickness", "Quantity", "Material", "Grain", "Part name",
+  "Edge L1", "Edge L2", "Edge W1", "Edge W2", "Project", "Cabinet", "Face 0 CIX",
+  "Face 6 CIX", "Part serial",
+];
 const woodtekRows = [
-  [720, 560, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet base", "C:\\CNC\\KB600_LS.CIX"],
-  [564, 100, 18, 2, "", 0, "Top Rail", "MFC White", "", "", "", "", "", "shared-rail"],
-  [600, 320, 18, 1, "", 0, "Left Side Panel", "MFC White", "", "", "", "Project Villa 42", "Cabinet wall", "/exports/WU900_LS.cix"],
+  [720, 560, 18, 1, "MFC White", 0, "Left Side Panel", "L1", "L2", "W1", "W2", "Project Villa 42", "Cabinet base", "C:\\CNC\\KB600_LS.CIX", "", "51"],
+  [564, 100, 18, 2, "MFC White", 0, "Top Rail", "", "", "", "", "", "", "shared-rail", "", "52"],
+  [600, 320, 18, 1, "MFC White", 0, "Left Side Panel", "", "", "", "", "Project Villa 42", "Cabinet wall", "/exports/WU900_LS.cix", "", "53"],
 ];
 const csvRow = (cells, delimiter = ";") => cells.map((cell) => {
   const value = String(cell);
@@ -3741,13 +4058,14 @@ const csvRow = (cells, delimiter = ";") => cells.map((cell) => {
 const woodtekCsv = [woodtekHeader, ...woodtekRows].map((row) => csvRow(row)).join("\n");
 const woodtekParsed = polyboard.parsePolyboardCsv(woodtekCsv);
 const woodtekCabinets = Array.from(woodtekParsed.cabinetsMap.values());
-check(JSON.stringify(polyboard.WOODTEK_CSV_COLUMNS) === JSON.stringify({ part: 7, project: 12, cabinet: 13, cix: 14 }), "Polyboard fixed columns: positions are one-based 7/12/13/14");
+check(JSON.stringify(polyboard.WOODTEK_CSV_COLUMNS) === JSON.stringify({ length: 1, width: 2, thickness: 3, quantity: 4, material: 5, grain: 6, part: 7, edgeL1: 8, edgeL2: 9, edgeW1: 10, edgeW2: 11, project: 12, cabinet: 13, cix: 14, cixFace6: 15, partSerial: 16 }), "Polyboard fixed columns: part/project/cabinet/face-0/face-6/serial positions are one-based 7/12/13/14/15/16");
 check(woodtekParsed.projectName === "Project Villa 42" && woodtekParsed.diagnostics.projectNames.length === 1, "Polyboard fixed columns: column 12 supplies the project name, not a cabinet name");
 check(woodtekCabinets.length === 2 && woodtekCabinets[0].name === "Cabinet base" && woodtekCabinets[1].name === "Cabinet wall", "Polyboard fixed columns: column 13 splits the project into its actual cabinets");
 check(woodtekCabinets[0].parts[0].name === "Left Side Panel" && woodtekCabinets[0].parts[1].name === "Top Rail (#1)", "Polyboard fixed columns: column 7 supplies part names, with quantity suffixes only when needed");
-check(woodtekParsed.parts.length === 4 && woodtekCabinets[0].parts[0].length === 720 && woodtekCabinets[0].parts[0].width === 560 && woodtekCabinets[0].parts[0].material === "MFC White", "Polyboard fixed columns: dimensions, quantities and material still use the remaining fields");
+check(woodtekParsed.parts.length === 4 && woodtekCabinets[0].parts[0].length === 720 && woodtekCabinets[0].parts[0].width === 560 && woodtekCabinets[0].parts[0].thickness === 18 && woodtekCabinets[0].parts[0].quantity === 1 && woodtekCabinets[0].parts[0].material === "MFC White", "Polyboard fixed columns: dimensions, quantity and material use their exact positions");
+check(woodtekCabinets[0].parts[0].grain === 0 && JSON.stringify(woodtekCabinets[0].parts[0].edgeBanding) === JSON.stringify({ top: "L1", bottom: "L2", left: "W1", right: "W2" }), "Polyboard fixed columns: grain and L1/L2/W1/W2 edge values retain their exact positions");
 check(woodtekCabinets[0].parts[0].cixFilename === "KB600_LS.CIX" && woodtekCabinets[0].parts[0].barcode === "KB600_LS" && woodtekCabinets[1].parts[0].cixFilename === "WU900_LS.cix", "Polyboard fixed columns: column 14 normalizes paths and uppercase extensions without a duplicate .cix suffix");
-check(woodtekParsed.diagnostics.layout === "woodtek" && woodtekParsed.diagnostics.cabinetGrouping === "column" && woodtekParsed.diagnostics.detectedColumns.cix === "column 14 (CIX filename)", "Polyboard fixed columns: diagnostics report the actual positional mapping instead of guessed blocks");
+check(woodtekParsed.diagnostics.layout === "woodtek" && woodtekParsed.diagnostics.cabinetGrouping === "column" && woodtekParsed.diagnostics.detectedColumns.cix === "column 14 (face 0 CIX filename)", "Polyboard fixed columns: diagnostics report the actual positional mapping instead of guessed blocks");
 const bareWoodtekParsed = polyboard.parsePolyboardCsv(woodtekRows.map((row) => csvRow(row)).join("\n"));
 check(bareWoodtekParsed.diagnostics.headerless && bareWoodtekParsed.parts.length === 4 && bareWoodtekParsed.parts[0].name === "Left Side Panel", "Polyboard fixed columns: headerless input keeps the first part even when names start with Project/Cabinet");
 check(bareWoodtekParsed.projectName === "Project Villa 42" && bareWoodtekParsed.cabinetsMap.size === 2 && bareWoodtekParsed.parts[0].length === 720, "Polyboard fixed columns: headerless exports use exact identity columns and infer sizes from the rest");
@@ -3793,7 +4111,8 @@ check(woodtekCabinets[0].parts.filter((part) => part.name.startsWith("Top Rail")
 const missingCixRow = [...woodtekRows[0]];
 missingCixRow[13] = "missing-file.cix";
 const missingCixParsed = polyboard.parsePolyboardCsv([woodtekHeader, missingCixRow].map((row) => csvRow(row)).join("\n"));
-check(polyboard.matchCixToParts(Array.from(missingCixParsed.cabinetsMap.values()), [{ filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] }]).matchedCount === 0, "Polyboard CIX: a missing explicit reference is reported unlinked, not silently substituted by part name");
+const missingCixFallbackMatch = polyboard.matchCixToParts(Array.from(missingCixParsed.cabinetsMap.values()), [{ filename: "KB600_LS.cix", content: sampleData.SAMPLE_CIX_FILES["KB600_LS.cix"] }]);
+check(missingCixFallbackMatch.matchedCount === 1 && missingCixFallbackMatch.matchedByMethod.dimensions === 1 && missingCixFallbackMatch.missingCix.length === 1, "Polyboard CIX: an unavailable explicit reference uses only a flagged size fallback, never a filename/CUSTSTR guess");
 const otherLayoutCsv = [
   "Part;Project;Cabinet;Length;Width;Thickness;Qty;CIX;Material;Edge1;Edge2;Edge3;Edge4;Grain",
   "Left Side Panel;Another project;Base;720;560;18;1;KB600_LS;MFC;;;;;0",
@@ -3811,7 +4130,7 @@ check(sampleParsed.diagnostics.layout === "auto", "Polyboard CSV: the shorter bu
 // Rows carrying a one-letter grain/edge code were dropped as "repeated headers".
 const padCix = (n) => String(n).padStart(8, "0");
 const numberedRow = (n, overrides = {}) => {
-  const cells = [720, 560, 18, 1, "", 0, "Side " + n, "MFC White", "", "", "", "Villa 42", n > 30 ? "Tall unit" : "Base unit", padCix(n)];
+  const cells = [720, 560, 18, 1, "MFC White", 0, "Side " + n, "", "", "", "", "Villa 42", n > 30 ? "Tall unit" : "Base unit", padCix(n), "", String(n)];
   Object.entries(overrides).forEach(([column, value]) => { cells[column] = value; });
   return csvRow(cells);
 };
@@ -3819,7 +4138,7 @@ const numberedCix = (count) => Array.from({ length: count }, (_, i) => ({
   filename: padCix(i + 1) + ".cix",
   content: 'BEGIN ID CID3\nBEGIN MAINDATA LPX=716 LPY=396 LPZ=18 CUSTSTR="Door" END MAINDATA\nEND ID',
 }));
-for (const [label, overrides] of [["grain L", { 5: "L" }], ["edge W", { 4: "W" }], ["edge H/T", { 8: "H", 9: "T" }], ["qty title", { 10: "pcs" }]]) {
+for (const [label, overrides] of [["grain L", { 5: "L" }], ["edge W", { 9: "W" }], ["edge H/T", { 7: "H", 8: "T" }], ["qty title", { 3: "pcs" }]]) {
   const csv = Array.from({ length: 55 }, (_, i) => numberedRow(i + 1, i + 1 >= 48 ? overrides : {})).join("\r\n");
   const parsed = polyboard.parsePolyboardCsv(csv);
   const match = polyboard.matchCixToParts(Array.from(parsed.cabinetsMap.values()), numberedCix(55));
@@ -3892,7 +4211,8 @@ check(assemblyViewSource.includes("activeProject && canManageProject && !loading
 check(assemblyViewSource.includes('method: "PATCH"') && assemblyViewSource.includes('method: "DELETE"') && assemblyViewSource.includes("encodeURIComponent(projectId)"), "assembly workspace: edit/delete target the selected project's encoded ID");
 check(assemblyViewSource.includes("const activeProject = projects.find(") && assemblyViewSource.includes("current.map((existing)") && assemblyViewSource.includes("selectProject(remaining[0] || null)"), "assembly workspace: updates share one project list and deletion clears or selects a remaining project");
 check(pageSource.includes("<AssemblyView key={currentUser.id} currentUser={currentUser}"), "assembly workspace: permissions and cached project state follow the signed-in user");
-check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && assemblyViewSource.includes("csvLayout: importCsvLayout") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.project"), "assembly import dialog: WoodTek column positions are the default and are sent to the API");
+check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && assemblyViewSource.includes("csvLayout: importCsvLayout") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.project") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.cixFace6") && assemblyViewSource.includes("WOODTEK_CSV_COLUMNS.partSerial"), "assembly import dialog: WoodTek face-specific CIX and part-serial columns are explained and sent to the API");
+check(assemblyViewSource.includes("cixMatchedFilenameFace0") && assemblyViewSource.includes("cixMatchedFilenameFace6") && assemblyViewSource.includes("CSV ref:"), "assembly workspace: face details distinguish an uploaded fallback filename from the original CSV reference");
 check(assemblyViewSource.includes("Project Name (Optional Override)") && !assemblyViewSource.includes("setImportProjName(file.name"), "assembly import dialog: uploading a file does not override column 12 with the filename");
 
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
@@ -4052,12 +4372,25 @@ async function checkAssemblyProjectApi() {
     const shortHeaderless = Array.from({ length: 47 }, (_, i) => numberedRow(i + 1)).join("\n");
     response = await route.POST(request("POST", undefined, { csvContent: shortHeaderless, cixFiles: numberedCix(55) }));
     data = await response.json();
-    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.startsWith("8 CIX file(s) are not named in column 14") && w.includes("00000048.cix (Door 716×396×18)")),
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.startsWith("8 CIX file(s) are not named in column 14 or 15") && w.includes("00000048.cix (Door 716×396×18)")),
       "assembly CSV import: files missing from the cutting list are explained with their internal part name and size");
     response = await route.POST(request("POST", undefined, { csvContent: Array.from({ length: 2 }, (_, i) => numberedRow(i + 1, i === 1 ? { 13: "00000077" } : {})).join("\n"), cixFiles: numberedCix(1) }));
     data = await response.json();
-    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.includes("name a CIX file that was not uploaded") && w.includes("00000077.cix (Base unit / Side 2)")),
+    check(response.status === 200 && data.diagnostics.warnings.some((w) => w.includes("face reference(s) name a CIX file that was not uploaded") && w.includes("00000077.cix (face 0, Base unit / Side 2")),
       "assembly CSV import: column-14 files that were not uploaded are named in the report");
+    const explicitFallbackCsv = [800, 550, 18, 1, "MFC White", 0, "Fallback side", "", "", "", "", "Fallback project", "Cabinet 101", "not-uploaded.cix", "", "101"].join(";");
+    response = await route.POST(request("POST", undefined, { csvContent: explicitFallbackCsv, cixFiles: [{ filename: "00000048.cix", content: multilineCix }] }));
+    data = await response.json();
+    check(response.status === 200 && data.project.cabinets[0].parts[0].cixData.filename === "00000048.cix" &&
+      data.diagnostics.warnings.some((w) => w.includes("unique size-only fallback") && w.includes("00000048.cix → Cabinet 101 / Fallback side #101 (face 0)")) &&
+      data.diagnostics.warnings.some((w) => w.includes("not-uploaded.cix (face 0, Cabinet 101 / Fallback side #101")),
+      "assembly CSV import: unique size-only fallback is attached and reported alongside the unavailable CSV filename/serial");
+    const blankFaceCsv = [800, 550, 18, 1, "MFC White", 0, "Unmachined side", "", "", "", "", "Blank project", "Cabinet 102", "", "", "102"].join(";");
+    response = await route.POST(request("POST", undefined, { csvContent: blankFaceCsv, cixFiles: [{ filename: "00000048.cix", content: multilineCix }] }));
+    data = await response.json();
+    check(response.status === 200 && data.diagnostics.cix.missingCix.length === 0 && data.diagnostics.cix.unlinkedParts.length === 0 &&
+      !data.diagnostics.warnings.some((w) => w.includes("eligible face(s)") || w.includes("face reference(s) name a CIX file")),
+      "assembly CSV import: blank face references never produce missing-file or eligible-face warnings");
 
     response = await route.POST(request("POST", undefined, { projectName: "  Manual project name  ", csvContent: woodtekCsv }));
     data = await response.json();
