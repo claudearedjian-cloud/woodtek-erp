@@ -4346,6 +4346,17 @@ check(
   runbookSource.includes("OLD WINDOWS SERVERS") && runbookSource.includes("NODE_SKIP_PLATFORM_CHECK"),
   "runbook: the Press any key / Windows Server 2012 R2 case is documented for the owner",
 );
+const readmeSource = fs.readFileSync("README.md", "utf8");
+check(
+  runbookSource.includes("HYPER-V VIRTUAL MACHINE") && runbookSource.includes("Default Switch")
+    && runbookSource.includes("CHECKPOINTS ARE NOT BACKUPS") && runbookSource.includes("EXTERNAL virtual switch"),
+  "runbook: running on a Hyper-V VM is documented (external switch, fixed IP, checkpoints are not backups)",
+);
+check(
+  readmeSource.includes("**External** virtual") && readmeSource.includes("guest* Windows version")
+    && readmeSource.includes("HYPER-V VIRTUAL MACHINE"),
+  "readme: the old-Windows section points VM users at the Hyper-V notes",
+);
 
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
 // dependency. Only authentication is substituted; the permission matrix,

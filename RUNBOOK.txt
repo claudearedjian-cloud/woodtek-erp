@@ -71,7 +71,36 @@ OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
   Keep it honest: Microsoft ended support for Windows Server 2012 R2 in
   October 2023 (no security updates) and PostgreSQL 16 is not tested on it.
   It is fine as a spare PC - a server that runs the shop every day should be
-  Windows Server 2016 or newer.
+  Windows Server 2016 or newer. In a virtual machine that upgrade is cheap:
+  build the VM with a newer Windows Server guest and the workaround is not
+  needed at all (and the guest keeps getting security updates).
+
+RUNNING IN A HYPER-V VIRTUAL MACHINE (FS200)
+  The app runs fine on a virtual machine, and the Node.js version message is
+  about the GUEST Windows version - not about virtualization. Host settings
+  that matter:
+  - Network: attach the VM to an EXTERNAL virtual switch (Hyper-V Manager >
+    Virtual Switch Manager). With the "Default Switch" the VM sits behind NAT
+    and the other PCs cannot open http://<vm-ip>:3000.
+  - Address: give the VM a fixed IP inside Windows (or a DHCP reservation), so
+    the address on shortcuts, bookmarks and printed notes never changes.
+  - Memory: 4 GB minimum, 8 GB comfortable - and avoid Dynamic Memory for a
+    database server (PostgreSQL wants a stable amount). Set static memory.
+  - Start/stop: in the VM settings make Automatic Start Action "Always start
+    automatically" and Automatic Stop Action "Shut down the guest operating
+    system". A host reboot then brings the app back by itself (the
+    "\WoodTek ERP" task starts with Windows).
+  - Clock: leave Hyper-V "Time Synchronization" (Integration Services) ON -
+    attendance, job timestamps and the nightly backup use the VM clock.
+  - Backups: HYPER-V CHECKPOINTS ARE NOT BACKUPS for the database (a checkpoint
+    is a crash-consistent disk image, and reverting it throws away everything
+    written since). Keep the nightly task running inside the VM
+    (backups\nightly), and if you want an image-level rollback point, SHUT THE
+    VM DOWN first and then take the checkpoint (e.g. right after a successful
+    install or update).
+  - One server only: two PCs running the app against two different databases
+    are two different company books. Do not let the shop use a fresh install
+    until the data question is settled (see the sections above).
 
 QUICK REFERENCE
   App on this PC:      http://localhost:3000

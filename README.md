@@ -326,6 +326,12 @@ build-installer.bat
   folder still works. `start-prod.cjs` records the situation in the log.
 - Windows Server 2012 R2 left Microsoft support in October 2023 and PostgreSQL
   16 is not tested on it: use it as a spare, not as the main server.
+- **Virtual machines:** the message is about the *guest* Windows version, not
+  about virtualization. On Hyper-V, attach the VM to an **External** virtual
+  switch (the Default Switch is NAT: other PCs cannot reach `http://<vm-ip>:3000`),
+  give it a fixed IP, static memory, automatic start, keep Time Synchronization
+  on — and treat checkpoints as rollback points, not backups. See `RUNBOOK.txt`,
+  "RUNNING IN A HYPER-V VIRTUAL MACHINE".
 
 ## Role behaviour (since 2026-09-07)
 - Machine Operator: sidebar shows only Operator Station Mode, Scrap & Rework,
