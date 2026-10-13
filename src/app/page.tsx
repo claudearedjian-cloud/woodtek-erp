@@ -672,9 +672,6 @@ export default function WoodTekERP() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         currentUser={currentUser}
-        allUsers={users}
-        onSwitchUser={(user) => requestProfileSwitch(user)}
-        onRequestSwitch={() => requestProfileSwitch()}
         menuConfig={menuConfig}
         optionalModulesConfig={optionalConfig}
         isOpen={sidebarOpen}

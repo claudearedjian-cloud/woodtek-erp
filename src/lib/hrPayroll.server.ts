@@ -11,9 +11,10 @@ import {
   hrPayrollItems,
   hrPayrollRuns,
   hrSalaryHistory,
-  orderOperations,
   users,
 } from "@/db/schema";
+import type { AuditActor } from "@/lib/audit.server";
+import { anotherLoginManagerExists, deleteUserAccount } from "@/lib/userDeletion.server";
 import {
   calculateNetPay,
   HRPayrollError,
@@ -268,15 +269,6 @@ async function checkedEmployee(userId: number) {
   return employee;
 }
 
-/** True when another active login Manager exists besides `excludeId`. */
-async function anotherLoginManagerExists(excludeId: number): Promise<boolean> {
-  ensureRolesRegistered();
-  const rows = await db.select({ id: users.id, role: users.role })
-    .from(users)
-    .where(and(eq(users.active, true), eq(users.canLogin, true)));
-  return rows.some((row) => row.id !== excludeId && (baseRoleOf(row.role) || row.role) === "Manager");
-}
-
 async function guardAccountStillManaged(targetUserId: number): Promise<void> {
   const target = await checkedEmployee(targetUserId);
   ensureRolesRegistered();
@@ -414,7 +406,7 @@ export async function setEmployeeActive(input: unknown, actorId: number) {
  * attachments; leave and payroll history keep their snapshots. Callers
  * enforce the payroll grant.
  */
-export async function deleteNoLoginEmployee(userValue: unknown, actorId: number) {
+export async function deleteNoLoginEmployee(userValue: unknown, actorId: number, actor?: AuditActor) {
   const userId = positiveId(userValue, "Employee");
   await ensureHrSchema();
   const target = await checkedEmployee(userId);
@@ -422,12 +414,18 @@ export async function deleteNoLoginEmployee(userValue: unknown, actorId: number)
   if (target.canLogin) {
     throw new HRPayrollError("This employee has a login — delete the account in Settings instead.", 409);
   }
-  const assigned = await db.select({ id: orderOperations.id })
-    .from(orderOperations).where(eq(orderOperations.operatorId, userId)).limit(1);
-  if (assigned.length > 0) {
-    throw new HRPayrollError("Cannot delete an employee with assigned operations. Deactivate instead.", 409);
+  // Same engine as Settings → Users: it releases the pointers that only
+  // reference this person (attendance history, card authorship…) and refuses
+  // — with the exact reason — while something operational still holds them.
+  // Without a login there is no roster entry, so station assignments block.
+  try {
+    await deleteUserAccount(userId, actor ?? { id: actorId });
+  } catch (error) {
+    if (error instanceof HRPayrollError) throw error;
+    const message = error instanceof Error ? error.message : "Failed to delete this employee.";
+    const blockers = (error as { blockers?: string[] })?.blockers ?? [];
+    throw new HRPayrollError([message, ...blockers].join(" "), 409);
   }
-  await db.delete(users).where(eq(users.id, userId));
   // Orphaned photo/document files (if any) are ignored by every reader, the
   // same as other file-backed stores — metadata deletion is authoritative.
   return { id: userId, name: target.name };

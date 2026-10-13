@@ -1130,6 +1130,18 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                 && (!["Maintenance", "Offline"].includes(machine.status) || candidateMachineIds.includes(machine.id))
               );
               const candidateSelectionLocked = !["Pending", "Ready"].includes(op.status);
+              // Who is looking at this step? Only the roles that really assign
+              // stations get the picker. Everyone else reads the station the
+              // server already joined onto the step — a viewer without the
+              // machine list used to be told no station matched, while the
+              // Manager saw the station plainly assigned.
+              const canPickStations = canAssignMachines(currentUser?.role) && machines.length > 0;
+              const assignedMachine = machines.find((machine: any) => machine.id === op.machineId) ?? null;
+              const assignedStationLabel = assignedMachine
+                ? `${assignedMachine.code}${assignedMachine.name ? ` · ${assignedMachine.name}` : ""}`
+                : op.machineCode
+                  ? `${op.machineCode}${op.machineName ? ` · ${op.machineName}` : ""}`
+                  : String(op.machineName ?? "");
 
               return (
                 <div 
@@ -1179,12 +1191,25 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                           <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/80 px-2.5 py-1.5">
                             <Cpu className="h-3.5 w-3.5 text-amber-400" />
                             <span className="font-semibold text-slate-500">
-                              {candidateSelectionLocked ? "Claimed station:" : "Candidate stations:"}
+                              {candidateSelectionLocked
+                                ? "Claimed station:"
+                                : canPickStations ? "Candidate stations:" : "Station:"}
                             </span>
-                            {equivalentMachines.length === 0 && (
-                              <span className="font-bold text-rose-300">No active matching station</span>
+                            {!canPickStations && (
+                              assignedStationLabel
+                                ? (
+                                  <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-black text-emerald-300">
+                                    {assignedStationLabel}
+                                  </span>
+                                )
+                                : <span className="font-bold text-slate-400">Not assigned to a station yet</span>
                             )}
-                            {equivalentMachines.map((machine: any) => {
+                            {canPickStations && equivalentMachines.length === 0 && (
+                              <span className="font-bold text-amber-300">
+                                No machine of this category yet — add one in Machines
+                              </span>
+                            )}
+                            {canPickStations && equivalentMachines.map((machine: any) => {
                               const selected = candidateMachineIds.includes(machine.id);
                               const unavailable = ["Maintenance", "Offline"].includes(machine.status);
                               const canEditCandidates = canAssignMachines(currentUser?.role) && !candidateSelectionLocked;
@@ -1216,7 +1241,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                                 </label>
                               );
                             })}
-                            {!candidateSelectionLocked && candidateMachineIds.length > 1 && (
+                            {canPickStations && !candidateSelectionLocked && candidateMachineIds.length > 1 && (
                               <span className="font-bold text-blue-300">First Start claims one</span>
                             )}
                           </div>
