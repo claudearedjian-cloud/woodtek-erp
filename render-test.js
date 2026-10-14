@@ -4546,6 +4546,206 @@ check(
     && readmeSource.includes("find-postgres-tools.bat"),
   "docs: the pg_dump-not-found path and its helper are documented for the owner",
 );
+
+// --- PowerShell syntax sanity (2026-10-14) ----------------------------------
+// A .ps1 that does not parse is invisible until the owner double-clicks it, and
+// then the messages are cryptic: an unterminated double quote shows up as
+// "The ampersand (&) character is not allowed / The string is missing the
+// terminator" two hundred lines later. This walks every shipped PowerShell file
+// the way PowerShell does - comments, <# #> blocks, @' / @" here-strings,
+// single-quoted strings, backtick escapes, delimiters - and fails the build on
+// anything that cannot parse. It also blocks the exact 2026-10-13 landmine:
+// piping into Out-File without -FilePath.
+function psSanityProblems(text) {
+  const problems = [];
+  const depth = { "(": 0, "{": 0, "[": 0 };
+  let i = 0;
+  let line = 1;
+  let lineStart = true;
+  let inDouble = false;
+  let inSingle = false;
+  let inBlockComment = false;
+  let hereStart = null;
+  let stringOpenLine = null;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    if (ch === "\n") {
+      if (inSingle && !hereStart) {
+        problems.push("line " + line + ": single-quoted string not closed");
+        inSingle = false;
+      }
+      if (inDouble && !hereStart) {
+        problems.push("line " + stringOpenLine + ": double-quoted string not closed on its line");
+        inDouble = false;
+      }
+      line += 1;
+      i += 1;
+      lineStart = true;
+      continue;
+    }
+
+    if (hereStart) {
+      // PowerShell wants the terminator in column 0 - indenting it is an error.
+      if (lineStart) {
+        const terminator = hereStart.kind === "double" ? '"@' : "'@";
+        if (text.startsWith(terminator, i)) {
+          hereStart = null;
+          i += 2;
+          lineStart = false;
+          continue;
+        }
+      }
+      i += 1;
+      lineStart = false;
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (text.startsWith("#>", i)) {
+        inBlockComment = false;
+        i += 2;
+        lineStart = false;
+        continue;
+      }
+      i += 1;
+      lineStart = false;
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === "`") { i += 2; lineStart = false; continue; }
+      if (ch === '"') { inDouble = false; stringOpenLine = null; i += 1; lineStart = false; continue; }
+      i += 1;
+      lineStart = false;
+      continue;
+    }
+
+    if (inSingle) {
+      if (ch === "'") {
+        if (text[i + 1] === "'") { i += 2; lineStart = false; continue; }
+        inSingle = false;
+      }
+      i += 1;
+      lineStart = false;
+      continue;
+    }
+
+    // normal state
+    if (text.startsWith("<#", i)) { inBlockComment = true; i += 2; lineStart = false; continue; }
+    if (ch === "#") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      lineStart = false;
+      continue;
+    }
+    if (ch === "`") { i += 2; lineStart = false; continue; }
+    if (ch === "@") {
+      const next = text[i + 1];
+      if (next === '"' || next === "'") {
+        const eol = text.indexOf("\n", i);
+        const rest = text.slice(i + 2, eol === -1 ? text.length : eol);
+        // PowerShell: the opener must be the last thing on the line, but it may
+        // follow code ("$x = @\"", "throw @\"").
+        if (/^[ \t\r]*$/.test(rest)) {
+          hereStart = { kind: next === '"' ? "double" : "single", line };
+          if (eol === -1) { i = text.length; } else { i = eol + 1; line += 1; lineStart = true; }
+          continue;
+        }
+      }
+    }
+    if (ch === '"') { inDouble = true; stringOpenLine = line; i += 1; lineStart = false; continue; }
+    if (ch === "'") { inSingle = true; i += 1; lineStart = false; continue; }
+    if (ch === "(" || ch === "{" || ch === "[") depth[ch] += 1;
+    else if (ch === ")") depth["("] -= 1;
+    else if (ch === "}") depth["{"] -= 1;
+    else if (ch === "]") depth["["] -= 1;
+    i += 1;
+    lineStart = false;
+  }
+
+  if (inDouble) problems.push("a double-quoted string starting on line " + stringOpenLine + " is never closed");
+  if (inSingle) problems.push("a single-quoted string is never closed");
+  if (hereStart) problems.push("a here-string starting on line " + hereStart.line + " is never closed");
+  for (const key of ["(", "{", "["]) {
+    if (depth[key] !== 0) problems.push("unbalanced " + key + " (" + (depth[key] > 0 ? "+" : "") + depth[key] + ")");
+  }
+  return problems;
+}
+
+// Self-tests first: the scanner must catch the real failure and must not
+// complain about the things that look like it.
+check(
+  psSanityProblems('Write-Host "[1/5] Building\nWrite-Host "Staging & runtime"\n').length > 0
+    && psSanityProblems('Write-Host "[1/5] Building"\nWrite-Host "Staging & runtime"\n').length === 0,
+  "PowerShell syntax scanner: catches an unterminated double quote, accepts a balanced one (self-test)",
+);
+check(
+  psSanityProblems('Write-Host "Staging application, database schema & Node.js runtime" -ForegroundColor Yellow\n').length === 0,
+  "PowerShell syntax scanner: an ampersand inside a string is not a problem (self-test)",
+);
+check(
+  psSanityProblems('$x = @"\nline one\nline two\n"@\nWrite-Host "after\n').length > 0
+    && psSanityProblems('$x = @"\nline one\n(it has & and "quotes")\n"@\nWrite-Host "after"\n').length === 0
+    && psSanityProblems('    throw @"\ntext\n"@\n').length === 0,
+  "PowerShell syntax scanner: here-strings (incl. after code) are understood and the scan resumes after them (self-test)",
+);
+check(
+  psSanityProblems('$x = @"\nline one\n    "@\nWrite-Host "after"\n').length > 0,
+  "PowerShell syntax scanner: an indented here-string terminator is reported (self-test)",
+);
+check(
+  psSanityProblems("Get-Service postgresql* | Out-File -Encoding ASCII\n").length === 0
+    && /\|\s*Out-File\b/.test("$LockFile | Out-File -Encoding ASCII"),
+  "PowerShell syntax scanner: the pipe-into-Out-File landmine is detectable (self-test)",
+);
+
+const shippedPowerShell = [
+  "installer/install-engine.ps1",
+  "installer/apply-update.ps1",
+  "installer/configure-edition.ps1",
+  "installer/build-installer.ps1",
+  "installer/build-update.ps1",
+  "installer/restore-migration.ps1",
+  "backup/backup-woodtek.ps1",
+  "backup/prepare-migration.ps1",
+  "backup/find-postgres-tools.ps1",
+  "scripts/backup-windows.ps1",
+  "scripts/restore-windows.ps1",
+];
+const psProblems = [];
+for (const file of shippedPowerShell) {
+  const text = fs.readFileSync(file, "utf8");
+  for (const problem of psSanityProblems(text)) psProblems.push(file + ": " + problem);
+  text.split(/\r?\n/).forEach((lineText, idx) => {
+    if (/\|\s*Out-File\b/.test(lineText) && !/-FilePath\b/.test(lineText)) {
+      psProblems.push(file + " line " + (idx + 1) + ": pipe into Out-File without -FilePath");
+    }
+  });
+}
+check(
+  psProblems.length === 0,
+  "PowerShell syntax: every shipped .ps1 parses (quotes, comments, here-strings, delimiters)"
+    + (psProblems.length ? " - " + psProblems.join(" | ") : ""),
+);
+
+const unblockSource = fs.readFileSync("unblock-update.bat", "utf8");
+check(
+  unblockSource.includes("backups\\local-edits-%STAMP%") && unblockSource.includes("%SAVEDIR%\\local-edits.patch")
+    && unblockSource.includes("git stash push")
+    && unblockSource.includes('if /I not "%ANSWER%"=="YES"') && unblockSource.includes("git pull"),
+  "unblock-update: shows the edited files, saves a patch, asks YES, stashes and pulls",
+);
+check(
+  unblockSource.includes("Do NOT run \"git stash pop\"") && unblockSource.includes("local-edits.patch")
+    && unblockSource.includes("send a photo of this window"),
+  "unblock-update: explains how to recover the edits and what to send if it still fails",
+);
+check(
+  runbookSource.includes("unblock-update.bat") && runbookSource.includes("The ampersand (&) character is not allowed")
+    && runbookSource.includes("backups\\local-edits-<date>\\local-edits.patch"),
+  "runbook: the local-changes stop and the strange PowerShell parse message both point at unblock-update.bat",
+);
 check(
   runbookSource.includes('git stash pop') && runbookSource.includes("backups\\local-edits-<date>")
     && runbookSource.includes("CHECK IT (2026-10-14)"),
