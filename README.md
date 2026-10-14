@@ -383,6 +383,28 @@ build-installer.bat
   (`prepare-migration.*` into `backup\`, `restore-migration.*` into
   `installer\`); `RUNBOOK.txt` has the owner-facing steps plus a manual fallback.
 
+## Backup & update robustness (since 2026-10-14)
+- **The nightly backup was broken and silent.** `backup\backup-woodtek.ps1`
+  piped its lock-file path into `Out-File` without a `-FilePath`, so PowerShell
+  threw `the value of argument "path" is null` — and with
+  `$ErrorActionPreference = "Stop"` that aborted **every** run, *before* the
+  `try` block, so not even the log said why. The lock is now created with
+  `New-Item`, and a script-level `trap` makes sure any failure — including one
+  before the main work — lands in `backup-woodtek.log`.
+- **PowerShell 4.0 compatibility (Windows Server 2012 R2).** The zip/unpack
+  cmdlets only exist in PowerShell 5.0+. `backup\backup-woodtek.ps1`,
+  `scripts\backup-windows.ps1` now build archives with
+  `System.IO.Compression.ZipFile::CreateFromDirectory`, and
+  `scripts\restore-windows.ps1` unpacks with a new `Expand-ZipArchiveTo`
+  helper (overwrite semantics like `-Force`, plus a guard that refuses archive
+  entries trying to escape the destination folder).
+- **Updates cannot be blocked by local edits any more.** `update-woodtek.bat`,
+  `woodtek-back-to-main.bat` and `woodtek-test-branch.bat` detect modified
+  files, write a patch copy to `backups\local-edits-<date>\local-edits.patch`
+  (with `git-status.txt`), `git stash push` them, and only then pull/switch.
+  A failed stash stops the run with a readable message instead of a
+  half-finished update; `git stash list` / `git stash pop` brings edits back.
+
 ## Update flow
 Two different jobs. The full procedure — including rollback and a troubleshooting
 table — lives in **[UPDATING.md](UPDATING.md)**.

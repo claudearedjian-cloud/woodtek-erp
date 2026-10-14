@@ -321,11 +321,20 @@ try {
         -Total 7 `
         -Message "Compressing source archive"
 
-    Compress-Archive `
-        -Path (Join-Path $StageDirectory "*") `
-        -DestinationPath $SourceArchive `
-        -CompressionLevel Optimal `
-        -Force
+    # .NET zip classes instead of PowerShell 5's own zip cmdlet, which does
+    # not exist on Windows Server 2012 R2 (PowerShell 4.0) - a server this
+    # helper may well run on.
+    if (Test-Path $SourceArchive) {
+        Remove-Item -LiteralPath $SourceArchive -Force
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $StageDirectory,
+        $SourceArchive,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false
+    )
 
     if (-not (Test-Path $SourceArchive)) {
         throw "Source archive was not created."

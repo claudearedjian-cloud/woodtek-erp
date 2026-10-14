@@ -9,6 +9,14 @@ WHAT YOU HAVE
   woodtek-free-port-3000-v2.bat  run AS ADMIN to stop whatever holds port 3000
 
 THE UPDATE RITUAL (every modification, no exceptions)
+  THE EASY WAY (what the factory PC actually does now):
+    double-click woodtek-back-to-main.bat   (or update-woodtek.bat)
+  Both save any hand-edited files first - a patch copy under
+  backups\local-edits-<date>\ plus a "git stash" entry - so the update can
+  never stop with "Your local changes would be overwritten by merge"
+  (that happened once with hand-edited installer files; it cannot block again).
+  Bring an edit back any time with:  git stash list   then   git stash pop
+  THE MANUAL WAY:
   1. Double-click woodtek-snapshot.bat          <- your undo button
   2. git add -A  &&  git commit -m "before change"   (once git is set up)
   3. Apply the new files (copy over the old ones)
@@ -27,10 +35,19 @@ ROLLBACK (something looks wrong)
   3. Restart the server (step 5 above)
 
 DATABASE BACKUPS
-  - Task Scheduler: run backup\backup-woodtek.bat DAILY.
-  - Once a week copy the newest DB dump to a USB stick or cloud drive.
+  - The "WoodTek Nightly Backup" task runs backup\backup-woodtek.ps1 at 01:30
+    every day: a database dump plus a zip of the data\ folder into
+    backups\nightly\.
+  - CHECK IT (2026-10-14): that task had been failing - a one-line bug in the
+    lock file aborted it before it could write anything, even its log. Fixed
+    now, and every failure goes into backups\nightly\backup-woodtek.log.
+    Open that log once a week: the newest line must start with OK and show
+    "db=... (n MB) data=zipped".
+  - Once a week copy the newest dump + data zip to a USB stick or cloud drive.
   - Once a quarter do a test restore on purpose (backup\restore-woodtek.bat)
     so you KNOW the restore works before you ever need it.
+  - The backup and its restore helpers use only PowerShell 4 features, so they
+    also work on the old Windows Server 2012 R2 server.
 
 THE .env RULE
   .env holds DATABASE_URL and AUTH_SECRET = the keys to everything.

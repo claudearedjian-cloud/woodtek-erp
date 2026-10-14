@@ -38,6 +38,15 @@ function Write-Log([string]$Line) {
   Write-Host $Entry
 }
 
+# Any failure - including one before the main try block below (an unreadable
+# folder, a bad lock file) - must leave a line in backup-woodtek.log. A nightly
+# task that fails silently is how a broken backup stays unnoticed for months.
+trap {
+  Write-Log ("FAIL " + $_.Exception.Message)
+  if ($LockFile) { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue }
+  exit 1
+}
+
 if (-not (Test-Path $BackupRoot)) {
   New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
 }
@@ -52,7 +61,12 @@ if (Test-Path $LockFile) {
   }
   Remove-Item $LockFile -Force
 }
-$LockFile | Out-File -Encoding ASCII
+# Create the lock file (existence + timestamp are all the guard needs).
+# NOTE: 2026-10-14 - this used to pipe the path into Out-File without giving it
+# a -FilePath, so it threw "the value of argument path is null" and, with
+# ErrorActionPreference = Stop, aborted every run before the try block - which
+# is why the nightly task failed silently and the log never said why.
+New-Item -Path $LockFile -ItemType File -Force | Out-Null
 try {
   # ---- locate the database credentials from the app .env ------------------
   $EnvFile = Join-Path $Root ".env"
@@ -105,7 +119,17 @@ try {
   $DataZip = ""
   if ((Test-Path $DataDir) -and (Get-ChildItem $DataDir -File -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0) {
     $DataZip = Join-Path $BackupRoot "data-$Ts.zip"
-    Compress-Archive -Path (Join-Path $DataDir "*") -DestinationPath $DataZip -Force
+    # .NET zip classes instead of PowerShell 5's own zip cmdlet: that cmdlet
+    # does not exist on Windows Server 2012 R2 (PowerShell 4.0), which is what
+    # the factory server may still be. Same zip format - and dot-files are
+    # included too.
+    if (Test-Path $DataZip) { Remove-Item -LiteralPath $DataZip -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+      $DataDir,
+      $DataZip,
+      [System.IO.Compression.CompressionLevel]::Optimal,
+      $false)
   }
 
   # ---- commit stamp (which code this backup pairs with) ---------------------

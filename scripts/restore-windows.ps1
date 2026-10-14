@@ -80,6 +80,48 @@ Install PostgreSQL command-line tools or pass:
 -PostgresBin "C:\Program Files\PostgreSQL\18\bin"
 "@
 }
+function Expand-ZipArchiveTo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ZipPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    # Windows Server 2012 R2 ships PowerShell 4.0, which has no unpack cmdlet
+    # of its own yet. Same job with the .NET zip classes, with overwrite (what
+    # -Force did) and a guard against entries that try to escape the folder.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    if (-not (Test-Path $Destination)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+
+    $DestinationFull = [System.IO.Path]::GetFullPath($Destination)
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        foreach ($Entry in $Archive.Entries) {
+            $TargetPath = [System.IO.Path]::GetFullPath((Join-Path $Destination $Entry.FullName))
+            if (-not $TargetPath.StartsWith($DestinationFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "The archive contains an entry outside the destination folder ($($Entry.FullName))."
+            }
+            if ([string]::IsNullOrEmpty($Entry.Name)) {
+                if (-not (Test-Path $TargetPath)) {
+                    New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+                }
+                continue
+            }
+            $TargetDirectory = Split-Path -Parent $TargetPath
+            if ($TargetDirectory -and -not (Test-Path $TargetDirectory)) {
+                New-Item -ItemType Directory -Path $TargetDirectory -Force | Out-Null
+            }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($Entry, $TargetPath, $true)
+        }
+    } finally {
+        $Archive.Dispose()
+    }
+}
 
 function Get-DatabaseUrl {
     param(
@@ -206,10 +248,7 @@ if (
         -Force |
         Out-Null
 
-    Expand-Archive `
-        -Path $BackupPackage `
-        -DestinationPath $TemporaryExtractDirectory `
-        -Force
+    Expand-ZipArchiveTo -ZipPath $BackupPackage -Destination $TemporaryExtractDirectory
 
     $PackageDirectory = $TemporaryExtractDirectory
 }
@@ -315,10 +354,7 @@ only after backing up the current folder.
         -Force |
         Out-Null
 
-    Expand-Archive `
-        -Path $SourceArchive `
-        -DestinationPath $RestoreRoot `
-        -Force
+    Expand-ZipArchiveTo -ZipPath $SourceArchive -Destination $RestoreRoot
 
     if (Test-Path $SecretEnvironmentBackup) {
         Copy-Item `
