@@ -2,11 +2,17 @@ WOODTEK ERP - SAFETY RUNBOOK (one page, keep in woodtek-erp)
 =============================================================
 
 WHAT YOU HAVE
+  check-server.bat       read-only health check: folder, database, row counts,
+                         /api/health  (double-click on the server any time)
+  copy-backups-offsite.bat  copy the newest backups to a USB stick or another
+                         PC (remembers the destination after the first time)
   woodtek-snapshot.bat   double-click BEFORE any change -> backups\snapshot-DATE.zip
   woodtek-git-setup.bat  run ONCE -> local git repo + first commit
   backup\backup-woodtek.bat   database backup (schedule it daily)
   start-prod.cjs         the server watchdog (patched v2: no crash-loops)
   woodtek-free-port-3000-v2.bat  run AS ADMIN to stop whatever holds port 3000
+  (check-server and copy-backups-offsite arrive on the FACTORY server with
+  every install/update; the dev-machine files live in the old PC's copy.)
 
 TWO COMPUTERS (since 2026-10-14)
   FS200 (the Hyper-V VM, 192.168.220.205) is THE factory server: the shop
@@ -20,6 +26,46 @@ TWO COMPUTERS (since 2026-10-14)
   copy - never the company book again.
   Changes travel one way: build the update pack on the old PC -> copy it to
   FS200 -> double-click its apply file -> check the result there.
+
+SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
+  Small updates: just edit on the old PC, then send a pack. The factory keeps
+  working on FS200 the whole time except a 1-3 minute restart while the pack
+  is applied - do that at lunch or after hours.
+  1. ON THE OLD PC (development machine)
+       double-click  update-woodtek.bat    (get the newest code first)
+       double-click  build-update.bat
+     It builds and packs, and prints the pack name, for example
+     dist-update\WoodTek-ERP-Update-20261014-6c1a9f9.zip  (+ a .sha256 next to it).
+     Packing never leaves this PC without its own running app.
+  2. COPY BOTH FILES TO FS200 (keep them side by side - the .sha256 proves the
+     transfer was intact). Easiest with no USB stick: on the old PC open File
+     Explorer, click the address bar, type
+         \\192.168.220.205\c$\WoodTek-ERP\installer
+     press Enter (a login prompt may appear - the FS200 administrator account),
+     then paste the .zip and the .sha256 into that folder. A USB stick works
+     too if the VM can see it.
+  3. ON FS200 (the factory server) - FIRST TIME ONLY
+     An install made before 2026-10-14 does not have the apply tool yet (the
+     pack brings it). One-time setup, all in File Explorer:
+       a. open the copied .zip (double-click it - Windows shows what is inside)
+       b. open the  installer  folder inside it
+       c. copy BOTH files  apply-update.ps1  and  apply-update.bat  into
+          C:\WoodTek-ERP\installer\   (they do not exist there yet)
+  4. ON FS200 - APPLY THE PACK
+       double-click  C:\WoodTek-ERP\installer\apply-update.bat
+     Click Yes on the UAC prompt and wait. It takes a snapshot of .env + data\
+     and a database dump into backups\update-...\ first, then applies the pack,
+     then waits for /api/health. If the new version does not come up healthy it
+     puts the OLD one back by itself. Success looks like:
+         "WoodTek ERP is running and healthy" + "Running build: <the pack's>"
+     (Every later update skips step 3 - apply-update.bat is already in place.)
+  5. VERIFY
+       double-click  C:\WoodTek-ERP\check-server.bat
+     The row counts must look right (users / machines / orders) and
+     /api/health must say 200 OK. Then open the app and check your change.
+  IF SOMETHING LOOKS WRONG: the previous version is still in
+  backups\update-<version>-<time>\ on FS200 (and its log). Send the agent what
+  the apply window said - the rollback is automatic and nothing is lost.
 
 THE UPDATE RITUAL (every modification, no exceptions)
   THE EASY WAY (what the old PC - the development machine - does now):
@@ -85,8 +131,11 @@ DATABASE BACKUPS
     now, and every failure goes into backups\nightly\backup-woodtek.log.
     Open that log once a week: the newest line must start with OK and show
     "db=... (n MB) data=zipped".
-  - Once a week copy the newest dump + data zip to a USB stick or cloud drive.
-  - Once a quarter do a test restore on purpose (backup\restore-woodtek.bat)
+  - Once a week copy the newest dump + data zip to a USB stick or another PC:
+    double-click  copy-backups-offsite.bat  on the server (first time it asks
+    where to copy - it remembers the answer; see backups\copy-offsite.log).
+  - Once a quarter do a test restore on purpose (on the old PC / development
+    machine, which has the full source folder: backup\restore-woodtek.bat)
     so you KNOW the restore works before you ever need it.
   - The backup and its restore helpers use only PowerShell 4 features, so they
     also work on the old Windows Server 2012 R2 server.
@@ -227,5 +276,7 @@ QUICK REFERENCE
   Factory server (FS200):  http://192.168.220.205:3000
   App on this PC:          http://localhost:3000
   Old PC on the network:   http://192.168.220.179:3000
+  Server health check:     check-server.bat   (folder, database, counts, health)
   Rebuild (on the old PC): node scripts\build-prod.cjs
+  Build an update pack:    build-update.bat   (then see the section above)
   Who holds port 3000:     woodtek-free-port-3000-v2.bat (as administrator)

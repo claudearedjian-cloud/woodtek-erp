@@ -4719,6 +4719,7 @@ const shippedPowerShell = [
   "backup/backup-woodtek.ps1",
   "backup/prepare-migration.ps1",
   "backup/find-postgres-tools.ps1",
+  "copy-backups-offsite.ps1",
   "scripts/backup-windows.ps1",
   "scripts/restore-windows.ps1",
 ];
@@ -4834,6 +4835,75 @@ check(
   fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%WT_ARG1%")
     && !fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%~1"),
   "updaters: the test-branch helper passes the typed branch name to the staged copy through a variable",
+);
+
+// The server-side double-click tools ship with installs AND updates (2026-10-14)
+// ------------------------------------------------------------------------------
+// check-server was written and validated live on the factory VM but lived only
+// on that PC and in chat history; copy-backups-offsite answers "the backup is
+// still on the machine it protects". Both must travel in the installer payload
+// and in every update pack, so a repaired or replaced server gets them too.
+const checkServerJs = fs.readFileSync("check-server.js", "utf8");
+const checkServerBat = fs.readFileSync("check-server.bat", "utf8");
+const copyBackupsPs1 = fs.readFileSync("copy-backups-offsite.ps1", "utf8");
+const copyBackupsBat = fs.readFileSync("copy-backups-offsite.bat", "utf8");
+
+check(
+  checkServerJs.includes("without ever printing the password")
+    && checkServerJs.includes("SHOW server_version")
+    && checkServerJs.includes('"users", "machines", "orders", "order_operations"')
+    && checkServerJs.includes("/api/health")
+    && checkServerJs.includes('path.join(ROOT, ".next", "standalone", "node_modules", "pg")'),
+  "check-server: read-only check of database version, the four factory row counts and /api/health, loading pg from the standalone bundle, never printing the password",
+);
+check(
+  checkServerBat.includes('if exist "%~dp0runtime\\node\\node.exe" call :trynode')
+    && checkServerBat.indexOf('runtime\\node\\node.exe') < checkServerBat.indexOf("%ProgramFiles%\\nodejs\\node.exe")
+    && checkServerBat.includes('"%~1" --version')
+    && checkServerBat.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+  "check-server: the launcher probes runtime\\node first, tests each candidate with --version, and keeps the platform-check skip as the last resort",
+);
+check(
+  copyBackupsPs1.includes('"db-*.dump"') && copyBackupsPs1.includes('"data-*.zip"')
+    && copyBackupsPs1.includes("copy-offsite.txt") && copyBackupsPs1.includes("copy-offsite.log")
+    && copyBackupsPs1.includes("$check.Length -eq $f.Length"),
+  "copy-backups-offsite: copies the newest dump + data zip, proves the copy by size, logs it, and remembers the destination",
+);
+check(
+  copyBackupsPs1.includes("[switch]$All") && copyBackupsBat.includes('"%~dp0copy-backups-offsite.ps1" %*')
+    && !copyBackupsPs1.includes("Remove-Item")
+    && !copyBackupsPs1.includes("Compress-Archive") && !copyBackupsPs1.includes("Expand-Archive")
+    && !copyBackupsPs1.includes("Out-File"),
+  "copy-backups-offsite: never deletes or changes the source, PowerShell 4.0 safe, arguments pass through the double-click launcher",
+);
+
+const buildUpdateSrc = fs.readFileSync("installer/build-update.ps1", "utf8");
+const buildInstallerSrc2 = fs.readFileSync("installer/build-installer.ps1", "utf8");
+const shippedServerTools = ["check-server.js", "check-server.bat", "copy-backups-offsite.ps1", "copy-backups-offsite.bat", "find-postgres-tools.ps1", "find-postgres-tools.bat"];
+const stagingGaps = [];
+for (const tool of shippedServerTools) {
+  if (!buildUpdateSrc.includes('"' + tool + '"')) stagingGaps.push("build-update.ps1 misses " + tool);
+  if (!buildInstallerSrc2.includes('"' + tool + '"')) stagingGaps.push("build-installer.ps1 misses " + tool);
+}
+check(
+  stagingGaps.length === 0,
+  "server tools: check-server, copy-backups-offsite and find-postgres-tools are staged by BOTH the installer builder and the update pack builder"
+    + (stagingGaps.length ? " - " + stagingGaps.join(" | ") : ""),
+);
+check(
+  buildInstallerSrc2.includes('"apply-update.ps1"') && buildInstallerSrc2.includes('"apply-update.bat"'),
+  "installer builder: fresh installs ship apply-update so the FIRST update pack has something to run (found 2026-10-14: FS200's install predates it)",
+);
+check(
+  runbookSource.includes("SENDING AN UPDATE TO THE FACTORY SERVER") && runbookSource.includes("apply-update.bat")
+    && runbookSource.includes("check-server.bat") && runbookSource.includes("copy-backups-offsite.bat")
+    && runbookSource.includes("\\\\192.168.220.205\\c$\\WoodTek-ERP\\installer"),
+  "runbook: the dev-PC-to-FS200 update lane is written down (build pack, copy to the server, apply, verify)",
+);
+check(
+  runbookSource.includes("FIRST TIME ONLY") && runbookSource.includes("apply-update.ps1")
+    && runbookSource.includes("Every later update skips step 3"),
+  "runbook: the one-time first-update bootstrap (copy the apply tool out of the pack) is explained with exact paths",
 );
 check(
   runbookSource.includes("unblock-update.bat") && runbookSource.includes("The ampersand (&) character is not allowed")
