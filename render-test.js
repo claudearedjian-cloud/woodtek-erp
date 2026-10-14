@@ -1518,8 +1518,21 @@ check(ddfScheduleSource.includes("Due-date risk") && ddfScheduleSource.includes(
 const backupScriptSource = fs.readFileSync("backup/backup-woodtek.ps1", "utf8");
 const backupInstallerSource = fs.readFileSync("backup/install-backup-task.bat", "utf8");
 check(
-  backupScriptSource.includes("pg_dump") && backupScriptSource.includes("RetentionDays") && backupScriptSource.includes("Compress-Archive") && backupScriptSource.includes("DATABASE_URL"),
+  backupScriptSource.includes("pg_dump") && backupScriptSource.includes("RetentionDays")
+    && backupScriptSource.includes("[System.IO.Compression.ZipFile]::CreateFromDirectory") && backupScriptSource.includes("DATABASE_URL"),
   "nightly backup: script dumps Postgres, zips the data overlay and applies retention",
+);
+check(
+  backupScriptSource.includes("New-Item -Path $LockFile -ItemType File -Force") && !backupScriptSource.includes("$LockFile | Out-File"),
+  "nightly backup: the single-instance lock is created for real (the old \"$LockFile | Out-File\" threw and aborted every run)",
+);
+check(
+  /trap \{[\s\S]{0,400}?Write-Log \("FAIL "/.test(backupScriptSource),
+  "nightly backup: a script-level trap logs failures that happen before the main try block",
+);
+check(
+  !backupScriptSource.includes("Compress-Archive"),
+  "nightly backup: no PowerShell-5-only cmdlets, so the backup also runs on Windows Server 2012 R2 (PowerShell 4.0)",
 );
 check(
   backupInstallerSource.includes('schtasks /Create /F /TN "WoodTek Nightly Backup"') && backupInstallerSource.includes("/SC DAILY"),
@@ -4432,6 +4445,115 @@ check(
   runbookSource.includes("MOVING THE APP TO A NEW SERVER") && runbookSource.includes("prepare-migration.bat")
     && runbookSource.includes("restore-migration.bat") && runbookSource.includes("MANUAL FALLBACK"),
   "runbook: the two double-clicks and the manual fallback are documented for the owner",
+);
+
+// --- update & restore robustness (2026-10-14) --------------------------------
+// Two things this session learned the hard way: (1) the nightly backup had been
+// aborting on a broken lock-file line before it even reached its try block, so
+// nothing was ever backed up and the log said nothing; (2) the updater stopped
+// with "Your local changes ... would be overwritten by merge" when installer
+// files had been edited by hand on the factory PC. Both must stay fixed.
+const backupWindowsSource = fs.readFileSync("scripts/backup-windows.ps1", "utf8");
+const restoreWindowsSource = fs.readFileSync("scripts/restore-windows.ps1", "utf8");
+const updaterBatSource = fs.readFileSync("update-woodtek.bat", "utf8");
+const backToMainBatSource = fs.readFileSync("woodtek-back-to-main.bat", "utf8");
+const testBranchBatSource = fs.readFileSync("woodtek-test-branch.bat", "utf8");
+
+check(
+  backupWindowsSource.includes("[System.IO.Compression.ZipFile]::CreateFromDirectory") && !backupWindowsSource.includes("Compress-Archive"),
+  "full backup helper: builds the source archive with .NET zip classes (PowerShell 4.0 compatible)",
+);
+check(
+  restoreWindowsSource.includes("function Expand-ZipArchiveTo") && restoreWindowsSource.includes("ZipFileExtensions]::ExtractToFile")
+    && !restoreWindowsSource.includes("Expand-Archive"),
+  "restore helper: unpacks with .NET zip classes instead of Expand-Archive (PowerShell 4.0 compatible)",
+);
+check(
+  restoreWindowsSource.includes("StartsWith($DestinationFull") && restoreWindowsSource.includes("outside the destination folder"),
+  "restore helper: refuses archive entries that try to escape the destination folder",
+);
+for (const [label, source, moveNeedle] of [
+  ["update", updaterBatSource, "git pull"],
+  ["back to main", backToMainBatSource, "git checkout main"],
+  ["test branch", testBranchBatSource, 'git checkout "%BRANCH%"'],
+]) {
+  const stashAt = source.indexOf("git stash push");
+  const movesAt = source.indexOf(moveNeedle);
+  check(
+    source.includes("git diff --quiet") && source.includes("git diff --cached --quiet")
+      && stashAt > 0 && movesAt > 0 && stashAt < movesAt
+      && source.includes("backups\\local-edits-%WT_STAMP%\\local-edits.patch"),
+    "updater (" + label + "): local edits are saved to backups\\local-edits-<date>\\ and stashed before anything is pulled or switched",
+  );
+}
+check(
+  updaterBatSource.includes("Could not set the local edits aside") && backToMainBatSource.includes("Could not set the local edits aside"),
+  "updater: a failed stash stops the run with a readable message instead of a half-finished update",
+);
+
+// --- PostgreSQL tool discovery (2026-10-14) ----------------------------------
+// The migration pack died with "pg_dump not found" because the scripts only
+// tried PATH and C:\Program Files\PostgreSQL\<newest>\bin. Every script that
+// needs the tools must now look where a Windows PostgreSQL install can really
+// live, and there must be a double-clickable diagnosis.
+check(
+  backupScriptSource.includes("function Get-PgBinDirs") && backupScriptSource.includes("function Find-PgTool")
+    && backupScriptSource.includes('Find-PgTool "pg_dump" $EnvFile'),
+  "postgres tools: the nightly/migration backup resolves pg_dump through the widened lookup",
+);
+for (const [label, source] of [["backup", backupScriptSource], ["restore-migration", restoreMigrationSource]]) {
+  check(
+    source.includes("WOODTEK_PG_BIN") && source.includes("SOFTWARE\\PostgreSQL\\Installations")
+      && source.includes("WOW6432Node") && source.includes("Win32_Service")
+      && source.includes('"Base Directory"') && source.includes("PostgreSQL") && source.includes("pgsql"),
+    "postgres tools (" + label + "): WOODTEK_PG_BIN, the registry entry, the service's own folder and the usual drives are searched",
+  );
+}
+check(
+  backupScriptSource.includes("pg_dump was not found on this PC") && backupScriptSource.includes("find-postgres-tools.bat"),
+  "postgres tools: the failure message tells the owner to run find-postgres-tools.bat instead of just giving up",
+);
+check(
+  backupWindowsSource.includes("function Get-PgBinCandidates") && backupWindowsSource.includes("foreach ($Directory in (Get-PgBinCandidates))")
+    && restoreWindowsSource.includes("function Get-PgBinCandidates") && restoreWindowsSource.includes("foreach ($Directory in (Get-PgBinCandidates))"),
+  "postgres tools: the full-backup and full-restore helpers use the same widened candidates",
+);
+check(
+  backupWindowsSource.includes("WOODTEK_PG_BIN in .env") && restoreWindowsSource.includes("WOODTEK_PG_BIN in .env"),
+  "postgres tools: both helpers name WOODTEK_PG_BIN in their failure message",
+);
+
+const findToolsSource = fs.readFileSync("backup/find-postgres-tools.ps1", "utf8");
+const findToolsBat = fs.readFileSync("backup/find-postgres-tools.bat", "utf8");
+check(
+  findToolsBat.includes("find-postgres-tools.ps1") && findToolsBat.includes("%~dp0") && findToolsSource.includes("Read-Host"),
+  "find-postgres-tools: a double-clickable helper runs the diagnosis and asks before changing anything",
+);
+check(
+  findToolsSource.includes("deliberately NOT printed") && findToolsSource.includes("$DbHost = $Matches[3]"),
+  "find-postgres-tools: reports the database host and name but never the password",
+);
+check(
+  findToolsSource.includes("WOODTEK_PG_BIN=$usable") && findToolsSource.includes("Nothing was changed"),
+  "find-postgres-tools: can write WOODTEK_PG_BIN into .env, and says so when it is declined",
+);
+check(
+  findToolsSource.includes("Get-WmiObject Win32_Service") && findToolsSource.includes("Name LIKE"),
+  "find-postgres-tools: reads the real service list instead of guessing folders",
+);
+check(
+  runbookSource.includes('IF A SCRIPT SAYS "pg_dump not found"') && runbookSource.includes("find-postgres-tools.bat")
+    && readmeSource.includes("find-postgres-tools.bat"),
+  "docs: the pg_dump-not-found path and its helper are documented for the owner",
+);
+check(
+  runbookSource.includes('git stash pop') && runbookSource.includes("backups\\local-edits-<date>")
+    && runbookSource.includes("CHECK IT (2026-10-14)"),
+  "runbook: the owner is told the update saves edits by itself and to check the backup log weekly",
+);
+check(
+  readmeSource.includes("the value of argument \"path\" is null") || readmeSource.includes("was broken and silent"),
+  "readme: the broken nightly backup and the PowerShell 4 compatibility work are documented",
 );
 
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL

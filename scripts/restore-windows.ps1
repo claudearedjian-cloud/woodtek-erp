@@ -30,6 +30,68 @@ function Write-Step {
     Write-Host "[$Number/$Total] $Message" -ForegroundColor Yellow
 }
 
+function Get-PgBinCandidates {
+    # Extra places the PostgreSQL tools can live: WOODTEK_PG_BIN, the registry
+    # entry the installer writes, the folder the running service actually uses,
+    # and the usual install folders on C:/D:/E: (every version subfolder).
+    # Added 2026-10-14 after the nightly/migration backup died with
+    # "pg_dump not found" on a PC whose PostgreSQL is not in Program Files.
+    $Candidates = @()
+
+    $Override = $env:WOODTEK_PG_BIN
+    if (-not $Override) {
+        $EnvFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".env"
+        if (Test-Path $EnvFile) {
+            $Match = Select-String -Path $EnvFile -Pattern '^\s*WOODTEK_PG_BIN\s*=\s*(.+?)\s*$' | Select-Object -First 1
+            if ($Match) { $Override = $Match.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'") }
+        }
+    }
+    if ($Override) { $Candidates += $Override }
+
+    foreach ($Root in @("HKLM:\SOFTWARE\PostgreSQL\Installations", "HKLM:\SOFTWARE\WOW6432Node\PostgreSQL\Installations")) {
+        if (Test-Path $Root) {
+            Get-ChildItem $Root -ErrorAction SilentlyContinue | ForEach-Object {
+                $Base = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue)."Base Directory"
+                if ($Base) { $Candidates += (Join-Path $Base "bin") }
+            }
+        }
+    }
+
+    try {
+        $Services = Get-WmiObject Win32_Service -Filter "Name LIKE 'postgresql%'" -ErrorAction SilentlyContinue
+        foreach ($Service in $Services) {
+            $ExePath = "$($Service.PathName)".Trim()
+            if (-not $ExePath) { continue }
+            if ($ExePath.StartsWith('"')) {
+                $End = $ExePath.IndexOf('"', 1)
+                if ($End -gt 1) { $ExePath = $ExePath.Substring(1, $End - 1) }
+            } else {
+                $ExePath = ($ExePath -split '\s+')[0]
+            }
+            $ServiceDir = Split-Path -Parent $ExePath
+            if ($ServiceDir) { $Candidates += $ServiceDir }
+        }
+    } catch { }
+
+    $Roots = @()
+    if ($env:ProgramFiles) { $Roots += (Join-Path $env:ProgramFiles "PostgreSQL") }
+    if (${env:ProgramFiles(x86)}) { $Roots += (Join-Path ${env:ProgramFiles(x86)} "PostgreSQL") }
+    foreach ($Drive in @("C:", "D:", "E:")) {
+        $Roots += "$Drive\PostgreSQL"
+        $Roots += "$Drive\pgsql"
+    }
+    foreach ($Root in $Roots) {
+        if ($Root -and (Test-Path $Root)) {
+            $Candidates += $Root
+            Get-ChildItem $Root -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending |
+                ForEach-Object { $Candidates += (Join-Path $_.FullName "bin") }
+        }
+    }
+
+    return ($Candidates | Where-Object { $_ } | Select-Object -Unique)
+}
+
 function Find-PostgresTool {
     param(
         [Parameter(Mandatory = $true)]
@@ -56,6 +118,16 @@ function Find-PostgresTool {
         return $Command.Source
     }
 
+    foreach ($Directory in (Get-PgBinCandidates)) {
+        $Candidate = Join-Path `
+            $Directory `
+            "$ToolName.exe"
+
+        if (Test-Path $Candidate) {
+            return $Candidate
+        }
+    }
+
     foreach ($Version in @(
         "18",
         "17",
@@ -75,10 +147,55 @@ function Find-PostgresTool {
     throw @"
 $ToolName.exe was not found.
 
-Install PostgreSQL command-line tools or pass:
+Install the PostgreSQL command-line tools, pass:
 
 -PostgresBin "C:\Program Files\PostgreSQL\18\bin"
+
+or set WOODTEK_PG_BIN in .env to the folder holding the tools
+(backup\find-postgres-tools.bat finds that folder for you).
 "@
+}
+function Expand-ZipArchiveTo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ZipPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    # Windows Server 2012 R2 ships PowerShell 4.0, which has no unpack cmdlet
+    # of its own yet. Same job with the .NET zip classes, with overwrite (what
+    # -Force did) and a guard against entries that try to escape the folder.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    if (-not (Test-Path $Destination)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+
+    $DestinationFull = [System.IO.Path]::GetFullPath($Destination)
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        foreach ($Entry in $Archive.Entries) {
+            $TargetPath = [System.IO.Path]::GetFullPath((Join-Path $Destination $Entry.FullName))
+            if (-not $TargetPath.StartsWith($DestinationFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "The archive contains an entry outside the destination folder ($($Entry.FullName))."
+            }
+            if ([string]::IsNullOrEmpty($Entry.Name)) {
+                if (-not (Test-Path $TargetPath)) {
+                    New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+                }
+                continue
+            }
+            $TargetDirectory = Split-Path -Parent $TargetPath
+            if ($TargetDirectory -and -not (Test-Path $TargetDirectory)) {
+                New-Item -ItemType Directory -Path $TargetDirectory -Force | Out-Null
+            }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($Entry, $TargetPath, $true)
+        }
+    } finally {
+        $Archive.Dispose()
+    }
 }
 
 function Get-DatabaseUrl {
@@ -206,10 +323,7 @@ if (
         -Force |
         Out-Null
 
-    Expand-Archive `
-        -Path $BackupPackage `
-        -DestinationPath $TemporaryExtractDirectory `
-        -Force
+    Expand-ZipArchiveTo -ZipPath $BackupPackage -Destination $TemporaryExtractDirectory
 
     $PackageDirectory = $TemporaryExtractDirectory
 }
@@ -315,10 +429,7 @@ only after backing up the current folder.
         -Force |
         Out-Null
 
-    Expand-Archive `
-        -Path $SourceArchive `
-        -DestinationPath $RestoreRoot `
-        -Force
+    Expand-ZipArchiveTo -ZipPath $SourceArchive -Destination $RestoreRoot
 
     if (Test-Path $SecretEnvironmentBackup) {
         Copy-Item `

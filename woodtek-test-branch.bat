@@ -45,6 +45,38 @@ if exist "backup\*.dump" (
   echo [branch] Kept the local DB dumps safe in backups\
 )
 
+rem ---------------------------------------------------------------------------
+rem Local edits must never block an update again. On 2026-10-14 an update
+rem aborted with "Your local changes to the following files would be
+rem overwritten by merge" because installer files had been edited by hand on
+rem this PC. From now on this script saves them FIRST: a patch copy under
+rem backups\local-edits-<date>\ and a git stash entry ("git stash list" shows
+rem it, "git stash pop" brings it back). Nothing is thrown away.
+rem ---------------------------------------------------------------------------
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmm"') do set "WT_STAMP=%%i"
+if not defined WT_STAMP set "WT_STAMP=manual"
+set "WT_DIRTY="
+git diff --quiet
+if errorlevel 1 set "WT_DIRTY=1"
+git diff --cached --quiet
+if errorlevel 1 set "WT_DIRTY=1"
+if not defined WT_DIRTY (
+  echo [branch] No local edits to set aside.
+) else (
+  if not exist "backups\local-edits-%WT_STAMP%" mkdir "backups\local-edits-%WT_STAMP%"
+  git diff HEAD > "backups\local-edits-%WT_STAMP%\local-edits.patch"
+  git status --porcelain > "backups\local-edits-%WT_STAMP%\git-status.txt"
+  echo [branch] Local edits found - saved to backups\local-edits-%WT_STAMP%\local-edits.patch
+  git stash push -m "local edits saved by the updater %WT_STAMP%"
+  if errorlevel 1 (
+    echo.
+    echo [branch] Could not set the local edits aside - nothing was pulled or switched.
+    echo [branch] Your edits are safe in backups\local-edits-%WT_STAMP%\
+    pause
+    exit /b 1
+  )
+  echo [branch] Local edits set aside - bring them back any time with: git stash pop
+)
 echo [branch] Downloading the branch list from GitHub...
 git fetch origin
 if errorlevel 1 (

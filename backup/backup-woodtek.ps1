@@ -38,6 +38,92 @@ function Write-Log([string]$Line) {
   Write-Host $Entry
 }
 
+function Get-EnvFileValue([string]$EnvFile, [string]$Key) {
+  if (-not $EnvFile -or -not (Test-Path $EnvFile)) { return "" }
+  $match = Select-String -Path $EnvFile -Pattern ("^\s*" + [regex]::Escape($Key) + "\s*=\s*(.+?)\s*$") | Select-Object -First 1
+  if (-not $match) { return "" }
+  return $match.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'")
+}
+
+function Get-PgBinDirs([string]$EnvFile) {
+  # Every plausible place the PostgreSQL command-line tools can live on Windows,
+  # in order of trust. 2026-10-14: the first version of this lookup only tried
+  # PATH and "C:\Program Files\PostgreSQL\<newest>\bin", so the migration pack
+  # died with "pg_dump not found" on a PC whose PostgreSQL sits somewhere else.
+  $dirs = @()
+
+  # 1. explicit override: environment variable first, then WOODTEK_PG_BIN in .env
+  $override = ""
+  if ($env:WOODTEK_PG_BIN) { $override = $env:WOODTEK_PG_BIN } else { $override = Get-EnvFileValue $EnvFile "WOODTEK_PG_BIN" }
+  if ($override) { $dirs += $override }
+
+  # 2. the EDB installer records where it put PostgreSQL
+  foreach ($root in @("HKLM:\SOFTWARE\PostgreSQL\Installations", "HKLM:\SOFTWARE\WOW6432Node\PostgreSQL\Installations")) {
+    if (Test-Path $root) {
+      Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+        $base = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue)."Base Directory"
+        if ($base) { $dirs += (Join-Path $base "bin") }
+      }
+    }
+  }
+
+  # 3. a running PostgreSQL service: its own executable names the real folder,
+  #    whatever the install path was
+  try {
+    $services = Get-WmiObject Win32_Service -Filter "Name LIKE 'postgresql%'" -ErrorAction SilentlyContinue
+    foreach ($service in $services) {
+      $exePath = "$($service.PathName)".Trim()
+      if (-not $exePath) { continue }
+      if ($exePath.StartsWith('"')) {
+        $end = $exePath.IndexOf('"', 1)
+        if ($end -gt 1) { $exePath = $exePath.Substring(1, $end - 1) }
+      } else {
+        $exePath = ($exePath -split '\s+')[0]
+      }
+      $serviceDir = Split-Path -Parent $exePath
+      if ($serviceDir) { $dirs += $serviceDir }
+    }
+  } catch { }
+
+  # 4. the usual folders - every version subfolder, on every common drive
+  $roots = @()
+  if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles "PostgreSQL") }
+  if (${env:ProgramFiles(x86)}) { $roots += (Join-Path ${env:ProgramFiles(x86)} "PostgreSQL") }
+  foreach ($drive in @("C:", "D:", "E:")) {
+    $roots += "$drive\PostgreSQL"
+    $roots += "$drive\pgsql"
+  }
+  foreach ($root in $roots) {
+    if ($root -and (Test-Path $root)) {
+      $dirs += $root
+      Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { $dirs += (Join-Path $_.FullName "bin") }
+    }
+  }
+
+  return ($dirs | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Find-PgTool([string]$ToolName, [string]$EnvFile) {
+  foreach ($dir in (Get-PgBinDirs $EnvFile)) {
+    $candidate = Join-Path $dir "$ToolName.exe"
+    if (Test-Path $candidate) { return $candidate }
+  }
+  $command = Get-Command "$ToolName.exe" -ErrorAction SilentlyContinue
+  if ($command) { return $command.Source }
+  return ""
+}
+
+# Any failure - including one before the main try block below (an unreadable
+# folder, a bad lock file) - must leave a line in backup-woodtek.log. A nightly
+# task that fails silently is how a broken backup stays unnoticed for months.
+trap {
+  Write-Log ("FAIL " + $_.Exception.Message)
+  if ($LockFile) { Remove-Item -LiteralPath $LockFile -Force -ErrorAction SilentlyContinue }
+  exit 1
+}
+
 if (-not (Test-Path $BackupRoot)) {
   New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
 }
@@ -52,7 +138,12 @@ if (Test-Path $LockFile) {
   }
   Remove-Item $LockFile -Force
 }
-$LockFile | Out-File -Encoding ASCII
+# Create the lock file (existence + timestamp are all the guard needs).
+# NOTE: 2026-10-14 - this used to pipe the path into Out-File without giving it
+# a -FilePath, so it threw "the value of argument path is null" and, with
+# ErrorActionPreference = Stop, aborted every run before the try block - which
+# is why the nightly task failed silently and the log never said why.
+New-Item -Path $LockFile -ItemType File -Force | Out-Null
 try {
   # ---- locate the database credentials from the app .env ------------------
   $EnvFile = Join-Path $Root ".env"
@@ -75,18 +166,14 @@ try {
   }
 
   # ---- locate pg_dump ------------------------------------------------------
-  $PgDump = $null
-  $Cmd = Get-Command pg_dump -ErrorAction SilentlyContinue
-  if ($Cmd) { $PgDump = $Cmd.Source }
-  else {
-    $PgBase = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory -ErrorAction SilentlyContinue |
-      Sort-Object Name -Descending | Select-Object -First 1
-    if ($PgBase) {
-      $Candidate = Join-Path $PgBase.FullName "bin\pg_dump.exe"
-      if (Test-Path $Candidate) { $PgDump = $Candidate }
-    }
+  # Checks WOODTEK_PG_BIN (environment or .env), the registry, the running
+  # PostgreSQL service, the usual install folders on C:/D:/E: - then PATH.
+  $PgDump = Find-PgTool "pg_dump" $EnvFile
+  if (-not $PgDump) {
+    Write-Log ("pg_dump not found. Looked in: " + ((Get-PgBinDirs $EnvFile) -join " | ") + " | PATH")
+    throw ("pg_dump was not found on this PC. Run backup\find-postgres-tools.bat for a diagnosis; " +
+           "install the PostgreSQL command-line tools, or put WOODTEK_PG_BIN=<folder with pg_dump.exe> in .env.")
   }
-  if (-not $PgDump) { throw "pg_dump not found (install PostgreSQL client tools or add it to PATH)" }
 
   # ---- dump the database ---------------------------------------------------
   $Ts = Get-Date -Format "yyyyMMdd-HHmm"
@@ -105,7 +192,17 @@ try {
   $DataZip = ""
   if ((Test-Path $DataDir) -and (Get-ChildItem $DataDir -File -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0) {
     $DataZip = Join-Path $BackupRoot "data-$Ts.zip"
-    Compress-Archive -Path (Join-Path $DataDir "*") -DestinationPath $DataZip -Force
+    # .NET zip classes instead of PowerShell 5's own zip cmdlet: that cmdlet
+    # does not exist on Windows Server 2012 R2 (PowerShell 4.0), which is what
+    # the factory server may still be. Same zip format - and dot-files are
+    # included too.
+    if (Test-Path $DataZip) { Remove-Item -LiteralPath $DataZip -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+      $DataDir,
+      $DataZip,
+      [System.IO.Compression.CompressionLevel]::Optimal,
+      $false)
   }
 
   # ---- commit stamp (which code this backup pairs with) ---------------------
