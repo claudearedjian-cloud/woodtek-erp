@@ -192,6 +192,63 @@ function Show-RunningBuild([string]$ExpectedSha) {
     }
 }
 
+# Merge-copy a whole folder tree. Copy-Item has a dangerous trap: when the
+# destination folder already EXISTS, it copies the SOURCE FOLDER INTO it
+# (creating installer\installer, .next\.next, backup\backup ...) instead of
+# merging the contents. On 2026-10-14 that trap hit the first real update pack:
+# .next\standalone was never re-created, the schema sync failed with
+# "Cannot find module ...node_modules\pg" and the server was left stopped.
+# This helper copies the CONTENTS, merging recursively - always.
+function Copy-TreeContents([string]$Source, [string]$Destination) {
+    if (-not (Test-Path $Destination)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+    foreach ($child in (Get-ChildItem -Path $Source -Force)) {
+        $target = Join-Path $Destination $child.Name
+        if ($child.PSIsContainer) {
+            if (Test-Path $target) {
+                # Destination exists -> merge INTO it (never nest: .next\.next).
+                Copy-TreeContents $child.FullName $target
+            } else {
+                Copy-Item -Path $child.FullName -Destination $target -Recurse -Force
+            }
+        } else {
+            Copy-Item -Path $child.FullName -Destination $target -Force
+        }
+    }
+}
+
+# Put the previous .next\standalone back and start the server again. Called
+# when the update fails AFTER step 5 moved the old app aside. Before
+# 2026-10-14 a failure in step 7 threw with no handler and simply left the
+# server stopped; every failure from step 5 on now ends here instead.
+# Sets $script:RollbackResult to "ok", "failed" or "none".
+function Invoke-Rollback([string]$Reason) {
+    $script:RollbackResult = "none"
+    Write-Host ""
+    Write-Host "  $Reason" -ForegroundColor Red
+    if (-not ($standaloneBackup -and (Test-Path $standaloneBackup))) {
+        Write-Host "  There is no rollback copy to restore (the update ran with -SkipBackup)." -ForegroundColor Red
+        Write-Host "  Re-install with WoodTek-ERP-Setup.exe, or restore backups\ manually." -ForegroundColor Red
+        return
+    }
+    Write-Host "  Rolling back to the previous version..." -ForegroundColor Red
+    Stop-WoodTekServer
+    if (Test-Path $standaloneDir) {
+        Remove-Item -Path $standaloneDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Move-Item -Path $standaloneBackup -Destination $standaloneDir -Force
+    Start-WoodTekServer
+    if (Wait-ForHealth 90) {
+        Write-Host "  Rolled back successfully - the previous version is running again." -ForegroundColor Green
+        Show-RunningBuild ""
+        $script:RollbackResult = "ok"
+        return
+    }
+    Write-Host "  Rollback done, but the server still is not answering. See $InstallDir\logs\woodtek.log" -ForegroundColor Red
+    $script:RollbackResult = "failed"
+}
+
 # ----------------------------------------------------------------------------
 # Step 0: this script restarts a SYSTEM scheduled task, so it needs elevation
 # ----------------------------------------------------------------------------
@@ -363,7 +420,15 @@ if ($SkipBackup) {
         try {
             Write-Info "Taking a database dump (backup\backup-woodtek.ps1)..."
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -BackupRoot $snapshotDir
-            Write-Info "Database dump saved to $snapshotDir"
+            if ($LASTEXITCODE -ne 0) {
+                # 2026-10-14: on Windows Server 2012 R2 the old backup script
+                # refused to start (a "#requires -Version 5.1" line) and this
+                # line still claimed the dump was saved. Report what happened.
+                Write-Warn "The database dump failed (exit code $LASTEXITCODE) - continuing with the file snapshot only."
+                Write-Warn "If the message above mentions 'Requires -Version 5.1', this PC's backup script predates 2026-10-14 - the update replaces it."
+            } else {
+                Write-Info "Database dump saved to $snapshotDir"
+            }
         } catch {
             Write-Warn "Database dump failed ($($_.Exception.Message)) - continuing with the file snapshot only."
         }
@@ -397,7 +462,9 @@ if (Test-Path $standaloneDir) {
         }
     }
     if (-not $moved) {
-        throw "The running application folder .next\standalone is locked and cannot be moved. Nothing has been changed yet. Reboot this PC and run the update again."
+        # The server was stopped above; do not leave the shop without an app.
+        try { Start-WoodTekServer | Out-Null } catch {}
+        throw "The running application folder .next\standalone is locked and cannot be moved. Nothing has been changed - the server was started again. Reboot this PC and run the update again."
     }
     Write-Info "Old application moved aside for rollback: $standaloneBackup"
 }
@@ -409,59 +476,107 @@ Write-Step "Step 6/8: Installing the new application files..."
 $extractDir = Join-Path $env:TEMP ("woodtek-apply-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
 
+# Steps 6 and 7 sit inside this try: if ANYTHING fails after step 5 moved the
+# old app aside, the previous version is rolled back and started again. On
+# 2026-10-14 the schema sync failed here with no handler and left the server
+# stopped with the new files half-installed - that must never happen again.
 try {
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($UpdateZip, $extractDir)
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($UpdateZip, $extractDir)
 
-    foreach ($item in (Get-ChildItem -Path $extractDir -Force)) {
-        if ($Preserve -contains $item.Name) {
-            Write-Info "Preserved (not overwritten): $($item.Name)"
-            continue
-        }
-        $dest = Join-Path $InstallDir $item.Name
-        if ($item.PSIsContainer) {
-            Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force
-        } else {
-            Copy-Item -Path $item.FullName -Destination $dest -Force
-        }
-    }
-
-    # Record what is now live - support asks "which version is this?" first.
-    if ($manifest) {
-        ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $InstallDir "update-applied.json") -Encoding UTF8
-    }
-    Write-Info "New application files installed."
-} finally {
-    Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-# ----------------------------------------------------------------------------
-# Step 7: sync the database schema (adds new tables, never drops data)
-# ----------------------------------------------------------------------------
-if ($SkipDbSync) {
-    Write-Step "Step 7/8: Skipping database schema sync (-SkipDbSync)..."
-} else {
-    Write-Step "Step 7/8: Syncing database schema (new tables only, data kept)..."
-    $nodeExe = Join-Path $InstallDir "runtime\node\node.exe"
-    if (-not (Test-Path $nodeExe)) { $nodeExe = "node" }
-    $bootstrap = Join-Path $InstallDir "installer\bootstrap-db.cjs"
-
-    if (Test-Path $bootstrap) {
-        $dataDirArg = "--data-dir=" + (Join-Path $InstallDir "data")
-        Push-Location $InstallDir
-        try {
-            # No --addons: the installed edition is left exactly as it is,
-            # only installer\schema.sql is re-applied (idempotent).
-            & $nodeExe $bootstrap $dataDirArg
-            if ($LASTEXITCODE -ne 0) {
-                throw "Schema sync failed (exit code $LASTEXITCODE)."
+        # One-time cleanup (2026-10-14): the update engine of that day nested
+        # whole folders inside existing ones (installer\installer, backup\backup,
+        # .next\.next) because Copy-Item copies a source folder INTO an existing
+        # destination. Remove those misfires - only when their marker file is
+        # present - so the nest is not re-copied or mistaken for real files.
+        foreach ($misfire in @(
+            @{ Dir = (Join-Path $InstallDir ".next\.next"); Marker = "standalone\server.js" },
+            @{ Dir = (Join-Path $InstallDir "installer\installer"); Marker = "apply-update.ps1" },
+            @{ Dir = (Join-Path $InstallDir "backup\backup"); Marker = "backup-woodtek.ps1" }
+        )) {
+            if ((Test-Path $misfire.Dir) -and (Test-Path (Join-Path $misfire.Dir $misfire.Marker))) {
+                Write-Warn "Removing a nested copy left behind by an older update engine: $($misfire.Dir)"
+                Remove-Item -Path $misfire.Dir -Recurse -Force -ErrorAction SilentlyContinue
             }
-            Write-Info "Database schema is up to date."
-        } finally {
-            Pop-Location
         }
-    } else {
-        Write-Warn "installer\bootstrap-db.cjs is missing - skipping the schema sync."
+
+        foreach ($item in (Get-ChildItem -Path $extractDir -Force)) {
+            if ($Preserve -contains $item.Name) {
+                Write-Info "Preserved (not overwritten): $($item.Name)"
+                continue
+            }
+            $dest = Join-Path $InstallDir $item.Name
+            if ($item.PSIsContainer) {
+                # Copy-TreeContents, never plain Copy-Item: when the destination
+                # folder already exists, Copy-Item copies the source folder INTO
+                # it (installer\installer ...) - exactly what broke the first
+                # real pack on 2026-10-14.
+                Copy-TreeContents $item.FullName $dest
+            } else {
+                Copy-Item -Path $item.FullName -Destination $dest -Force
+            }
+        }
+
+        # Record what is now live - support asks "which version is this?" first.
+        if ($manifest) {
+            ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $InstallDir "update-applied.json") -Encoding UTF8
+        }
+
+        # The app and the schema sync cannot work without these two. A pack
+        # missing them is refused HERE - before the database is touched.
+        $stagedServer = Join-Path $InstallDir ".next\standalone\server.js"
+        $stagedPg = Join-Path $InstallDir ".next\standalone\node_modules\pg\package.json"
+        if (-not (Test-Path $stagedServer)) {
+            throw "The pack has no .next\standalone\server.js after copying - the pack looks incomplete."
+        }
+        if (-not (Test-Path $stagedPg)) {
+            throw "The pack has no .next\standalone\node_modules\pg after copying - the pack looks incomplete (the app and the schema sync need it)."
+        }
+        Write-Info "New application files installed."
+    } finally {
+        Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     }
+
+    # ------------------------------------------------------------------------
+    # Step 7: sync the database schema (adds new tables, never drops data)
+    # ------------------------------------------------------------------------
+    if ($SkipDbSync) {
+        Write-Step "Step 7/8: Skipping database schema sync (-SkipDbSync)..."
+    } else {
+        Write-Step "Step 7/8: Syncing database schema (new tables only, data kept)..."
+        $nodeExe = Join-Path $InstallDir "runtime\node\node.exe"
+        if (-not (Test-Path $nodeExe)) { $nodeExe = "node" }
+        $bootstrap = Join-Path $InstallDir "installer\bootstrap-db.cjs"
+
+        if (Test-Path $bootstrap) {
+            $dataDirArg = "--data-dir=" + (Join-Path $InstallDir "data")
+            Push-Location $InstallDir
+            try {
+                # No --addons: the installed edition is left exactly as it is,
+                # only installer\schema.sql is re-applied (idempotent).
+                & $nodeExe $bootstrap $dataDirArg
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Schema sync failed (exit code $LASTEXITCODE)."
+                }
+                Write-Info "Database schema is up to date."
+            } finally {
+                Pop-Location
+            }
+        } else {
+            Write-Warn "installer\bootstrap-db.cjs is missing - skipping the schema sync."
+        }
+    }
+} catch {
+    Write-Host ""
+    Write-Host "  The update failed: $($_.Exception.Message)" -ForegroundColor Red
+    Invoke-Rollback "Restoring the previous version..."
+    if ($script:RollbackResult -eq "ok") {
+        throw "Update $packVersion failed and was rolled back. Nothing was lost. Send this window to support."
+    }
+    if ($script:RollbackResult -eq "none") {
+        throw "Update $packVersion failed and there is no rollback copy (the update was run with -SkipBackup). Re-install with WoodTek-ERP-Setup.exe, or restore backups\ manually."
+    }
+    throw "Update $packVersion failed and the rollback could not be verified. See the messages above and $InstallDir\logs\woodtek.log."
 }
 
 # ----------------------------------------------------------------------------
@@ -478,25 +593,14 @@ if (Wait-ForHealth 90) {
     Show-RunningBuild $expectedSha
 } else {
     # ---- automatic rollback -------------------------------------------------
-    Write-Host "`n  The server did not answer /api/health within 90 seconds." -ForegroundColor Red
-    if ($standaloneBackup -and (Test-Path $standaloneBackup)) {
-        Write-Host "  Rolling back to the previous version..." -ForegroundColor Red
-        Stop-WoodTekServer
-        if (Test-Path $standaloneDir) {
-            Remove-Item -Path $standaloneDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        Move-Item -Path $standaloneBackup -Destination $standaloneDir -Force
-        Start-WoodTekServer
-        if (Wait-ForHealth 90) {
-            Write-Host "  Rolled back successfully - the previous version is running again." -ForegroundColor Green
-            Show-RunningBuild ""
-        } else {
-            Write-Host "  Rollback done, but the server still is not answering. See $InstallDir\logs\woodtek.log" -ForegroundColor Red
-        }
+    Invoke-Rollback "The server did not answer /api/health within 90 seconds."
+    if ($script:RollbackResult -eq "ok") {
         throw "Update $packVersion failed and was rolled back. Nothing was lost. Send this window to support."
-    } else {
+    }
+    if ($script:RollbackResult -eq "none") {
         throw "Update $packVersion failed and there is no rollback copy (the update was run with -SkipBackup). Re-install with WoodTek-ERP-Setup.exe, or restore backups\ manually."
     }
+    throw "Update $packVersion failed and the rollback could not be verified. See the messages above and $InstallDir\logs\woodtek.log."
 }
 
 # Tidy up: keep the newest rollback snapshots only.

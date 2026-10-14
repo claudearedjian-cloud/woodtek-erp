@@ -58,6 +58,31 @@ function Test-TcpPort([string]$TargetHost, [int]$TargetPort) {
     }
 }
 
+# Merge-copy a whole folder tree. Copy-Item has a dangerous trap: when the
+# destination folder already EXISTS, it copies the SOURCE FOLDER INTO it
+# (installer\installer, .next\.next, backup\backup) instead of merging the
+# contents. That trap broke the first real update pack on 2026-10-14; the
+# repair/upgrade path of this very installer had the same shape. Never use a
+# plain Copy-Item for a folder whose destination may already exist.
+function Copy-TreeContents([string]$Source, [string]$Destination) {
+    if (-not (Test-Path $Destination)) {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    }
+    foreach ($child in (Get-ChildItem -Path $Source -Force)) {
+        $target = Join-Path $Destination $child.Name
+        if ($child.PSIsContainer) {
+            if (Test-Path $target) {
+                # Destination exists -> merge INTO it (never nest: .next\.next).
+                Copy-TreeContents $child.FullName $target
+            } else {
+                Copy-Item -Path $child.FullName -Destination $target -Recurse -Force
+            }
+        } else {
+            Copy-Item -Path $child.FullName -Destination $target -Force
+        }
+    }
+}
+
 # ----------------------------------------------------------------------------
 # Step 1: Stop existing service if running
 # ----------------------------------------------------------------------------
@@ -103,7 +128,12 @@ if ($PayloadZip -and (Test-Path $PayloadZip)) {
             Remove-Item -Path $targetStandalone -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        Copy-Item -Path (Join-Path $stageExtract "*") -Destination $InstallDir -Recurse -Force
+        # Copy-TreeContents (never a plain Copy-Item on a folder): when the
+        # destination folder already exists, Copy-Item would put the SOURCE
+        # folder INSIDE it (installer\installer, .next\.next ...). On a repair
+        # or upgrade install over an existing folder that would corrupt the
+        # layout - seen on the update side on 2026-10-14.
+        Copy-TreeContents $stageExtract $InstallDir
         Write-Info "Application files extracted to $InstallDir."
     } finally {
         Remove-Item -Path $stageExtract -Recurse -Force -ErrorAction SilentlyContinue
@@ -190,8 +220,9 @@ function Install-PortableNode([string]$Version, [string]$TargetDir) {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $extractDir)
     $inner = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
     $source = if ($inner) { $inner.FullName } else { $extractDir }
-    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $source "*") -Destination $TargetDir -Recurse -Force
+    # Merge-copy: runtime\node may already exist on a repair install, and a
+    # plain Copy-Item would then nest source folders inside it.
+    Copy-TreeContents $source $TargetDir
     Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     if (-not (Test-Path $cachedZip)) {
         Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue

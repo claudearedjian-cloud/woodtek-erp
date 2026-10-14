@@ -134,6 +134,13 @@ if ($SkipBuild -and (Test-Path $standaloneServer)) {
     }
     & node "scripts\build-prod.cjs"
     if ($LASTEXITCODE -ne 0) {
+        # The build stops the running server to replace .next. If the build
+        # then fails, bring the server back the same way step 6 does - packing
+        # must never leave this PC without its running app (2026-10-14).
+        if ($serverWasRunning) {
+            Write-Info "Build failed - restarting the WoodTek server that the build stopped..."
+            try { schtasks /Run /TN "\WoodTek ERP" 2>$null | Out-Null } catch {}
+        }
         throw "Production build failed (exit code $LASTEXITCODE)."
     }
 }
@@ -166,6 +173,16 @@ try {
     $stagePublic = Join-Path $stageStandalone "public"
     if ((Test-Path $publicDir) -and -not (Test-Path $stagePublic)) {
         Copy-Item -Path $publicDir -Destination $stagePublic -Recurse -Force
+    }
+
+    # Guard (2026-10-14): the app cannot run - and the target PC's schema sync
+    # cannot run - without these two inside the pack. Refuse to build a pack
+    # that is missing them instead of shipping the failure to a server.
+    if (-not (Test-Path (Join-Path $stageStandalone "server.js"))) {
+        throw "The staged standalone build has no server.js - the pack would be broken. Delete .next, run npm install, then build again."
+    }
+    if (-not (Test-Path (Join-Path $stageStandalone "node_modules\pg\package.json"))) {
+        throw "The staged standalone build has no node_modules\pg - the target PC's schema sync and app need it. Run npm install (or delete .next and build again), then re-run this file."
     }
 
     # 3b. Root launcher / ops files. check-server and copy-backups-offsite are

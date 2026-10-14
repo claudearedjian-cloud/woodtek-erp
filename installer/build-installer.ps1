@@ -79,6 +79,16 @@ try {
         Copy-Item -Path (Join-Path $nextStatic "*") -Destination $stageNextStatic -Recurse -Force
     }
 
+    # Guard (2026-10-14): the installed app and the installer's own database
+    # bootstrap both need these inside the payload. Refuse to build a setup
+    # that is missing them instead of shipping the failure to a server.
+    if (-not (Test-Path (Join-Path $stageStandalone "server.js"))) {
+        throw "The staged standalone build has no server.js - the setup would be broken. Delete .next, run npm install, then build again."
+    }
+    if (-not (Test-Path (Join-Path $stageStandalone "node_modules\pg\package.json"))) {
+        throw "The staged standalone build has no node_modules\pg - the installer's database bootstrap needs it. Run npm install (or delete .next and build again), then re-run this file."
+    }
+
     # Copy root launcher and ops files. check-server and copy-backups-offsite
     # are the owner's double-click helpers on the server (see RUNBOOK.txt).
     foreach ($file in @(

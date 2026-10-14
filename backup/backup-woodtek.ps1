@@ -1,4 +1,7 @@
-#requires -Version 5.1
+# NOTE: no "#requires -Version 5.1" line here on purpose (removed 2026-10-14).
+# On Windows Server 2012 R2 (PowerShell 4.0) it made this whole script refuse
+# to run - the nightly backup failed silently and the pre-update dump with it.
+# The body below uses only PowerShell 4.0 features; keep it that way.
 <#
 =============================================================================
 WoodTek ERP - nightly backup (Postgres database + JSON data overlay).
