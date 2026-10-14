@@ -80,6 +80,10 @@ if ($LASTEXITCODE -ne 0) {
         Say "  The last lines of the backup log:"
         Get-Content $BackupLog -Tail 6 | ForEach-Object { Say "    $_" }
     }
+    if (Test-Path $BackupLog) {
+        Say "  If the message mentions pg_dump, run backup\find-postgres-tools.bat first -"
+        Say "  it shows where PostgreSQL is on this PC and can point the app at it."
+    }
     throw "The backup failed, so nothing was packed. Fix the backup first (log: $BackupLog)."
 }
 Say ""

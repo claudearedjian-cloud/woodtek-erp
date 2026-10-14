@@ -64,6 +64,83 @@ function Test-TcpPort([string]$TargetHost, [int]$TargetPort) {
     }
 }
 
+function Get-EnvFileValue([string]$EnvFile, [string]$Key) {
+  if (-not $EnvFile -or -not (Test-Path $EnvFile)) { return "" }
+  $match = Select-String -Path $EnvFile -Pattern ("^\s*" + [regex]::Escape($Key) + "\s*=\s*(.+?)\s*$") | Select-Object -First 1
+  if (-not $match) { return "" }
+  return $match.Matches[0].Groups[1].Value.Trim().Trim('"').Trim("'")
+}
+
+function Get-PgBinDirs([string]$EnvFile) {
+  # Every plausible place the PostgreSQL command-line tools can live on Windows,
+  # in order of trust. 2026-10-14: the first version of this lookup only tried
+  # PATH and "C:\Program Files\PostgreSQL\<newest>\bin", so the migration pack
+  # died with "pg_dump not found" on a PC whose PostgreSQL sits somewhere else.
+  $dirs = @()
+
+  # 1. explicit override: environment variable first, then WOODTEK_PG_BIN in .env
+  $override = ""
+  if ($env:WOODTEK_PG_BIN) { $override = $env:WOODTEK_PG_BIN } else { $override = Get-EnvFileValue $EnvFile "WOODTEK_PG_BIN" }
+  if ($override) { $dirs += $override }
+
+  # 2. the EDB installer records where it put PostgreSQL
+  foreach ($root in @("HKLM:\SOFTWARE\PostgreSQL\Installations", "HKLM:\SOFTWARE\WOW6432Node\PostgreSQL\Installations")) {
+    if (Test-Path $root) {
+      Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+        $base = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue)."Base Directory"
+        if ($base) { $dirs += (Join-Path $base "bin") }
+      }
+    }
+  }
+
+  # 3. a running PostgreSQL service: its own executable names the real folder,
+  #    whatever the install path was
+  try {
+    $services = Get-WmiObject Win32_Service -Filter "Name LIKE 'postgresql%'" -ErrorAction SilentlyContinue
+    foreach ($service in $services) {
+      $exePath = "$($service.PathName)".Trim()
+      if (-not $exePath) { continue }
+      if ($exePath.StartsWith('"')) {
+        $end = $exePath.IndexOf('"', 1)
+        if ($end -gt 1) { $exePath = $exePath.Substring(1, $end - 1) }
+      } else {
+        $exePath = ($exePath -split '\s+')[0]
+      }
+      $serviceDir = Split-Path -Parent $exePath
+      if ($serviceDir) { $dirs += $serviceDir }
+    }
+  } catch { }
+
+  # 4. the usual folders - every version subfolder, on every common drive
+  $roots = @()
+  if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles "PostgreSQL") }
+  if (${env:ProgramFiles(x86)}) { $roots += (Join-Path ${env:ProgramFiles(x86)} "PostgreSQL") }
+  foreach ($drive in @("C:", "D:", "E:")) {
+    $roots += "$drive\PostgreSQL"
+    $roots += "$drive\pgsql"
+  }
+  foreach ($root in $roots) {
+    if ($root -and (Test-Path $root)) {
+      $dirs += $root
+      Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { $dirs += (Join-Path $_.FullName "bin") }
+    }
+  }
+
+  return ($dirs | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Find-PgTool([string]$ToolName, [string]$EnvFile) {
+  foreach ($dir in (Get-PgBinDirs $EnvFile)) {
+    $candidate = Join-Path $dir "$ToolName.exe"
+    if (Test-Path $candidate) { return $candidate }
+  }
+  $command = Get-Command "$ToolName.exe" -ErrorAction SilentlyContinue
+  if ($command) { return $command.Source }
+  return ""
+}
+
 # ---------------------------------------------------------------------------
 # Step 0: this script restarts a SYSTEM scheduled task -> needs elevation
 # ---------------------------------------------------------------------------
@@ -186,20 +263,13 @@ if (-not $Force) {
 # Step 4: locate the PostgreSQL tools (pg_restore + psql)
 # ---------------------------------------------------------------------------
 Write-Step "Step 4/8: Finding pg_restore and psql"
-function Find-PgTool([string]$ToolName) {
-    $Cmd = Get-Command "$ToolName.exe" -ErrorAction SilentlyContinue
-    if ($Cmd) { return $Cmd.Source }
-    $Base = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1
-    if ($Base) {
-        $Candidate = Join-Path $Base.FullName "bin\$ToolName.exe"
-        if (Test-Path $Candidate) { return $Candidate }
-    }
-    return ""
+$PgRestore = Find-PgTool "pg_restore" $EnvFile
+$Psql = Find-PgTool "psql" $EnvFile
+if (-not $PgRestore) {
+    Write-Info ("looked in: " + ((Get-PgBinDirs $EnvFile) -join " | ") + " | PATH")
+    throw ("pg_restore.exe was not found on this PC. Is PostgreSQL installed here? " +
+           "Run backup\find-postgres-tools.bat for a diagnosis.")
 }
-$PgRestore = Find-PgTool "pg_restore"
-$Psql = Find-PgTool "psql"
-if (-not $PgRestore) { throw "pg_restore.exe was not found. Is PostgreSQL installed on this PC?" }
 Write-Info "pg_restore: $PgRestore"
 if ($Psql) { Write-Info "psql      : $Psql" } else { Write-Warn "psql.exe was not found - the final row-count check will be skipped." }
 

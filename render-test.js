@@ -4490,6 +4490,62 @@ check(
   updaterBatSource.includes("Could not set the local edits aside") && backToMainBatSource.includes("Could not set the local edits aside"),
   "updater: a failed stash stops the run with a readable message instead of a half-finished update",
 );
+
+// --- PostgreSQL tool discovery (2026-10-14) ----------------------------------
+// The migration pack died with "pg_dump not found" because the scripts only
+// tried PATH and C:\Program Files\PostgreSQL\<newest>\bin. Every script that
+// needs the tools must now look where a Windows PostgreSQL install can really
+// live, and there must be a double-clickable diagnosis.
+check(
+  backupScriptSource.includes("function Get-PgBinDirs") && backupScriptSource.includes("function Find-PgTool")
+    && backupScriptSource.includes('Find-PgTool "pg_dump" $EnvFile'),
+  "postgres tools: the nightly/migration backup resolves pg_dump through the widened lookup",
+);
+for (const [label, source] of [["backup", backupScriptSource], ["restore-migration", restoreMigrationSource]]) {
+  check(
+    source.includes("WOODTEK_PG_BIN") && source.includes("SOFTWARE\\PostgreSQL\\Installations")
+      && source.includes("WOW6432Node") && source.includes("Win32_Service")
+      && source.includes('"Base Directory"') && source.includes("PostgreSQL") && source.includes("pgsql"),
+    "postgres tools (" + label + "): WOODTEK_PG_BIN, the registry entry, the service's own folder and the usual drives are searched",
+  );
+}
+check(
+  backupScriptSource.includes("pg_dump was not found on this PC") && backupScriptSource.includes("find-postgres-tools.bat"),
+  "postgres tools: the failure message tells the owner to run find-postgres-tools.bat instead of just giving up",
+);
+check(
+  backupWindowsSource.includes("function Get-PgBinCandidates") && backupWindowsSource.includes("foreach ($Directory in (Get-PgBinCandidates))")
+    && restoreWindowsSource.includes("function Get-PgBinCandidates") && restoreWindowsSource.includes("foreach ($Directory in (Get-PgBinCandidates))"),
+  "postgres tools: the full-backup and full-restore helpers use the same widened candidates",
+);
+check(
+  backupWindowsSource.includes("WOODTEK_PG_BIN in .env") && restoreWindowsSource.includes("WOODTEK_PG_BIN in .env"),
+  "postgres tools: both helpers name WOODTEK_PG_BIN in their failure message",
+);
+
+const findToolsSource = fs.readFileSync("backup/find-postgres-tools.ps1", "utf8");
+const findToolsBat = fs.readFileSync("backup/find-postgres-tools.bat", "utf8");
+check(
+  findToolsBat.includes("find-postgres-tools.ps1") && findToolsBat.includes("%~dp0") && findToolsSource.includes("Read-Host"),
+  "find-postgres-tools: a double-clickable helper runs the diagnosis and asks before changing anything",
+);
+check(
+  findToolsSource.includes("deliberately NOT printed") && findToolsSource.includes("$DbHost = $Matches[3]"),
+  "find-postgres-tools: reports the database host and name but never the password",
+);
+check(
+  findToolsSource.includes("WOODTEK_PG_BIN=$usable") && findToolsSource.includes("Nothing was changed"),
+  "find-postgres-tools: can write WOODTEK_PG_BIN into .env, and says so when it is declined",
+);
+check(
+  findToolsSource.includes("Get-WmiObject Win32_Service") && findToolsSource.includes("Name LIKE"),
+  "find-postgres-tools: reads the real service list instead of guessing folders",
+);
+check(
+  runbookSource.includes('IF A SCRIPT SAYS "pg_dump not found"') && runbookSource.includes("find-postgres-tools.bat")
+    && readmeSource.includes("find-postgres-tools.bat"),
+  "docs: the pg_dump-not-found path and its helper are documented for the owner",
+);
 check(
   runbookSource.includes('git stash pop') && runbookSource.includes("backups\\local-edits-<date>")
     && runbookSource.includes("CHECK IT (2026-10-14)"),

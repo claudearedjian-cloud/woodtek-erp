@@ -161,6 +161,24 @@ RUNNING IN A HYPER-V VIRTUAL MACHINE (FS200)
     are two different company books. Do not let the shop use a fresh install
     until the data question is settled (see the sections above).
 
+IF A SCRIPT SAYS "pg_dump not found" / "pg_restore was not found"
+  It means the PostgreSQL command-line tools were not found on this PC.
+  FIRST: double-click  backup\find-postgres-tools.bat
+  It prints which database this PC uses (host only, never the password), which
+  PostgreSQL services are running and where their tools are, and - when it
+  finds the tools - offers to write the folder into .env as
+  WOODTEK_PG_BIN=<folder>, which the app, the nightly backup, the migration
+  pack and the restore all use. Then run the backup / migration again.
+  If it finds NOTHING, the database probably runs on another PC (its first
+  line says which host). Options then:
+    a) install the PostgreSQL command-line tools on this PC (postgresql.org >
+       Download > Windows; you can untick the server and keep "Command Line
+       Tools"), then run find-postgres-tools.bat again, or
+    b) take the migration pack on the PC that holds the database.
+  Normal installs need none of this: the scripts search PATH, the registry,
+  the running service's own folder, and C:/D:/E:\PostgreSQL (every version
+  subfolder).
+
 QUICK REFERENCE
   App on this PC:      http://localhost:3000
   App on the network:  http://192.168.220.179:3000
