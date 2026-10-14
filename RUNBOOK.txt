@@ -16,6 +16,19 @@ THE UPDATE RITUAL (every modification, no exceptions)
   never stop with "Your local changes would be overwritten by merge"
   (that happened once with hand-edited installer files; it cannot block again).
   Bring an edit back any time with:  git stash list   then   git stash pop
+  IF AN UPDATE STOPS ON LOCAL CHANGES ("would be overwritten by merge"):
+    double-click  unblock-update.bat  - it shows what is edited, saves a copy to
+    backups\local-edits-<date>\local-edits.patch, sets the edits aside with
+    git stash, then pulls. Nothing is deleted. (Only needed when the running
+    updater is older than 2026-10-14; after this update it does that itself.)
+  IF A SCRIPT FAILS WITH A STRANGE PowerShell MESSAGE
+    ("The ampersand (&) character is not allowed", "The string is missing the
+    terminator", "Unexpected token"): the file it names was edited by hand and
+    no longer parses. Do NOT try to fix the quotes - run unblock-update.bat
+    (which sets the edited copies aside) and then the script again. If a part
+    of a script you EDITED is important, send
+    backups\local-edits-<date>\local-edits.patch to the agent, who will fold
+    it into the repo so it stops being overwritten.
   THE MANUAL WAY:
   1. Double-click woodtek-snapshot.bat          <- your undo button
   2. git add -A  &&  git commit -m "before change"   (once git is set up)

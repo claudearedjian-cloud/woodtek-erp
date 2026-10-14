@@ -409,6 +409,16 @@ build-installer.bat
   `scripts\restore-windows.ps1` unpacks with a new `Expand-ZipArchiveTo`
   helper (overwrite semantics like `-Force`, plus a guard that refuses archive
   entries trying to escape the destination folder).
+- **A hand-edited script that no longer parses** (`The ampersand (&) character
+  is not allowed`, `The string is missing the terminator`) is what an unbalanced
+  quote looks like from the outside — PowerShell only reports it far from the
+  real line. `render-test.js` now walks every shipped `.ps1` the way PowerShell
+  does (comments, `<# #>` blocks, `@'`/`@"` here-strings, backtick escapes,
+  delimiters) and fails the build on anything that cannot parse — plus the
+  exact `$LockFile | Out-File` landmine (a pipe into `Out-File` without
+  `-FilePath`). `unblock-update.bat` (repo root) is the owner's one-time rescue:
+  it saves a patch copy of local edits to `backups\local-edits-<date>\`, sets
+  them aside with `git stash`, then pulls.
 - **Updates cannot be blocked by local edits any more.** `update-woodtek.bat`,
   `woodtek-back-to-main.bat` and `woodtek-test-branch.bat` detect modified
   files, write a patch copy to `backups\local-edits-<date>\local-edits.patch`
