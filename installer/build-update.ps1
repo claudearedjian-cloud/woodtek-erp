@@ -168,13 +168,19 @@ try {
         Copy-Item -Path $publicDir -Destination $stagePublic -Recurse -Force
     }
 
-    # 3b. Root launcher / ops files.
+    # 3b. Root launcher / ops files. check-server and copy-backups-offsite are
+    #     the owner's double-click helpers on the server: they must arrive with
+    #     every install and every update (see RUNBOOK.txt).
     foreach ($file in @(
         "start-prod.cjs",
         "start-woodtek-prod.bat",
         "start-woodtek-prod-silent.bat",
         "RUNBOOK.txt",
-        ".env.example"
+        ".env.example",
+        "check-server.js",
+        "check-server.bat",
+        "copy-backups-offsite.ps1",
+        "copy-backups-offsite.bat"
     )) {
         $src = Join-Path $Root $file
         if (Test-Path $src) {
@@ -206,10 +212,11 @@ try {
         }
     }
 
-    # 3d. Nightly backup scripts (the scheduled task needs them).
+    # 3d. Nightly backup scripts (the scheduled task needs them) plus the
+    #     backup diagnosis helper the RUNBOOK points at.
     $stageBackup = Join-Path $stageDir "backup"
     New-Item -ItemType Directory -Path $stageBackup -Force | Out-Null
-    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat")) {
+    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat", "find-postgres-tools.ps1", "find-postgres-tools.bat")) {
         $bSrc = Join-Path $Root "backup\$bf"
         if (Test-Path $bSrc) {
             Copy-Item -Path $bSrc -Destination (Join-Path $stageBackup $bf) -Force

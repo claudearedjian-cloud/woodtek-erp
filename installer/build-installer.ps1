@@ -79,13 +79,18 @@ try {
         Copy-Item -Path (Join-Path $nextStatic "*") -Destination $stageNextStatic -Recurse -Force
     }
 
-    # Copy root launcher and ops files
+    # Copy root launcher and ops files. check-server and copy-backups-offsite
+    # are the owner's double-click helpers on the server (see RUNBOOK.txt).
     foreach ($file in @(
         "start-prod.cjs",
         "start-woodtek-prod.bat",
         "start-woodtek-prod-silent.bat",
         "RUNBOOK.txt",
-        ".env.example"
+        ".env.example",
+        "check-server.js",
+        "check-server.bat",
+        "copy-backups-offsite.ps1",
+        "copy-backups-offsite.bat"
     )) {
         $src = Join-Path $Root $file
         if (Test-Path $src) {
@@ -96,7 +101,7 @@ try {
     # Copy nightly backup scripts
     $stageBackup = Join-Path $stageDir "backup"
     New-Item -ItemType Directory -Path $stageBackup -Force | Out-Null
-    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat")) {
+    foreach ($bf in @("backup-woodtek.ps1", "install-backup-task.bat", "prepare-migration.ps1", "prepare-migration.bat", "find-postgres-tools.ps1", "find-postgres-tools.bat")) {
         $bSrc = Join-Path $Root "backup\$bf"
         if (Test-Path $bSrc) {
             Copy-Item -Path $bSrc -Destination (Join-Path $stageBackup $bf) -Force
@@ -106,7 +111,10 @@ try {
     # Copy installer engine, schema & DB bootstrapper
     $stageInstaller = Join-Path $stageDir "installer"
     New-Item -ItemType Directory -Path $stageInstaller -Force | Out-Null
-    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1", "restore-migration.ps1", "restore-migration.bat")) {
+    # apply-update.* ships in fresh installs too: the first update pack a server
+    # ever receives needs it on disk BEFORE the pack can install its own copy
+    # (discovered 2026-10-14 - FS200's install predates this list).
+    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1", "restore-migration.ps1", "restore-migration.bat", "apply-update.ps1", "apply-update.bat")) {
         $iSrc = Join-Path $Root "installer\$inf"
         if (Test-Path $iSrc) {
             Copy-Item -Path $iSrc -Destination (Join-Path $stageInstaller $inf) -Force
