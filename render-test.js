@@ -4286,6 +4286,154 @@ check(assemblyViewSource.includes('useState<PolyboardCsvLayout>("woodtek")') && 
 check(assemblyViewSource.includes("cixMatchedFilenameFace0") && assemblyViewSource.includes("cixMatchedFilenameFace6") && assemblyViewSource.includes("CSV ref:"), "assembly workspace: face details distinguish an uploaded fallback filename from the original CSV reference");
 check(assemblyViewSource.includes("Project Name (Optional Override)") && !assemblyViewSource.includes("setImportProjName(file.name"), "assembly import dialog: uploading a file does not override column 12 with the filename");
 
+// --- Windows Server 2012 R2 / Windows 8.1 install support (2026-10-13) -----
+// Node.js 23 and newer refuse to start on those Windows versions ("Node.js is
+// only supported on Windows 10, Windows Server 2016, or higher") and exit
+// before running anything, so a turnkey install on such a server used to stop
+// at the database bootstrap with nothing but that warning on screen. The
+// installer, the start scripts and the update engine must keep covering it.
+const prodBatSource = fs.readFileSync("start-woodtek-prod.bat", "utf8");
+const silentBatSource = fs.readFileSync("start-woodtek-prod-silent.bat", "utf8");
+const installEngineSource = fs.readFileSync("installer/install-engine.ps1", "utf8");
+const applyUpdateSource = fs.readFileSync("installer/apply-update.ps1", "utf8");
+const configureEditionSource = fs.readFileSync("installer/configure-edition.ps1", "utf8");
+const buildInstallerSource = fs.readFileSync("installer/build-installer.ps1", "utf8");
+const launcherSource = fs.readFileSync("start-prod.cjs", "utf8");
+const runbookSource = fs.readFileSync("RUNBOOK.txt", "utf8");
+
+check(
+  prodBatSource.includes("CurrentMajorVersionNumber") && prodBatSource.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+  "old Windows start script: detects Windows 8.1 / Server 2012 R2 and skips Node's platform check",
+);
+check(
+  silentBatSource.includes("CurrentMajorVersionNumber") && silentBatSource.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+  "old Windows scheduled task: the silent starter sets the same flag before node runs",
+);
+check(
+  prodBatSource.includes('if "%WT_EXIT%"=="216"') && prodBatSource.includes("RUNBOOK.txt")
+    && silentBatSource.includes('if "%WT_EXIT%"=="216"'),
+  "old Windows start scripts: the node refusal (exit 216) is explained instead of sitting at Press any key",
+);
+check(
+  installEngineSource.includes("Test-NodeRuntime") && installEngineSource.includes('"--version"'),
+  "setup engine: probes every candidate runtime with node --version instead of trusting node.exe",
+);
+check(
+  installEngineSource.includes("$legacyWindows") && installEngineSource.includes("Get-WindowsMajorVersion"),
+  "setup engine: Windows 8.1 / Server 2012 R2 is detected from the registry, not assumed",
+);
+check(
+  installEngineSource.includes("Install-PortableNode") && installEngineSource.includes("nodejs.org/dist/") && installEngineSource.includes('prereqs\\node-win-x64.zip'),
+  "setup engine: installs Node.js 22 LTS on old Windows, offline from prereqs or downloaded from nodejs.org",
+);
+check(
+  installEngineSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"') && installEngineSource.includes("No Node.js runtime could start on this PC"),
+  "setup engine: platform-check fallback stays the last resort, and failure is explained instead of hidden",
+);
+check(
+  applyUpdateSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"') && configureEditionSource.includes('$env:NODE_SKIP_PLATFORM_CHECK = "1"'),
+  "update + edition scripts: schema-sync node calls skip the platform check on old Windows too",
+);
+check(
+  launcherSource.includes("os.release()") && launcherSource.includes("NODE_SKIP_PLATFORM_CHECK=1"),
+  "server launcher: an unsupported Windows version is recorded in the log",
+);
+check(
+  buildInstallerSource.includes("node-win-x64.zip") && buildInstallerSource.includes("-ge 23"),
+  "installer builder: warns when the packed Node.js cannot start on an old server and accepts an offline zip",
+);
+check(
+  runbookSource.includes("OLD WINDOWS SERVERS") && runbookSource.includes("NODE_SKIP_PLATFORM_CHECK"),
+  "runbook: the Press any key / Windows Server 2012 R2 case is documented for the owner",
+);
+const readmeSource = fs.readFileSync("README.md", "utf8");
+check(
+  runbookSource.includes("HYPER-V VIRTUAL MACHINE") && runbookSource.includes("Default Switch")
+    && runbookSource.includes("CHECKPOINTS ARE NOT BACKUPS") && runbookSource.includes("EXTERNAL virtual switch"),
+  "runbook: running on a Hyper-V VM is documented (external switch, fixed IP, checkpoints are not backups)",
+);
+check(
+  readmeSource.includes("**External** virtual") && readmeSource.includes("guest* Windows version")
+    && readmeSource.includes("HYPER-V VIRTUAL MACHINE"),
+  "readme: the old-Windows section points VM users at the Hyper-V notes",
+);
+
+// --- moving the factory data to a new server (2026-10-13) ------------------
+// Two double-clicks move the whole company book: the pack builder runs on the
+// old server (read-only), the restore runs on the new one and must verify what
+// it restored instead of trusting exit codes. The old server must never be
+// touched by the restore path.
+const prepareMigrationSource = fs.readFileSync("backup/prepare-migration.ps1", "utf8");
+const prepareMigrationBat = fs.readFileSync("backup/prepare-migration.bat", "utf8");
+const restoreMigrationSource = fs.readFileSync("installer/restore-migration.ps1", "utf8");
+const restoreMigrationBat = fs.readFileSync("installer/restore-migration.bat", "utf8");
+
+check(
+  prepareMigrationSource.includes("About to pack from:") && prepareMigrationSource.includes('$answer -ne "YES"')
+    && prepareMigrationSource.includes("$DbLabel"),
+  "migration pack: shows which folder/database it is packing and asks for YES (wrong-folder protection)",
+);
+check(
+  prepareMigrationSource.includes("backup-woodtek.ps1") && prepareMigrationSource.includes("Copy-Item")
+    && prepareMigrationSource.includes("README-MIGRATION.txt") && prepareMigrationSource.includes("WoodTek-Migration"),
+  "migration pack: the old server takes a fresh backup and builds a copyable WoodTek-Migration folder",
+);
+check(
+  prepareMigrationSource.includes("refusing to pack an incomplete migration") && prepareMigrationSource.includes("DATABASE_URL"),
+  "migration pack: refuses to pack when the data\ folder has files but no zip, and re-checks .env/DATABASE_URL",
+);
+check(
+  prepareMigrationSource.includes('".env.from-old-pc"')
+    && prepareMigrationSource.includes("for reference only. Do not overwrite the new")
+    && !/Copy-Item[^\n]*\.env"\s+-Destination\s+\(Join-Path \$PackDir "\.env"\)/.test(prepareMigrationSource),
+  "migration pack: the old .env travels as a reference copy only (the new server keeps its own)",
+);
+check(
+  restoreMigrationSource.includes("DROP DATABASE IF EXISTS") && restoreMigrationSource.includes("CREATE DATABASE")
+    && restoreMigrationSource.includes("--no-owner") && restoreMigrationSource.includes("pg_restore"),
+  "migration restore: recreates the database and pg_restore's the pack into it",
+);
+check(
+  restoreMigrationSource.includes("ZipFile]::ExtractToDirectory") && restoreMigrationSource.includes("data-before-migration-"),
+  "migration restore: restores the data\ overlay and keeps the fresh server's own folder aside",
+);
+check(
+  restoreMigrationSource.includes("pre-migration-") && restoreMigrationSource.includes("pg_dump"),
+  "migration restore: dumps the fresh database before replacing it (cheap insurance)",
+);
+check(
+  restoreMigrationSource.includes("SELECT count(*)") && restoreMigrationSource.includes('"users", "machines", "orders", "order_operations"'),
+  "migration restore: reads the row counts back after restoring - verified, not assumed",
+);
+check(
+  restoreMigrationSource.includes("/api/health") && restoreMigrationSource.includes("schtasks /Run"),
+  "migration restore: starts the service again and waits for /api/health",
+);
+check(
+  restoreMigrationSource.includes("IsInRole") && restoreMigrationSource.includes("-Verb RunAs"),
+  "migration restore: asks for administrator rights itself (it restarts the SYSTEM task)",
+);
+check(
+  restoreMigrationSource.indexOf("schtasks /End") > 0
+    && restoreMigrationSource.indexOf("schtasks /End") < restoreMigrationSource.indexOf("DROP DATABASE IF EXISTS")
+    && restoreMigrationSource.indexOf("DROP DATABASE IF EXISTS") < restoreMigrationSource.indexOf("ExtractToDirectory"),
+  "migration restore: the server is stopped, then the database, then the data files - in that order",
+);
+check(
+  prepareMigrationBat.includes("prepare-migration.ps1") && restoreMigrationBat.includes("restore-migration.ps1")
+    && prepareMigrationBat.includes("%~dp0") && restoreMigrationBat.includes("%~dp0"),
+  "migration: both steps are double-clickable .bat files that run from their own folder",
+);
+check(
+  buildInstallerSource.includes("restore-migration.ps1") && buildInstallerSource.includes("prepare-migration.ps1"),
+  "migration: the installer payload ships both scripts (so the new PC has them)",
+);
+check(
+  runbookSource.includes("MOVING THE APP TO A NEW SERVER") && runbookSource.includes("prepare-migration.bat")
+    && runbookSource.includes("restore-migration.bat") && runbookSource.includes("MANUAL FALLBACK"),
+  "runbook: the two double-clicks and the manual fallback are documented for the owner",
+);
+
 // Exercise the REAL Next route handlers and JSON store without a PostgreSQL
 // dependency. Only authentication is substituted; the permission matrix,
 // parser, atomic file writes and audit log are the production implementations.

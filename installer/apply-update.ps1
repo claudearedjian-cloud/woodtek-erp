@@ -210,6 +210,24 @@ if (-not (Test-IsAdmin)) {
     exit $proc.ExitCode
 }
 
+# ----------------------------------------------------------------------------
+# Windows 8.1 / Server 2012 R2 and older: Node.js 23+ refuses to start there
+# ("Node.js is only supported on Windows 10, Windows Server 2016, or higher"),
+# which would break the schema sync below and a direct server start. Installs
+# on such a PC carry Node.js 22 LTS, which starts on its own - this flag only
+# covers a runtime replaced by hand. See RUNBOOK.txt, "OLD WINDOWS SERVERS".
+# ----------------------------------------------------------------------------
+$windowsMajor = 6
+try {
+    $currentMajor = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" `
+        -Name CurrentMajorVersionNumber -ErrorAction Stop).CurrentMajorVersionNumber
+    if ($currentMajor) { $windowsMajor = [int]$currentMajor }
+} catch { }
+if ($windowsMajor -lt 10) {
+    $env:NODE_SKIP_PLATFORM_CHECK = "1"
+    Write-Warn "This Windows version is older than Windows 10 / Server 2016 - Node.js is started with its platform check skipped."
+}
+
 Write-Banner "WoodTek ERP — Applying Update"
 
 # ----------------------------------------------------------------------------

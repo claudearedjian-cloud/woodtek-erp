@@ -23,6 +23,7 @@ const { spawn, execFile } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
+const os = require("node:os");
 
 const ROOT = path.resolve(__dirname);
 const STANDALONE = path.join(ROOT, ".next", "standalone");
@@ -77,6 +78,23 @@ if (!process.env.AUTH_SECRET) {
 if (!fs.existsSync(SERVER)) {
   log("FATAL: production build not found at " + STANDALONE + ". Run: node scripts/build-prod.cjs");
   process.exit(1);
+}
+
+// Windows 8.1 / Server 2012 R2 and older are below the minimum Windows version
+// of Node.js 23+ (Windows 10 / Server 2016). The start scripts (and the setup
+// engine) skip Node's platform check on those PCs so the server can run at all
+// — the very workaround Node.js prints in its own message. Say so once, in the
+// log, so a support question is easy to answer. Fresh installs on such a server
+// carry Node.js 22 LTS, which needs no workaround: see RUNBOOK.txt,
+// "OLD WINDOWS SERVERS".
+if (process.platform === "win32") {
+  const windowsMajor = Number(String(os.release()).split(".")[0]);
+  if (Number.isInteger(windowsMajor) && windowsMajor > 0 && windowsMajor < 10) {
+    log(
+      `WARNING: this Windows version (${os.release()}) is older than Windows 10 / Server 2016, ` +
+        "so the Node.js runtime is running with its platform check skipped (NODE_SKIP_PLATFORM_CHECK=1).",
+    );
+  }
 }
 
 let child = null;

@@ -51,6 +51,99 @@ WORKING WITH ARENA (AI) SAFELY
   - Keep the three patched files from this session in mind; they are now part
     of your source (Sidebar.tsx, moduleAccess.ts, page.tsx).
 
+OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
+  Node.js 23 and newer refuse to start on those Windows versions and print
+    "Node.js is only supported on Windows 10, Windows Server 2016, or higher"
+  then exit - nothing runs, and the black window just sits at "Press any key".
+  What the installer does now:
+  - It starts every candidate node.exe once ("node --version") before using it,
+    so it never trusts a runtime blindly again.
+  - On Windows 8.1 / Server 2012 R2 it installs Node.js 22 LTS (the newest
+    line that officially supports them) - from the zip inside the installer
+    when present, from nodejs.org otherwise - and only if that is impossible
+    does it fall back to Node.js' own escape hatch,
+    NODE_SKIP_PLATFORM_CHECK=1, which the start scripts set on those PCs too.
+  If the server still refuses to start on such a PC:
+  - Copy runtime\node from a working install (it is one folder, no setup), or
+  - set the system variable NODE_SKIP_PLATFORM_CHECK to 1
+    (Control Panel > System > Advanced system settings > Environment
+    Variables > System variables > New) and start the server again.
+  Keep it honest: Microsoft ended support for Windows Server 2012 R2 in
+  October 2023 (no security updates) and PostgreSQL 16 is not tested on it.
+  It is fine as a spare PC - a server that runs the shop every day should be
+  Windows Server 2016 or newer. In a virtual machine that upgrade is cheap:
+  build the VM with a newer Windows Server guest and the workaround is not
+  needed at all (and the guest keeps getting security updates).
+
+MOVING THE APP TO A NEW SERVER (or VM)
+  Two double-clicks, and your factory data moves to the new PC. The old PC is
+  never changed by this - it is only read.
+  1. ON THE OLD SERVER
+       backup\prepare-migration.bat
+     Run it from the folder the factory actually uses (the one you update).
+     It shows which folder/database it is about to pack and asks you to type
+     YES. Then it takes a fresh backup (database dump + data\ zip) and builds a
+     folder "WoodTek-Migration" next to the app, with a README inside. Copy that
+     whole folder to the new server (USB stick, or the new server's Desktop).
+  2. ON THE NEW SERVER
+       a. Install first: run WoodTek-ERP-Setup.exe and let it finish.
+       b. Then double-click  installer\restore-migration.bat
+          It asks you to type YES, then replaces the new server's fresh, empty
+          database with the factory data, restores the data\ files, starts the
+          service again and prints the row counts of users / orders / machines
+          it read back, so you can see the data really arrived.
+          If the folder is not on the Desktop: drag it there, or run
+          installer\restore-migration.bat -PackDir "D:\WoodTek-Migration"
+  3. CHECK, THEN SWITCH
+       Sign in with your usual PIN (the users came across), open Orders &
+       Dispatch & Assembly, print one job ticket. Only then point the factory
+       PCs at the new server (http://<new-ip>:3000) and stop using the old one.
+       Keep the old PC switched off-but-intact for a week.
+  MANUAL FALLBACK (if the .bat refuses to run)
+     - the two files it needs are  WoodTek-Migration\db-*.dump  (the database)
+       and  WoodTek-Migration\data-*.zip  (the JSON overlay - dispatch,
+       production plans, roles/menus, assembly projects, email settings).
+     - database:  "C:\Program Files\PostgreSQL\16\bin\pg_restore.exe"
+       --no-owner --no-privileges -d "<DATABASE_URL from .env>" db-....dump
+     - data:      unzip data-....zip into  <app folder>\data  (replace it)
+     - then start the server again (the "\WoodTek ERP" task) and open it.
+  WHAT MOVES, WHAT DOES NOT
+     - moves: the whole database (orders, users + PINs, stock, machines,
+       audit) and the data\ folder (dispatch state, production plans, material
+       progress, roles/menus, assembly projects, email config).
+     - moves for reference only: the old .env (as ".env.from-old-pc"). The new
+       server keeps its own .env: its own DATABASE_URL and its own AUTH_SECRET
+       (that only means everybody signs in once on the new server).
+     - does not move: the app code (the new PC installs its own copy), and
+       anything you saved outside the app folder.
+
+RUNNING IN A HYPER-V VIRTUAL MACHINE (FS200)
+  The app runs fine on a virtual machine, and the Node.js version message is
+  about the GUEST Windows version - not about virtualization. Host settings
+  that matter:
+  - Network: attach the VM to an EXTERNAL virtual switch (Hyper-V Manager >
+    Virtual Switch Manager). With the "Default Switch" the VM sits behind NAT
+    and the other PCs cannot open http://<vm-ip>:3000.
+  - Address: give the VM a fixed IP inside Windows (or a DHCP reservation), so
+    the address on shortcuts, bookmarks and printed notes never changes.
+  - Memory: 4 GB minimum, 8 GB comfortable - and avoid Dynamic Memory for a
+    database server (PostgreSQL wants a stable amount). Set static memory.
+  - Start/stop: in the VM settings make Automatic Start Action "Always start
+    automatically" and Automatic Stop Action "Shut down the guest operating
+    system". A host reboot then brings the app back by itself (the
+    "\WoodTek ERP" task starts with Windows).
+  - Clock: leave Hyper-V "Time Synchronization" (Integration Services) ON -
+    attendance, job timestamps and the nightly backup use the VM clock.
+  - Backups: HYPER-V CHECKPOINTS ARE NOT BACKUPS for the database (a checkpoint
+    is a crash-consistent disk image, and reverting it throws away everything
+    written since). Keep the nightly task running inside the VM
+    (backups\nightly), and if you want an image-level rollback point, SHUT THE
+    VM DOWN first and then take the checkpoint (e.g. right after a successful
+    install or update).
+  - One server only: two PCs running the app against two different databases
+    are two different company books. Do not let the shop use a fresh install
+    until the data question is settled (see the sections above).
+
 QUICK REFERENCE
   App on this PC:      http://localhost:3000
   App on the network:  http://192.168.220.179:3000

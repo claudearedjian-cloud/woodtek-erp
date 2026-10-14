@@ -5,7 +5,11 @@
 # deployment). Performs a complete turnkey setup on a brand-new or existing PC:
 #   1. Stops any existing WoodTek ERP task on the target port
 #   2. Extracts the standalone application payload (preserving .env & data\)
-#   3. Verifies bundled runtime\node\node.exe (or auto-downloads Node.js LTS)
+#   3. Verifies the Node.js runtime actually starts on THIS Windows (on
+#      Windows 8.1 / Server 2012 R2, where Node.js 23+ refuses to run, it
+#      installs Node.js 22 LTS - the newest line that supports them - from
+#      prereqs\node-win-x64.zip or nodejs.org; node.exe is never trusted
+#      blindly again)
 #   4. Verifies local PostgreSQL service (or silently installs PostgreSQL 16)
 #   5. Generates .env (AUTH_SECRET + DATABASE_URL), creates database & 31
 #      tables, and writes data\installed-edition.json (hard-locked modules)
@@ -116,47 +120,142 @@ foreach ($sub in @("data", "logs", "backups", "backups\nightly")) {
 }
 
 # ----------------------------------------------------------------------------
-# Step 3: Verify or install Node.js 20 LTS runtime
+# Step 3: Verify or install the Node.js runtime
 # ----------------------------------------------------------------------------
+# Node.js 23 and newer refuse to start on Windows 8.1 / Server 2012 R2 and
+# older ("Node.js is only supported on Windows 10, Windows Server 2016, or
+# higher") and exit before running anything. The turnkey install copies this
+# PC's own runtime into the payload, so on such a server the install used to
+# stop at the database bootstrap with only that warning on screen. This step
+# now:
+#   1. probes every candidate runtime by actually running "node --version";
+#   2. on an old Windows installs Node.js 22 LTS - the newest line that
+#      officially supports 8.1 / Server 2012 R2 and still satisfies the app
+#      (Next.js needs >= 20.9; CI runs Node 22) - from
+#      installer\prereqs\node-win-x64.zip when the payload carries it,
+#      downloading it from nodejs.org otherwise;
+#   3. only when that is impossible falls back to Node.js' own documented
+#      escape hatch (NODE_SKIP_PLATFORM_CHECK=1), which the start scripts set
+#      for those Windows versions too;
+#   4. refuses to continue, with a readable message, instead of failing later
+#      inside a database call.
+# One runtime (Node.js 22 LTS) covers both the current Windows 10/11 PCs and an
+# older server, so nothing here changes on a supported Windows version.
 Write-Step "Step 3/7: Checking Node.js runtime..."
+
+$legacyNodeVersion = "v22.23.3"
 $bundledNode = Join-Path $InstallDir "runtime\node\node.exe"
 $systemNode = "C:\Program Files\nodejs\node.exe"
-$nodeExe = $null
 
-if (Test-Path $bundledNode) {
-    $nodeExe = $bundledNode
-    Write-Info "Using bundled Node.js runtime: $nodeExe"
-} elseif (Test-Path $systemNode) {
-    $nodeExe = $systemNode
-    Write-Info "Using system Node.js runtime: $nodeExe"
+function Get-WindowsMajorVersion {
+    # CurrentMajorVersionNumber exists on Windows 10 / Server 2016 and newer
+    # only; older versions (and anything unreadable) report 6.
+    try {
+        $value = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" `
+            -Name CurrentMajorVersionNumber -ErrorAction Stop).CurrentMajorVersionNumber
+        if ($value) { return [int]$value }
+    } catch { }
+    return 6
+}
+
+function Test-NodeRuntime([string]$Exe) {
+    if (-not $Exe) { return $false }
+    if (-not (Test-Path $Exe)) { return $false }
+    try {
+        $version = & $Exe "--version" 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        return ("$version" -match "^v\d+")
+    } catch {
+        return $false
+    }
+}
+
+function Install-PortableNode([string]$Version, [string]$TargetDir) {
+    # Uses the zip that travels inside the installer when it is there, so an
+    # offline PC works; downloads the official build otherwise.
+    $zipFile = Join-Path $env:TEMP "node-$Version-win-x64.zip"
+    $cachedZip = Join-Path $InstallDir "prereqs\node-win-x64.zip"
+    $extractDir = Join-Path $env:TEMP ("node-extract-" + [Guid]::NewGuid().ToString("N"))
+
+    if (Test-Path $cachedZip) {
+        Copy-Item -Path $cachedZip -Destination $zipFile -Force
+        Write-Info "Using the Node.js runtime that came with the installer."
+    } else {
+        Write-Info "Downloading Node.js $Version (Windows x64) from nodejs.org..."
+        Invoke-WebRequest -Uri "https://nodejs.org/dist/$Version/node-$Version-win-x64.zip" `
+            -OutFile $zipFile -UseBasicParsing
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $extractDir)
+    $inner = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
+    $source = if ($inner) { $inner.FullName } else { $extractDir }
+    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $source "*") -Destination $TargetDir -Recurse -Force
+    Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path $cachedZip)) {
+        Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$windowsMajor = Get-WindowsMajorVersion
+$legacyWindows = ($windowsMajor -lt 10)
+if ($legacyWindows) {
+    Write-Info "Windows major version $windowsMajor detected (Windows 8.1 / Server 2012 R2 or older)."
 } else {
-    $cmdNode = Get-Command node -ErrorAction SilentlyContinue
-    if ($cmdNode) {
-        $nodeExe = $cmdNode.Source
-        Write-Info "Using Node.js from PATH: $nodeExe"
+    Write-Info "Windows 10 / Server 2016 or newer detected."
+}
+
+# Candidates in order of preference: the runtime shipped with the app, the
+# machine-wide Node.js, then whatever PATH offers.
+$candidates = @()
+if (Test-Path $bundledNode) { $candidates += $bundledNode }
+if (Test-Path $systemNode) { $candidates += $systemNode }
+$pathNode = Get-Command node -ErrorAction SilentlyContinue
+if ($pathNode -and $pathNode.Source) { $candidates += $pathNode.Source }
+
+$nodeExe = $null
+foreach ($candidate in $candidates) {
+    if (Test-NodeRuntime $candidate) {
+        $nodeExe = $candidate
+        break
+    }
+    Write-Info "Node.js at $candidate did not start on this Windows version."
+}
+
+if (-not $nodeExe -and $legacyWindows) {
+    try {
+        Install-PortableNode -Version $legacyNodeVersion -TargetDir (Join-Path $InstallDir "runtime\node")
+        if (Test-NodeRuntime $bundledNode) {
+            $nodeExe = $bundledNode
+            Write-Info "Portable Node.js $legacyNodeVersion installed at $nodeExe."
+        }
+    } catch {
+        Write-Info "Warning: portable Node.js could not be installed ($($_.Exception.Message))."
+    }
+}
+
+if (-not $nodeExe -and $legacyWindows) {
+    # Last resort, exactly what Node.js suggests in its own message.
+    $env:NODE_SKIP_PLATFORM_CHECK = "1"
+    foreach ($candidate in $candidates) {
+        if (Test-NodeRuntime $candidate) {
+            $nodeExe = $candidate
+            break
+        }
+    }
+    if ($nodeExe) {
+        Write-Info "Using $nodeExe with NODE_SKIP_PLATFORM_CHECK=1 (this Windows version is older than Node.js officially supports)."
     }
 }
 
 if (-not $nodeExe) {
-    Write-Info "Node.js not found on this PC. Downloading portable Node.js 20 LTS..."
-    $nodeVersion = "v20.18.3"
-    $nodeZipUrl = "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-win-x64.zip"
-    $nodeZipFile = Join-Path $env:TEMP "node-$nodeVersion-win-x64.zip"
-    $nodeExtractDir = Join-Path $env:TEMP ("node-extract-" + [Guid]::NewGuid().ToString("N"))
-    $runtimeNodeDir = Join-Path $InstallDir "runtime\node"
-
-    Invoke-WebRequest -Uri $nodeZipUrl -OutFile $nodeZipFile -UseBasicParsing
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($nodeZipFile, $nodeExtractDir)
-    New-Item -ItemType Directory -Path $runtimeNodeDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $nodeExtractDir "node-$nodeVersion-win-x64\*") -Destination $runtimeNodeDir -Recurse -Force
-    Remove-Item -Path $nodeZipFile -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $nodeExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-
-    $nodeExe = $bundledNode
-    Write-Info "Portable Node.js $nodeVersion installed at $nodeExe."
+    throw ("No Node.js runtime could start on this PC. Install Node.js 22 LTS from " +
+           "https://nodejs.org/dist/latest-v22.x/ and run this installer again, or use a PC " +
+           "running Windows 10 / Windows Server 2016 or newer.")
 }
 
+Write-Info "Node.js runtime: $nodeExe"
 $env:PATH = "$(Split-Path $nodeExe -Parent);$env:PATH"
 
 # ----------------------------------------------------------------------------
