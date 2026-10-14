@@ -4,7 +4,18 @@ rem ===========================================================================
 rem WoodTek ERP - one-click update.
 rem Pulls the latest code from GitHub, stops the server, rebuilds, restarts.
 rem Double-click AFTER the agent says "pushed". Never paste command sequences.
+rem
+rem It FIRST copies itself next to the Windows temp folder and does the work
+rem from that copy. Windows reads a .bat file line by line BY BYTE POSITION
+rem while it runs, and this script updates the folder holding this very file:
+rem on 2026-10-14 that rewrite made Windows read the rest from the wrong place
+rem (two garbage "is not recognized" lines and a FALSE "pull failed" after
+rem a pull that had actually succeeded). The temp copy cannot be rewritten
+rem while it runs, so that can never happen again.
 rem ===========================================================================
+
+if "%~1"=="/staged" goto wt_staged
+
 cd /d %~dp0
 
 rem schtasks on the SYSTEM-run task needs admin rights - self-elevate:
@@ -14,6 +25,22 @@ if %errorlevel% neq 0 (
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
+
+set "WT_PKG=%TEMP%\%~n0-staged.bat"
+copy /y "%~f0" "%WT_PKG%" >nul
+call "%WT_PKG%" /staged "%~dp0."
+set "WT_RC=%errorlevel%"
+del "%WT_PKG%" >nul 2>nul
+exit /b %WT_RC%
+
+:wt_staged
+if "%~2"=="" (
+  echo [update] This is the updater's internal working copy.
+  echo [update] Double-click update-woodtek.bat in the woodtek-erp folder instead.
+  pause
+  exit /b 1
+)
+cd /d "%~2"
 
 echo [update] Pulling latest code from GitHub...
 rem Repo files that builds/edits may dirty locally - repo version always wins:

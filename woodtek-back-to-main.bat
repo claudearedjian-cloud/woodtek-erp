@@ -3,7 +3,18 @@ title WoodTek - back to released version (main)
 rem ============================================================================
 rem WoodTek ERP - leave the test branch and return to the released version.
 rem Double-click this file INSIDE the woodtek-erp folder (the one with .git).
+rem
+rem It FIRST copies itself next to the Windows temp folder and does the work
+rem from that copy. Windows reads a .bat file line by line BY BYTE POSITION
+rem while it runs, and this script updates the folder holding this very file:
+rem on 2026-10-14 that rewrite made Windows read the rest from the wrong place
+rem (garbage "is not recognized" lines and a FALSE "pull failed" after a
+rem pull that had actually succeeded). The temp copy cannot be rewritten while
+rem it runs, so that can never happen again.
 rem ============================================================================
+
+if "%~1"=="/staged" goto wt_staged
+
 cd /d %~dp0
 
 rem schtasks on the SYSTEM-run task needs admin rights - self-elevate:
@@ -13,6 +24,22 @@ if %errorlevel% neq 0 (
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
+
+set "WT_PKG=%TEMP%\%~n0-staged.bat"
+copy /y "%~f0" "%WT_PKG%" >nul
+call "%WT_PKG%" /staged "%~dp0."
+set "WT_RC=%errorlevel%"
+del "%WT_PKG%" >nul 2>nul
+exit /b %WT_RC%
+
+:wt_staged
+if "%~2"=="" (
+  echo [branch] This is the updater's internal working copy.
+  echo [branch] Double-click woodtek-back-to-main.bat in the woodtek-erp folder instead.
+  pause
+  exit /b 1
+)
+cd /d "%~2"
 
 if not exist ".git" (
   echo.

@@ -15,8 +15,34 @@ rem
 rem After this update, update-woodtek.bat / woodtek-back-to-main.bat do all of
 rem this by themselves, so this file is only needed once (or after a very old
 rem copy of the updater is in use).
+rem
+rem It FIRST copies itself next to the Windows temp folder and does the work
+rem from that copy. Windows reads a .bat file line by line BY BYTE POSITION
+rem while it runs, and this script updates the folder holding this very file:
+rem a rewrite mid-run makes Windows read the rest from the wrong place (garbage
+rem "is not recognized" lines and false failure messages, seen 2026-10-14).
+rem The temp copy cannot be rewritten while it runs.
 rem ============================================================================
+
+if "%~1"=="/staged" goto wt_staged
+
 cd /d %~dp0
+
+set "WT_PKG=%TEMP%\%~n0-staged.bat"
+copy /y "%~f0" "%WT_PKG%" >nul
+call "%WT_PKG%" /staged "%~dp0."
+set "WT_RC=%errorlevel%"
+del "%WT_PKG%" >nul 2>nul
+exit /b %WT_RC%
+
+:wt_staged
+if "%~2"=="" (
+  echo [unblock] This is the updater's internal working copy.
+  echo [unblock] Double-click unblock-update.bat in the woodtek-erp folder instead.
+  pause
+  exit /b 1
+)
+cd /d "%~2"
 
 if not exist ".git" (
   echo.

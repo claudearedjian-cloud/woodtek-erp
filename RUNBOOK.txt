@@ -48,6 +48,16 @@ THE UPDATE RITUAL (every modification, no exceptions)
     it shows what is edited, saves a copy to
     backups\local-edits-<date>\local-edits.patch, then pulls). Run the script
     again; if it still fails, send a photo of the window to the agent.
+  IF THE UPDATE STOPS WITH GARBAGE LINES OR A FALSE "git pull failed"
+    (a line like 'h' or 'vel' is not recognized, then "git pull failed" while
+    the lines above it clearly show the pull fetched and fast-forwarded): that
+    was the updater replacing its own file while Windows was reading it - a
+    .bat file is read by byte position (seen once, 2026-10-14). NOTHING IS
+    LOST: the pull really happened and any edits were saved first. Just
+    double-click the same file again - it skips the pull and finishes the
+    rebuild. Updaters from 2026-10-14 on copy themselves into the Windows temp
+    folder first and work from that copy, so this cannot come back; at most,
+    the single update that installs that fix may show it one last time.
   THE MANUAL WAY:
   1. Double-click woodtek-snapshot.bat          <- your undo button
   2. git add -A  &&  git commit -m "before change"   (once git is set up)
