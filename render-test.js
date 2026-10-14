@@ -4348,6 +4348,13 @@ check(
   "update + edition scripts: schema-sync node calls skip the platform check on old Windows too",
 );
 check(
+  prodBatSource.includes('if exist "%~dp0runtime\\node\\node.exe" set "PATH=%~dp0runtime\\node;%PATH%"')
+    && silentBatSource.includes('if exist "%~dp0runtime\\node\\node.exe" set "PATH=%~dp0runtime\\node;C:\\Program Files\\nodejs;%PATH%"')
+    && applyUpdateSource.includes('Join-Path $InstallDir "runtime\\node\\node.exe"')
+    && fs.readFileSync("installer/restore-migration.ps1", "utf8").includes('Join-Path $Root "runtime\\node\\node.exe"'),
+  "old Windows helpers: every node call prefers the bundled runtime\\node before PATH node (start scripts, apply-update, restore-migration)",
+);
+check(
   launcherSource.includes("os.release()") && launcherSource.includes("NODE_SKIP_PLATFORM_CHECK=1"),
   "server launcher: an unsupported Windows version is recorded in the log",
 );
@@ -4555,7 +4562,9 @@ check(
 // the way PowerShell does - comments, <# #> blocks, @' / @" here-strings,
 // single-quoted strings, backtick escapes, delimiters - and fails the build on
 // anything that cannot parse. It also blocks the exact 2026-10-13 landmine:
-// piping into Out-File without -FilePath.
+// piping into Out-File without -FilePath. The scanner reads as UTF-8 - the half
+// it cannot see (the raw bytes PowerShell 4 actually reads) is covered by the
+// ASCII gate right below.
 function psSanityProblems(text) {
   const problems = [];
   const depth = { "(": 0, "{": 0, "[": 0 };
@@ -4729,6 +4738,57 @@ check(
     + (psProblems.length ? " - " + psProblems.join(" | ") : ""),
 );
 
+// The ASCII gate for shipped scripts (2026-10-14) ------------------------------
+// The scanner above reads the files as UTF-8 - exactly what the factory PC does
+// NOT do. PowerShell 4 / cmd read a BOM-less file in the system ANSI codepage,
+// so a UTF-8 em dash (E2 80 94) becomes a mojibake whose last character
+// (U+201D) doubles as a quote delimiter for PowerShell: the quote parity flips
+// and the cryptic "ampersand / missing terminator" errors surface hundreds of
+// lines away from the real one. That is what made installer/build-installer.ps1
+// fail on the PC while this file still said ALL PASS, so the raw bytes are the
+// only trustworthy check.
+function nonAsciiProblems(buf) {
+  const problems = [];
+  let line = 1;
+  let total = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x0A) { line += 1; continue; }
+    if (buf[i] > 127) {
+      total += 1;
+      if (problems.length < 3) problems.push("line " + line + " byte 0x" + buf[i].toString(16).toUpperCase().padStart(2, "0"));
+    }
+  }
+  if (total > problems.length) problems.push("... " + total + " non-ASCII bytes in this file");
+  return problems;
+}
+check(
+  nonAsciiProblems(Buffer.from("rem WoodTek ERP \xE2\x80\x94 update\n")).length > 0
+    && nonAsciiProblems(Buffer.from("rem WoodTek ERP - update\n")).length === 0,
+  "ASCII gate: the em dash that breaks PowerShell 4 on the factory PC is caught (self-test)",
+);
+
+const shippedScriptFiles = [];
+(function walkShippedScripts(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (["node_modules", ".git", ".next", "compiled", "dist-installer", "dist-update", "backups", "data", "logs", "tmp", "WoodTek-Migration"].includes(entry.name)) continue;
+      walkShippedScripts(path.join(dir, entry.name));
+    } else if (/\.(ps1|bat|cmd)$/i.test(entry.name) || (path.basename(dir) === "installer" && /\.cs$/i.test(entry.name))) {
+      shippedScriptFiles.push(path.join(dir, entry.name));
+    }
+  }
+})(".");
+shippedScriptFiles.push("RUNBOOK.txt");
+const scriptEncodingProblems = [];
+for (const file of shippedScriptFiles) {
+  for (const problem of nonAsciiProblems(fs.readFileSync(file))) scriptEncodingProblems.push(file + " " + problem);
+}
+check(
+  scriptEncodingProblems.length === 0,
+  "encoding: every shipped script (.ps1/.bat/.cmd, installer C#, RUNBOOK.txt) is pure ASCII - the factory PC reads BOM-less files in ANSI, so one typographic dash breaks a script there"
+    + (scriptEncodingProblems.length ? " - " + scriptEncodingProblems.join(" | ") : ""),
+);
+
 const unblockSource = fs.readFileSync("unblock-update.bat", "utf8");
 check(
   unblockSource.includes("backups\\local-edits-%STAMP%") && unblockSource.includes("%SAVEDIR%\\local-edits.patch")
@@ -4750,6 +4810,17 @@ check(
   runbookSource.includes('git stash pop') && runbookSource.includes("backups\\local-edits-<date>")
     && runbookSource.includes("CHECK IT (2026-10-14)"),
   "runbook: the owner is told the update saves edits by itself and to check the backup log weekly",
+);
+check(
+  runbookSource.includes("fancy typographic dash") && runbookSource.includes("TWO COMPUTERS")
+    && runbookSource.includes("DEVELOPMENT"),
+  "runbook: the parse message is traced to its real cause (a fancy typographic dash), and the two-machine rule is on the first page",
+);
+const handoffSource = fs.readFileSync("AGENT-HANDOFF.md", "utf8");
+check(
+  handoffSource.includes("Two machines, two jobs") && handoffSource.includes("**THE production server**")
+    && handoffSource.includes("**THE development machine**"),
+  "handoff: the two-machine rule (FS200 = production, old PC = development) is standing rule #3",
 );
 check(
   readmeSource.includes("the value of argument \"path\" is null") || readmeSource.includes("was broken and silent"),

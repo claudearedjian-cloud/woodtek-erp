@@ -1,5 +1,5 @@
 # ============================================================================
-# WoodTek ERP — Update Pack Builder (build-update.ps1)
+# WoodTek ERP - Update Pack Builder (build-update.ps1)
 # ----------------------------------------------------------------------------
 # Builds a single "update pack" ZIP on THIS PC (the one that has the source
 # code and Node.js). Copy that ZIP to any PC running WoodTek ERP
@@ -15,7 +15,7 @@
 #   5. A update.json manifest (version, git commit, build date, file count)
 #
 # It NEVER contains, and the update NEVER touches, these on the target PC:
-#     .env            (DATABASE_URL + AUTH_SECRET — the keys to everything)
+#     .env            (DATABASE_URL + AUTH_SECRET - the keys to everything)
 #     data\           (installed edition, module config, JSON overlay)
 #     backups\        (DB dumps and snapshots)
 #     logs\
@@ -34,7 +34,7 @@
 #
 # Note: scripts\build-prod.cjs has to STOP the running server to rebuild the
 # standalone folder. If the server was up when this script started, step 6
-# starts it again — packing an update must never leave the factory sitting
+# starts it again - packing an update must never leave the factory sitting
 # there with no running app.
 # ============================================================================
 
@@ -77,7 +77,7 @@ function Test-TcpPort([string]$TargetHost, [int]$TargetPort) {
 }
 
 # The build number the RUNNING server reports (src\app\api\health\route.ts).
-# Empty on versions built before that existed — never fatal.
+# Empty on versions built before that existed - never fatal.
 function Get-HealthBuild {
     try {
         $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
@@ -89,7 +89,7 @@ function Get-HealthBuild {
     return $null
 }
 
-Write-Banner "WoodTek ERP — Building Update Pack"
+Write-Banner "WoodTek ERP - Building Update Pack"
 
 # ----------------------------------------------------------------------------
 # 1. Work out the version stamp
@@ -120,17 +120,17 @@ Write-Host "[2/6] Building production bundle..." -ForegroundColor Yellow
 $standaloneServer = Join-Path $Root ".next\standalone\server.js"
 
 # scripts\build-prod.cjs STOPS the server to free the port, and does not start
-# it again. Remember whether it was up, so we can bring it back at step 6 —
+# it again. Remember whether it was up, so we can bring it back at step 6 -
 # otherwise packing an update leaves the factory PC with no running app.
 $serverWasRunning = $false
 
 if ($SkipBuild -and (Test-Path $standaloneServer)) {
     Write-Info "Using existing standalone build at .next\standalone (no rebuild)."
 } else {
-    if ($SkipBuild) { Write-Info "-SkipBuild was requested but no standalone build exists — building anyway." }
+    if ($SkipBuild) { Write-Info "-SkipBuild was requested but no standalone build exists - building anyway." }
     $serverWasRunning = Test-TcpPort "127.0.0.1" $Port
     if ($serverWasRunning) {
-        Write-Info "The WoodTek server is running on port $Port. The build has to stop it — it will be restarted when the pack is ready."
+        Write-Info "The WoodTek server is running on port $Port. The build has to stop it - it will be restarted when the pack is ready."
     }
     & node "scripts\build-prod.cjs"
     if ($LASTEXITCODE -ne 0) {
@@ -139,7 +139,7 @@ if ($SkipBuild -and (Test-Path $standaloneServer)) {
 }
 
 if (-not (Test-Path $standaloneServer)) {
-    throw "Missing .next\standalone\server.js after build — cannot pack an update."
+    throw "Missing .next\standalone\server.js after build - cannot pack an update."
 }
 
 # ----------------------------------------------------------------------------
@@ -201,7 +201,7 @@ try {
             Copy-Item -Path $iSrc -Destination (Join-Path $stageInstaller $inf) -Force
         } else {
             if ($inf -eq "apply-update.ps1" -or $inf -eq "apply-update.bat") {
-                Write-Host "  [warn] $inf not found — the target PC must already have it." -ForegroundColor DarkYellow
+                Write-Host "  [warn] $inf not found - the target PC must already have it." -ForegroundColor DarkYellow
             }
         }
     }

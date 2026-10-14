@@ -1,5 +1,5 @@
 // ============================================================================
-// WoodTek ERP — Native Windows .exe Setup Wizard (SetupWizard.cs)
+// WoodTek ERP - Native Windows .exe Setup Wizard (SetupWizard.cs)
 // ----------------------------------------------------------------------------
 // Compiled by Windows' built-in .NET Framework 4.0+ C# compiler (csc.exe)
 // during build-installer.ps1 into WoodTek-ERP-Setup.exe.
@@ -75,7 +75,7 @@ namespace WoodTekSetup
 
         public SetupWizardForm()
         {
-            this.Text = "WoodTek ERP — Turnkey Setup Wizard";
+            this.Text = "WoodTek ERP - Turnkey Setup Wizard";
             this.Size = new Size(720, 560);
             this.MinimumSize = new Size(720, 560);
             this.MaximumSize = new Size(720, 560);
@@ -105,14 +105,14 @@ namespace WoodTekSetup
             headerPanel.BackColor = Color.FromArgb(2, 6, 23);
 
             lblHeaderTitle = new Label();
-            lblHeaderTitle.Text = "WoodTek ERP — Setup & Module Selector";
+            lblHeaderTitle.Text = "WoodTek ERP - Setup & Module Selector";
             lblHeaderTitle.Font = new Font("Segoe UI", 14f, FontStyle.Bold);
             lblHeaderTitle.ForeColor = Color.FromArgb(251, 191, 36);
             lblHeaderTitle.Location = new Point(24, 14);
             lblHeaderTitle.AutoSize = true;
 
             lblHeaderSub = new Label();
-            lblHeaderSub.Text = "Step 1 of 3 · Choose which ERP modules to install on this computer";
+            lblHeaderSub.Text = "Step 1 of 3 - Choose which ERP modules to install on this computer";
             lblHeaderSub.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
             lblHeaderSub.ForeColor = Color.FromArgb(148, 163, 184);
             lblHeaderSub.Location = new Point(26, 44);
@@ -176,7 +176,7 @@ namespace WoodTekSetup
             pageModules.Controls.Add(intro);
 
             chkCore = new CheckBox();
-            chkCore.Text = "Core Production & Stock (Required Base) — Orders, Routing, Shop Floor, Operator Station, WIP, Reception, Warehouse & BOM, Stock, Dispatch, Gantt, Clients, Quality, Downtime, Reports";
+            chkCore.Text = "Core Production & Stock (Required Base) - Orders, Routing, Shop Floor, Operator Station, WIP, Reception, Warehouse & BOM, Stock, Dispatch, Gantt, Clients, Quality, Downtime, Reports";
             chkCore.Checked = true;
             chkCore.Enabled = false;
             chkCore.Font = new Font("Segoe UI", 9.2f, FontStyle.Bold);
@@ -186,19 +186,19 @@ namespace WoodTekSetup
             pageModules.Controls.Add(chkCore);
 
             chkInvoicing = CreateAddonCheckbox(
-                "Invoicing, Job Costing & Money — Quotations, VAT Invoices (11%), Client Payments, A/R Aging, Job Costing & Profit, and all financial columns",
+                "Invoicing, Job Costing & Money - Quotations, VAT Invoices (11%), Client Payments, A/R Aging, Job Costing & Profit, and all financial columns",
                 106
             );
             chkPurchasing = CreateAddonCheckbox(
-                "Purchasing & Suppliers — Suppliers, Purchase Orders, Goods Receipts (GRN) that add stock, and Supplier Bills & A/P Aging",
+                "Purchasing & Suppliers - Suppliers, Purchase Orders, Goods Receipts (GRN) that add stock, and Supplier Bills & A/P Aging",
                 160
             );
             chkCmms = CreateAddonCheckbox(
-                "Asset CMMS (Maintenance & Generators) — Plant Asset Registry, Generator Power & Fuel Telemetry, Preventative Maintenance Logs & Alerts",
+                "Asset CMMS (Maintenance & Generators) - Plant Asset Registry, Generator Power & Fuel Telemetry, Preventative Maintenance Logs & Alerts",
                 214
             );
             chkWorkforce = CreateAddonCheckbox(
-                "Workforce, Shifts & HR — Shift Definitions, Production Shift Calendar, Time & Attendance Clock-In/Out, and HR & Payroll",
+                "Workforce, Shifts & HR - Shift Definitions, Production Shift Calendar, Time & Attendance Clock-In/Out, and HR & Payroll",
                 268
             );
 
@@ -443,26 +443,26 @@ namespace WoodTekSetup
 
             if (index == 0)
             {
-                lblHeaderSub.Text = "Step 1 of 3 · Choose which ERP modules to install on this computer";
+                lblHeaderSub.Text = "Step 1 of 3 - Choose which ERP modules to install on this computer";
                 btnBack.Enabled = false;
                 btnNext.Text = "Next >";
             }
             else if (index == 1)
             {
-                lblHeaderSub.Text = "Step 2 of 3 · Installation folder, port, PostgreSQL & initial Manager PIN";
+                lblHeaderSub.Text = "Step 2 of 3 - Installation folder, port, PostgreSQL & initial Manager PIN";
                 btnBack.Enabled = true;
                 btnNext.Text = "Install Now";
             }
             else if (index == 2)
             {
-                lblHeaderSub.Text = "Step 3 of 3 · Installing WoodTek ERP and configuring services...";
+                lblHeaderSub.Text = "Step 3 of 3 - Installing WoodTek ERP and configuring services...";
                 btnBack.Enabled = false;
                 btnNext.Enabled = false;
                 btnCancel.Enabled = false;
             }
             else if (index == 3)
             {
-                lblHeaderSub.Text = "Setup Complete · WoodTek ERP is ready";
+                lblHeaderSub.Text = "Setup Complete - WoodTek ERP is ready";
                 btnBack.Visible = false;
                 btnCancel.Visible = false;
                 btnNext.Enabled = true;
@@ -557,10 +557,10 @@ namespace WoodTekSetup
                         string addonLabel = string.IsNullOrEmpty(addons) ? "Core Production & Stock only" : ("Core + " + addons);
                         lblFinishSummary.Text = string.Format(
                             "WoodTek ERP has been installed and configured successfully!\r\n\r\n" +
-                            "• Installation Folder: {0}\r\n" +
-                            "• Installed Modules: {1}\r\n" +
-                            "• Local URL: http://localhost:{2}/\r\n" +
-                            "• Initial Manager: {3} (PIN: {4})\r\n\r\n" +
+                            "- Installation Folder: {0}\r\n" +
+                            "- Installed Modules: {1}\r\n" +
+                            "- Local URL: http://localhost:{2}/\r\n" +
+                            "- Initial Manager: {3} (PIN: {4})\r\n\r\n" +
                             "Note: Modules not selected during setup are hard-locked on this PC. " +
                             "To add or remove modules in the future, simply run WoodTek-ERP-Setup.exe again.",
                             installDir, addonLabel, port, mgrName, mgrPin
@@ -573,7 +573,7 @@ namespace WoodTekSetup
                     AppendLog("ERROR: " + ex.Message);
                     this.BeginInvoke(new Action(delegate() {
                         installRunning = false;
-                        lblCurrentStep.Text = "Installation failed — see log below.";
+                        lblCurrentStep.Text = "Installation failed - see log below.";
                         lblCurrentStep.ForeColor = Color.FromArgb(248, 113, 113);
                         btnCancel.Enabled = true;
                         btnCancel.Text = "Close";
