@@ -1,5 +1,5 @@
 # ============================================================================
-# WoodTek ERP — Turnkey Windows .exe Installer Builder (build-installer.ps1)
+# WoodTek ERP - Turnkey Windows .exe Installer Builder (build-installer.ps1)
 # ----------------------------------------------------------------------------
 # Builds dist-installer\WoodTek-ERP-Setup.exe on your Windows PC.
 #
@@ -39,7 +39,7 @@ function Write-Banner([string]$msg) {
     Write-Host "==================================================================" -ForegroundColor Cyan
 }
 
-Write-Banner "WoodTek ERP — Building Turnkey Windows .exe Installer"
+Write-Banner "WoodTek ERP - Building Turnkey Windows .exe Installer"
 
 # ----------------------------------------------------------------------------
 # 1. Build Next.js standalone production output (unless -SkipBuild)

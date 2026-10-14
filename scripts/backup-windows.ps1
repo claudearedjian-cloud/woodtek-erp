@@ -386,7 +386,7 @@ try {
     & robocopy @RobocopyArguments |
         Out-Null
 
-    # Robocopy 0–7 means success/information.
+    # Robocopy 0-7 means success/information.
     if ($LASTEXITCODE -gt 7) {
         throw "Robocopy failed with exit code $LASTEXITCODE."
     }

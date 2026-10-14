@@ -1,6 +1,6 @@
 @echo off
 rem ===========================================================================
-rem WoodTek ERP — production server, SILENT (no browser, logs to file).
+rem WoodTek ERP - production server, SILENT (no browser, logs to file).
 rem Used by the Windows scheduled task / service so the app runs in the
 rem background and survives restarts. Do NOT double-click this normally.
 rem ===========================================================================

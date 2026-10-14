@@ -1,5 +1,5 @@
 # ============================================================================
-# WoodTek ERP — Update Engine (apply-update.ps1)
+# WoodTek ERP - Update Engine (apply-update.ps1)
 # ----------------------------------------------------------------------------
 # Applies a WoodTek-ERP-Update-*.zip pack (built by installer\build-update.ps1)
 # to an ALREADY INSTALLED WoodTek ERP on this PC (normally C:\WoodTek-ERP).
@@ -13,20 +13,20 @@
 #   2. Snapshots .env + data\ into backups\update-<version>-<time>\
 #      (and runs backup\backup-woodtek.ps1 for a database dump when present)
 #   3. Stops the "\WoodTek ERP" scheduled task and frees TCP port 3000
-#   4. Moves the current .next\standalone aside — that is the rollback copy
+#   4. Moves the current .next\standalone aside - that is the rollback copy
 #   5. Unpacks the new application files over the installation
 #   6. Re-applies installer\schema.sql (adds new tables, keeps all data)
 #   7. Restarts the server and waits for /api/health -> 200 OK, then reads the
-#      build number the server reports and checks it against the pack — the
+#      build number the server reports and checks it against the pack - the
 #      update is VERIFIED, not assumed (no opening Settings to read it by eye)
 #   8. If health never comes up, automatically rolls back to step 4's copy
 #
 # NEVER TOUCHED on this PC (that is the whole point):
-#   .env      — DATABASE_URL + AUTH_SECRET, the keys to everything
-#   data\     — installed edition, module/role config, JSON overlay
-#   backups\  — DB dumps and snapshots
+#   .env      - DATABASE_URL + AUTH_SECRET, the keys to everything
+#   data\     - installed edition, module/role config, JSON overlay
+#   backups\  - DB dumps and snapshots
 #   logs\
-#   runtime\  — portable Node.js
+#   runtime\  - portable Node.js
 #
 # Options:
 #   -UpdateZip <path>     exact pack to apply (default: newest pack found)
@@ -141,7 +141,7 @@ function Start-WoodTekServer {
     } catch {}
 
     if (-not $started) {
-        Write-Warn "Scheduled task not available — starting the server directly."
+        Write-Warn "Scheduled task not available - starting the server directly."
         $nodeDirect = Join-Path $InstallDir "runtime\node\node.exe"
         if (-not (Test-Path $nodeDirect)) { $nodeDirect = "node" }
         Start-Process -FilePath $nodeDirect `
@@ -177,18 +177,18 @@ function Get-HealthBuild {
     return $null
 }
 
-# Compare what is running against what the pack was built from. Never fatal —
+# Compare what is running against what the pack was built from. Never fatal -
 # a mismatch is usually just a browser tab showing a cached page.
 function Show-RunningBuild([string]$ExpectedSha) {
     $running = Get-HealthBuild
     if (-not $running) {
-        Write-Warn "The server did not report a build number — read it in Settings (bottom of the page)."
+        Write-Warn "The server did not report a build number - read it in Settings (bottom of the page)."
         return
     }
     Write-Host "  Running build: $running" -ForegroundColor Green
     if ($ExpectedSha -and ($ExpectedSha -ne "nogit") -and ($running -ne $ExpectedSha)) {
         Write-Warn "This pack was built from $ExpectedSha, but the server reports $running."
-        Write-Warn "The files were applied — most likely the browser is showing a cached page. Press Ctrl+F5."
+        Write-Warn "The files were applied - most likely the browser is showing a cached page. Press Ctrl+F5."
     }
 }
 
@@ -196,7 +196,7 @@ function Show-RunningBuild([string]$ExpectedSha) {
 # Step 0: this script restarts a SYSTEM scheduled task, so it needs elevation
 # ----------------------------------------------------------------------------
 if (-not (Test-IsAdmin)) {
-    Write-Host "[update] Requesting administrator rights — click Yes on the UAC prompt..." -ForegroundColor Yellow
+    Write-Host "[update] Requesting administrator rights - click Yes on the UAC prompt..." -ForegroundColor Yellow
     $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
     if ($UpdateZip)        { $psArgs += "-UpdateZip `"$UpdateZip`"" }
     if ($InstallDir)       { $psArgs += "-InstallDir `"$InstallDir`"" }
@@ -228,7 +228,7 @@ if ($windowsMajor -lt 10) {
     Write-Warn "This Windows version is older than Windows 10 / Server 2016 - Node.js is started with its platform check skipped."
 }
 
-Write-Banner "WoodTek ERP — Applying Update"
+Write-Banner "WoodTek ERP - Applying Update"
 
 # ----------------------------------------------------------------------------
 # Step 1: locate the update pack
@@ -278,13 +278,13 @@ if (Test-Path $shaFile) {
         if ($IgnoreChecksum) {
             Write-Warn "Checksum mismatch ignored (-IgnoreChecksum): expected $expected, got $actual"
         } else {
-            throw "Checksum mismatch — the pack is incomplete or was damaged in transfer.`n  expected: $expected`n  actual  : $actual`n  Copy the pack again (it must sit next to its .sha256 file), or re-download it."
+            throw "Checksum mismatch - the pack is incomplete or was damaged in transfer.`n  expected: $expected`n  actual  : $actual`n  Copy the pack again (it must sit next to its .sha256 file), or re-download it."
         }
     } else {
         Write-Info "Checksum OK ($actual)"
     }
 } else {
-    Write-Warn "No .sha256 file next to the pack — applying without an integrity check."
+    Write-Warn "No .sha256 file next to the pack - applying without an integrity check."
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -349,7 +349,7 @@ if ($SkipBackup) {
         Copy-Item -Path $envFile -Destination (Join-Path $snapshotDir ".env") -Force
         Write-Info "Saved .env"
     } else {
-        Write-Warn "No .env in $InstallDir — DATABASE_URL/AUTH_SECRET will have to be re-created if anything goes wrong."
+        Write-Warn "No .env in $InstallDir - DATABASE_URL/AUTH_SECRET will have to be re-created if anything goes wrong."
     }
 
     $dataDir = Join-Path $InstallDir "data"
@@ -365,7 +365,7 @@ if ($SkipBackup) {
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $backupScript -BackupRoot $snapshotDir
             Write-Info "Database dump saved to $snapshotDir"
         } catch {
-            Write-Warn "Database dump failed ($($_.Exception.Message)) — continuing with the file snapshot only."
+            Write-Warn "Database dump failed ($($_.Exception.Message)) - continuing with the file snapshot only."
         }
     }
     Write-Info "Snapshot folder: $snapshotDir"
@@ -392,7 +392,7 @@ if (Test-Path $standaloneDir) {
             Move-Item -Path $standaloneDir -Destination $standaloneBackup -Force
             $moved = $true
         } catch {
-            Write-Warn "Could not move .next\standalone yet ($($_.Exception.Message)) — retrying..."
+            Write-Warn "Could not move .next\standalone yet ($($_.Exception.Message)) - retrying..."
             Start-Sleep -Seconds 3
         }
     }
@@ -425,7 +425,7 @@ try {
         }
     }
 
-    # Record what is now live — support asks "which version is this?" first.
+    # Record what is now live - support asks "which version is this?" first.
     if ($manifest) {
         ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $InstallDir "update-applied.json") -Encoding UTF8
     }
@@ -460,7 +460,7 @@ if ($SkipDbSync) {
             Pop-Location
         }
     } else {
-        Write-Warn "installer\bootstrap-db.cjs is missing — skipping the schema sync."
+        Write-Warn "installer\bootstrap-db.cjs is missing - skipping the schema sync."
     }
 }
 
@@ -488,7 +488,7 @@ if (Wait-ForHealth 90) {
         Move-Item -Path $standaloneBackup -Destination $standaloneDir -Force
         Start-WoodTekServer
         if (Wait-ForHealth 90) {
-            Write-Host "  Rolled back successfully — the previous version is running again." -ForegroundColor Green
+            Write-Host "  Rolled back successfully - the previous version is running again." -ForegroundColor Green
             Show-RunningBuild ""
         } else {
             Write-Host "  Rollback done, but the server still is not answering. See $InstallDir\logs\woodtek.log" -ForegroundColor Red

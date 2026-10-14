@@ -1,27 +1,27 @@
 @echo off
 title WoodTek update
 rem ===========================================================================
-rem WoodTek ERP — one-click update.
+rem WoodTek ERP - one-click update.
 rem Pulls the latest code from GitHub, stops the server, rebuilds, restarts.
 rem Double-click AFTER the agent says "pushed". Never paste command sequences.
 rem ===========================================================================
 cd /d %~dp0
 
-rem schtasks on the SYSTEM-run task needs admin rights — self-elevate:
+rem schtasks on the SYSTEM-run task needs admin rights - self-elevate:
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-  echo [update] Requesting administrator rights — click Yes on the UAC prompt...
+  echo [update] Requesting administrator rights - click Yes on the UAC prompt...
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
 
 echo [update] Pulling latest code from GitHub...
-rem Repo files that builds/edits may dirty locally — repo version always wins:
+rem Repo files that builds/edits may dirty locally - repo version always wins:
 git checkout -- tsconfig.json next.config.ts next-env.d.ts 2>nul
 
 rem 2026-09-30: DB dumps are no longer tracked in git (they contain customer +
 rem account data). Git would DELETE the old tracked dumps from this folder on
-rem pull — copy them to the ignored backups\ folder first so nothing is lost.
+rem pull - copy them to the ignored backups\ folder first so nothing is lost.
 if exist "backup\*.dump" (
   if not exist "backups" mkdir "backups"
   copy /y "backup\*.dump" "backups\" >nul
@@ -62,7 +62,7 @@ if not defined WT_DIRTY (
 )
 git pull
 if errorlevel 1 (
-  echo [update] git pull failed — check the message above.
+  echo [update] git pull failed - check the message above.
   pause
   exit /b 1
 )
@@ -85,7 +85,7 @@ echo [update] Building (1-2 minutes)...
 call node scripts\build-prod.cjs
 if errorlevel 1 (
   echo.
-  echo [update] BUILD FAILED — look at the error above, tell the agent, then re-run this file.
+  echo [update] BUILD FAILED - look at the error above, tell the agent, then re-run this file.
   pause
   exit /b 1
 )

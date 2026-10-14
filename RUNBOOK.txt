@@ -1,4 +1,4 @@
-WOODTEK ERP — SAFETY RUNBOOK (one page, keep in woodtek-erp)
+WOODTEK ERP - SAFETY RUNBOOK (one page, keep in woodtek-erp)
 =============================================================
 
 WHAT YOU HAVE
@@ -8,8 +8,21 @@ WHAT YOU HAVE
   start-prod.cjs         the server watchdog (patched v2: no crash-loops)
   woodtek-free-port-3000-v2.bat  run AS ADMIN to stop whatever holds port 3000
 
+TWO COMPUTERS (since 2026-10-14)
+  FS200 (the Hyper-V VM, 192.168.220.205) is THE factory server: the shop
+  works on it every day at http://192.168.220.205:3000 and its nightly backup
+  runs there. On FS200 you only ever DOUBLE-CLICK a prepared helper (update
+  pack, restore, backup, find-postgres-tools). Nothing is edited, built,
+  pulled from git or tested on FS200 - ever.
+  The old PC (the one that used to run the shop) is now the DEVELOPMENT
+  computer: code changes, builds (build-installer.bat, build-update.bat),
+  tests and git all happen there, and its own copy of the app is only a test
+  copy - never the company book again.
+  Changes travel one way: build the update pack on the old PC -> copy it to
+  FS200 -> double-click its apply file -> check the result there.
+
 THE UPDATE RITUAL (every modification, no exceptions)
-  THE EASY WAY (what the factory PC actually does now):
+  THE EASY WAY (what the old PC - the development machine - does now):
     double-click woodtek-back-to-main.bat   (or update-woodtek.bat)
   Both save any hand-edited files first - a patch copy under
   backups\local-edits-<date>\ plus a "git stash" entry - so the update can
@@ -23,12 +36,18 @@ THE UPDATE RITUAL (every modification, no exceptions)
     updater is older than 2026-10-14; after this update it does that itself.)
   IF A SCRIPT FAILS WITH A STRANGE PowerShell MESSAGE
     ("The ampersand (&) character is not allowed", "The string is missing the
-    terminator", "Unexpected token"): the file it names was edited by hand and
-    no longer parses. Do NOT try to fix the quotes - run unblock-update.bat
-    (which sets the edited copies aside) and then the script again. If a part
-    of a script you EDITED is important, send
-    backups\local-edits-<date>\local-edits.patch to the agent, who will fold
-    it into the repo so it stops being overwritten.
+    terminator", "Unexpected token"): the script FILE on this PC carries one
+    of its dashes as a fancy typographic dash, and PowerShell reads a BOM-less
+    file in the old Windows codepage, so that dash turns into a quote mark
+    that flips the quoting and the error shows up far away from the real line.
+    Do NOT try to fix the quotes by hand. The repo was cleaned of these
+    characters on 2026-10-14 and the build now REFUSES to pack a script that
+    carries one, so the cure is to bring the clean copies onto the PC:
+      double-click  update-woodtek.bat
+    (if it stops on local changes first, double-click  unblock-update.bat  -
+    it shows what is edited, saves a copy to
+    backups\local-edits-<date>\local-edits.patch, then pulls). Run the script
+    again; if it still fails, send a photo of the window to the agent.
   THE MANUAL WAY:
   1. Double-click woodtek-snapshot.bat          <- your undo button
   2. git add -A  &&  git commit -m "before change"   (once git is set up)
@@ -106,6 +125,8 @@ OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
   needed at all (and the guest keeps getting security updates).
 
 MOVING THE APP TO A NEW SERVER (or VM)
+  DONE on 2026-10-14: FS200 is now the factory server (see TWO COMPUTERS at
+  the top). This section stays as the recipe for any future move.
   Two double-clicks, and your factory data moves to the new PC. The old PC is
   never changed by this - it is only read.
   1. ON THE OLD SERVER
@@ -193,7 +214,8 @@ IF A SCRIPT SAYS "pg_dump not found" / "pg_restore was not found"
   subfolder).
 
 QUICK REFERENCE
-  App on this PC:      http://localhost:3000
-  App on the network:  http://192.168.220.179:3000
-  Rebuild:             node scripts\build-prod.cjs
-  Who holds port 3000: woodtek-free-port-3000-v2.bat (as administrator)
+  Factory server (FS200):  http://192.168.220.205:3000
+  App on this PC:          http://localhost:3000
+  Old PC on the network:   http://192.168.220.179:3000
+  Rebuild (on the old PC): node scripts\build-prod.cjs
+  Who holds port 3000:     woodtek-free-port-3000-v2.bat (as administrator)

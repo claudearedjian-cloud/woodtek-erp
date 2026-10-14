@@ -1,5 +1,5 @@
 # ============================================================================
-# WoodTek ERP — Quick Edition / Module Pack Configurator (configure-edition.ps1)
+# WoodTek ERP - Quick Edition / Module Pack Configurator (configure-edition.ps1)
 # ----------------------------------------------------------------------------
 # Updates data\installed-edition.json and data\optional-modules.json on an
 # already-installed PC without re-extracting the full application archive.

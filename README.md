@@ -12,7 +12,11 @@ Next.js 16 (standalone) + PostgreSQL shop-floor ERP.
 - `RUNBOOK.txt` — one-page safety & update ritual
 - `woodtek-snapshot.bat` — dated zip snapshot before any change
 
-## Build & run (on the factory PC)
+## Two machines (since 2026-10-14)
+- **FS200** (Hyper-V VM, Windows Server 2012 R2 guest, `192.168.220.205`) is **the production server** - the factory uses `http://192.168.220.205:3000` every day; only double-clicked helpers run there (update pack, restore, backup, find-postgres-tools, check-server). Nothing is edited or built on it.
+- **The old PC** is **the development machine** - all edits, builds (installer + update packs), tests and git happen there; its local app copy is only a test copy. Changes travel one way: build an update pack on the old PC, copy it to FS200, double-click its apply file, then verify.
+
+## Build & run (on the development PC)
 ```
 npm install                 (once)
 node scripts\build-prod.cjs
