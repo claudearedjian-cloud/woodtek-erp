@@ -4790,6 +4790,24 @@ check(
     + (scriptEncodingProblems.length ? " - " + scriptEncodingProblems.join(" | ") : ""),
 );
 
+// No script may demand PowerShell 5 (2026-10-14): backup-woodtek.ps1 carried
+// "#requires -Version 5.1", so on the Server 2012 R2 factory server the whole
+// nightly backup (and the pre-update database dump) refused to run - silently,
+// because the script's own trap never got a chance to write its log line.
+const requiresOffenders = [];
+for (const file of shippedScriptFiles) {
+  if (!/\.ps1$/i.test(file)) continue;
+  // A real #Requires directive is the first thing on its line; comments that
+  // merely mention the removed line (like the note in backup-woodtek.ps1) do
+  // not count.
+  if (/^\s*#requires\s+-version\s+[5-9]/im.test(fs.readFileSync(file, "utf8"))) requiresOffenders.push(file);
+}
+check(
+  requiresOffenders.length === 0,
+  "PowerShell 4.0: no shipped .ps1 demands PowerShell 5 or newer (the #requires line broke the nightly backup and the pre-update dump on the 2012 R2 server)"
+    + (requiresOffenders.length ? " - " + requiresOffenders.join(" | ") : ""),
+);
+
 const unblockSource = fs.readFileSync("unblock-update.bat", "utf8");
 check(
   unblockSource.includes("backups\\local-edits-%STAMP%") && unblockSource.includes("%SAVEDIR%\\local-edits.patch")
@@ -4835,6 +4853,87 @@ check(
   fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%WT_ARG1%")
     && !fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%~1"),
   "updaters: the test-branch helper passes the typed branch name to the staged copy through a variable",
+);
+
+// The pack build must be able to stop the server (2026-10-14) ----------------
+// The first real pack build on the old PC stopped at "Port 3000 is STILL
+// occupied": the server runs from the SYSTEM scheduled task "\WoodTek ERP",
+// and the build window was never elevated, so schtasks /End and taskkill both
+// failed silently. The build .bat files now ask for the rights themselves,
+// build-prod.cjs retries and kills EVERY listener before giving up, and a
+// failed build restarts the server it stopped.
+const buildProdSrc = fs.readFileSync("scripts/build-prod.cjs", "utf8");
+const buildUpdateBatSrc = fs.readFileSync("build-update.bat", "utf8");
+const buildInstallerBatSrc = fs.readFileSync("build-installer.bat", "utf8");
+const elevatedBats = [
+  ["build-update.bat", buildUpdateBatSrc],
+  ["build-installer.bat", buildInstallerBatSrc],
+];
+const elevationGaps = [];
+for (const [name, source] of elevatedBats) {
+  if (!source.includes("net session >nul 2>&1")) elevationGaps.push(name + ": no elevation check");
+  if (!source.includes("Start-Process -FilePath '%~f0' -Verb RunAs")) elevationGaps.push(name + ": no UAC relaunch");
+  if (!source.includes("Requesting administrator rights")) elevationGaps.push(name + ": no UAC notice");
+}
+check(
+  elevationGaps.length === 0,
+  "build helpers: build-update.bat and build-installer.bat self-elevate (the running server is a SYSTEM task a plain window cannot stop)"
+    + (elevationGaps.length ? " - " + elevationGaps.join(" | ") : ""),
+);
+check(
+  buildProdSrc.includes("function isElevated") && buildProdSrc.includes("function findPortOwners")
+    && buildProdSrc.includes("stopWoodTekServer") && buildProdSrc.includes("const attempts = 4")
+    && buildProdSrc.includes("NOT an administrator window"),
+  "build-prod: retries the stop, kills every listener on the port, and names the real cause (not elevated) when the port will not free",
+);
+check(
+  fs.readFileSync("installer/build-update.ps1", "utf8").includes("Build failed - restarting the WoodTek server")
+    && runbookSource.includes('IF THE PACK BUILD STOPS AT "Port 3000 is STILL occupied"'),
+  "build-update: a failed build restarts the server it stopped, and the RUNBOOK explains the port-3000 stop and its cure",
+);
+
+// The apply engine must merge folders, verify the pack and roll back on ANY
+// failure (2026-10-14) --------------------------------------------------------
+// The first real pack nested every folder on the server: Copy-Item copies a
+// source folder INTO an existing destination (installer\installer,
+// .next\.next), so .next\standalone was never re-created, the schema sync
+// failed with "Cannot find module ...node_modules\pg" - and the throw left the
+// server stopped with the new files half-installed, with no rollback.
+const applyEngineSrc = fs.readFileSync("installer/apply-update.ps1", "utf8");
+check(
+  applyEngineSrc.includes("function Copy-TreeContents")
+    && applyEngineSrc.includes("Copy-TreeContents $item.FullName $dest")
+    && !applyEngineSrc.includes("Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force"),
+  "apply-update: folders are merged with Copy-TreeContents (plain Copy-Item nested every folder on the first real pack)",
+);
+check(
+  applyEngineSrc.includes("node_modules\\pg\\package.json") && applyEngineSrc.includes("the pack looks incomplete")
+    && applyEngineSrc.includes("function Invoke-Rollback")
+    && (applyEngineSrc.match(/Invoke-Rollback /g) || []).length >= 2,
+  "apply-update: the applied pack is verified (server.js + pg) before the database is touched, and failures from step 6 on roll the previous version back",
+);
+check(
+  applyEngineSrc.includes("The database dump failed (exit code")
+    && applyEngineSrc.includes("The pack has no .next\\standalone\\server.js after copying"),
+  "apply-update: a failed pre-update dump says so (instead of claiming it was saved), and an incomplete pack is refused before the database is touched",
+);
+check(
+  fs.readFileSync("installer/build-update.ps1", "utf8").includes("node_modules\\pg\\package.json")
+    && fs.readFileSync("installer/build-installer.ps1", "utf8").includes("node_modules\\pg\\package.json"),
+  "pack builders: both refuse to build without node_modules\\pg in the staged standalone (a pack that cannot run must never ship)",
+);
+check(
+  installEngineSource.includes("function Copy-TreeContents")
+    && installEngineSource.includes("Copy-TreeContents $stageExtract $InstallDir")
+    && installEngineSource.includes("Copy-TreeContents $source $TargetDir")
+    && !installEngineSource.includes('Copy-Item -Path (Join-Path $stageExtract "*") -Destination $InstallDir -Recurse -Force')
+    && !installEngineSource.includes('Copy-Item -Path (Join-Path $source "*") -Destination $TargetDir -Recurse -Force'),
+  "install-engine: the payload and the portable Node.js are merged folder-by-folder (a repair install over existing folders must never nest)",
+);
+check(
+  !backupScriptSource.includes("Compress-Archive") && !backupScriptSource.includes("Expand-Archive")
+    && !backupScriptSource.includes("-NoNewline") && !backupScriptSource.includes("::new("),
+  "nightly backup: no PowerShell 5-and-newer-only syntax (Compress/Expand-Archive, -NoNewline, ::new) - it must run on the server's PowerShell 4.0",
 );
 
 // The server-side double-click tools ship with installs AND updates (2026-10-14)
@@ -4901,9 +5000,9 @@ check(
   "runbook: the dev-PC-to-FS200 update lane is written down (build pack, copy to the server, apply, verify)",
 );
 check(
-  runbookSource.includes("FIRST TIME ONLY") && runbookSource.includes("apply-update.ps1")
-    && runbookSource.includes("Every later update skips step 3"),
-  "runbook: the one-time first-update bootstrap (copy the apply tool out of the pack) is explained with exact paths",
+  runbookSource.includes("PUT THE NEW APPLY TOOL IN PLACE FIRST") && runbookSource.includes("apply-update.ps1")
+    && runbookSource.includes('click "Replace the files in the') && runbookSource.includes("never needed again"),
+  "runbook: the apply-tool bootstrap (copy the new apply-update.ps1/.bat out of the pack before applying) is explained with exact paths",
 );
 check(
   runbookSource.includes("unblock-update.bat") && runbookSource.includes("The ampersand (&) character is not allowed")

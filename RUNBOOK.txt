@@ -44,13 +44,18 @@ SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
      press Enter (a login prompt may appear - the FS200 administrator account),
      then paste the .zip and the .sha256 into that folder. A USB stick works
      too if the VM can see it.
-  3. ON FS200 (the factory server) - FIRST TIME ONLY
-     An install made before 2026-10-14 does not have the apply tool yet (the
-     pack brings it). One-time setup, all in File Explorer:
+  3. ON FS200 (the factory server) - PUT THE NEW APPLY TOOL IN PLACE FIRST
+     The apply tool already on the server (built before 2026-10-14) nests
+     folders and cannot finish an update - that is exactly what stopped the
+     2026-10-14 attempt. The new pack carries the fixed tool; copy it in
+     BEFORE applying (only this once):
        a. open the copied .zip (double-click it - Windows shows what is inside)
        b. open the  installer  folder inside it
-       c. copy BOTH files  apply-update.ps1  and  apply-update.bat  into
-          C:\WoodTek-ERP\installer\   (they do not exist there yet)
+       c. copy the two files  apply-update.ps1  and  apply-update.bat  into
+          C:\WoodTek-ERP\installer\   (click "Replace the files in the
+          destination" when Windows asks)
+     After this pack is applied once, the tool replaces itself with every pack
+     and this step is never needed again.
   4. ON FS200 - APPLY THE PACK
        double-click  C:\WoodTek-ERP\installer\apply-update.bat
      Click Yes on the UAC prompt and wait. It takes a snapshot of .env + data\
@@ -63,9 +68,29 @@ SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
        double-click  C:\WoodTek-ERP\check-server.bat
      The row counts must look right (users / machines / orders) and
      /api/health must say 200 OK. Then open the app and check your change.
-  IF SOMETHING LOOKS WRONG: the previous version is still in
-  backups\update-<version>-<time>\ on FS200 (and its log). Send the agent what
-  the apply window said - the rollback is automatic and nothing is lost.
+  IF SOMETHING LOOKS WRONG: the update tool rolls back by itself - when
+  anything fails it puts the previous version back and starts it again, and
+  the window says "Rolled back successfully". The previous version is also
+  kept in backups\update-<version>-<time>\ on the server. Send the agent what
+  the apply window said - nothing is lost.
+  IF THE APP IS DOWN AFTER AN UPDATE AND DID NOT COME BACK BY ITSELF
+  (possible only with an update tool from before 2026-10-14, which had no
+  automatic rollback): open C:\WoodTek-ERP\backups\, open the newest
+  update-... folder, rename the folder "standalone-old" to "standalone",
+  move it into C:\WoodTek-ERP\.next\ (replace anything already there), then
+  restart the PC - the app starts by itself. Nothing is deleted by this.
+  IF A WINDOW SAYS "Schema sync failed" OR "Cannot find module ... pg":
+  that was the 2026-10-14 update tool (fixed since). If the app is running,
+  do nothing until the next update; if it is not, use the folder steps above.
+  IF THE PACK BUILD STOPS AT "Port 3000 is STILL occupied"
+    The build must stop the running WoodTek server to replace the app files,
+    and that server runs as a background SYSTEM task - stopping it needs
+    administrator rights. The build files now ask for those rights by
+    themselves: double-click build-update.bat again and click Yes on the UAC
+    prompt (right-click > Run as administrator does the same). If it still
+    cannot free the port: open Task Scheduler, right-click the task
+    "\WoodTek ERP" and choose End, then run the build again - the build
+    starts the app again by itself when it finishes, even if it fails.
 
 THE UPDATE RITUAL (every modification, no exceptions)
   THE EASY WAY (what the old PC - the development machine - does now):
@@ -176,6 +201,11 @@ OLD WINDOWS SERVERS (Windows 8.1 / Server 2012 R2)
   - set the system variable NODE_SKIP_PLATFORM_CHECK to 1
     (Control Panel > System > Advanced system settings > Environment
     Variables > System variables > New) and start the server again.
+  - No script may carry a "#requires -Version 5.1" line: on this old Windows
+    the whole script then refuses to run - the nightly backup did that
+    silently until 2026-10-14. If any window ever says
+    "Requires -Version 5.1", run update-woodtek.bat on the old PC, send the
+    new pack to the server, and apply it.
   Keep it honest: Microsoft ended support for Windows Server 2012 R2 in
   October 2023 (no security updates) and PostgreSQL 16 is not tested on it.
   It is fine as a spare PC - a server that runs the shop every day should be
