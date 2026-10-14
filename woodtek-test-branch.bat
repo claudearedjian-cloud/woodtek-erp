@@ -5,7 +5,17 @@ rem WoodTek ERP - put this clone on an agent branch, rebuild and restart.
 rem Double-click this file INSIDE the woodtek-erp folder (the one with .git).
 rem Press Enter at the prompt to use the branch the agent is working on.
 rem Going back to the released version: double-click woodtek-back-to-main.bat
+rem
+rem It FIRST copies itself next to the Windows temp folder and does the work
+rem from that copy. Windows reads a .bat file line by line BY BYTE POSITION
+rem while it runs, and this script updates the folder holding this very file:
+rem a rewrite mid-run makes Windows read the rest from the wrong place (garbage
+rem "is not recognized" lines and false failure messages, seen 2026-10-14).
+rem The temp copy cannot be rewritten while it runs.
 rem ============================================================================
+
+if "%~1"=="/staged" goto wt_staged
+
 cd /d %~dp0
 
 rem schtasks on the SYSTEM-run task needs admin rights - self-elevate:
@@ -15,6 +25,26 @@ if %errorlevel% neq 0 (
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
+
+rem The branch name the user typed (if any) travels via an environment variable,
+rem because the staged working copy does not receive the original arguments.
+set "WT_ARG1=%~1"
+
+set "WT_PKG=%TEMP%\%~n0-staged.bat"
+copy /y "%~f0" "%WT_PKG%" >nul
+call "%WT_PKG%" /staged "%~dp0."
+set "WT_RC=%errorlevel%"
+del "%WT_PKG%" >nul 2>nul
+exit /b %WT_RC%
+
+:wt_staged
+if "%~2"=="" (
+  echo [branch] This is the updater's internal working copy.
+  echo [branch] Double-click woodtek-test-branch.bat in the woodtek-erp folder instead.
+  pause
+  exit /b 1
+)
+cd /d "%~2"
 
 if not exist ".git" (
   echo.
@@ -29,7 +59,7 @@ if not exist ".git" (
 rem 2026-10-07: default test branch = HR working calendar + overtime + leave
 rem enforcement (session arena/265a62fe). It also contains PR #23 (HR & Payroll).
 set DEFAULT_BRANCH=arena/265a62fe-woodtek-erp
-set BRANCH=%~1
+set BRANCH=%WT_ARG1%
 if "%BRANCH%"=="" set /p BRANCH=Branch name [press Enter for %DEFAULT_BRANCH%]: 
 if "%BRANCH%"=="" set BRANCH=%DEFAULT_BRANCH%
 

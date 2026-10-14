@@ -4801,6 +4801,40 @@ check(
     && unblockSource.includes("send a photo of this window"),
   "unblock-update: explains how to recover the edits and what to send if it still fails",
 );
+
+// Updaters run from a temp copy (2026-10-14) ------------------------------------
+// Windows reads a running .bat file BY BYTE POSITION. When update-woodtek.bat
+// rewrote itself mid-run (the ASCII fix), Windows read the rest of the script
+// from the wrong offset: two garbage "is not recognized" lines and a false
+// "git pull failed" after a pull that had actually succeeded - and the rebuild
+// never ran. Every helper that pulls/stashes must therefore copy itself to the
+// temp folder and do the work from that copy, which nothing can rewrite.
+const updaterBats = [
+  "update-woodtek.bat",
+  "woodtek-back-to-main.bat",
+  "woodtek-test-branch.bat",
+  "unblock-update.bat",
+];
+const updaterProblems = [];
+for (const file of updaterBats) {
+  const source = fs.readFileSync(file, "utf8");
+  if (!source.includes('if "%~1"=="/staged" goto wt_staged')) updaterProblems.push(file + ": no staged-run branch");
+  if (!source.includes('set "WT_PKG=%TEMP%\\%~n0-staged.bat"')) updaterProblems.push(file + ": no temp-copy path");
+  if (!source.includes('call "%WT_PKG%" /staged "%~dp0."')) updaterProblems.push(file + ": does not run the temp copy");
+  if (!source.includes('del "%WT_PKG%"')) updaterProblems.push(file + ": does not clean up the temp copy");
+  if (!source.includes('cd /d "%~2"')) updaterProblems.push(file + ": the staged copy does not cd into the repo");
+  if (!source.includes("BY BYTE POSITION")) updaterProblems.push(file + ": the why-comment was dropped");
+}
+check(
+  updaterProblems.length === 0,
+  "updaters: every pull/stash helper runs itself from a temp copy first (a mid-run self-rewrite garbles the rest of the batch - seen 2026-10-14)"
+    + (updaterProblems.length ? " - " + updaterProblems.join(" | ") : ""),
+);
+check(
+  fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%WT_ARG1%")
+    && !fs.readFileSync("woodtek-test-branch.bat", "utf8").includes("set BRANCH=%~1"),
+  "updaters: the test-branch helper passes the typed branch name to the staged copy through a variable",
+);
 check(
   runbookSource.includes("unblock-update.bat") && runbookSource.includes("The ampersand (&) character is not allowed")
     && runbookSource.includes("backups\\local-edits-<date>\\local-edits.patch"),
