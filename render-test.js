@@ -1916,6 +1916,22 @@ const owdSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf
 check(owdSource.includes("printJobTicket") && owdSource.includes("buildJobTicketHtml") && owdSource.includes("Job Ticket") && owdSource.includes("Printer"), "job ticket: order workflow exposes printable job ticket (button + print window via buildJobTicketHtml + QR)");
 check(owdSource.includes("inventoryItems, machines, qrDataUrl"), "job ticket: ticket builder receives live inventory dimensions and machine assignments");
 
+// ---- reset all orders + Sales Coordinator order visibility (2026-10-15) ----
+const salesScopeSource = fs.readFileSync("src/lib/dataAccess.ts", "utf8");
+check(salesScopeSource.includes('if (user.role === "Sales Coordinator") return undefined;') && !salesScopeSource.includes("eq(orders.createdById, user.id),\n"), "sales orders: Sales Coordinators see every order in lists (no createdBy/assigned filter left)");
+const salesEditSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+check(salesEditSource.includes("owned.createdById !== user.id && owned.assignedSalesId !== user.id"), "sales orders: editing an order stays limited to the creator or the assigned rep");
+const resetRouteText = fs.readFileSync("src/app/api/orders/reset/route.ts", "utf8");
+check(resetRouteText.includes('baseRoleOf(user.role) !== "Manager"') && resetRouteText.includes('RESET_CONFIRM_TEXT = "DELETE ALL ORDERS"'), "reset orders: Manager only and the typed phrase is required");
+check(resetRouteText.includes("deleteInvoices === true") && resetRouteText.includes("deleteInventoryRecords !== false"), "reset orders: invoices are kept unless asked; inventory records are deleted unless asked to keep");
+check(resetRouteText.includes("status: 409") && resetRouteText.includes("Cannot keep the inventory records"), "reset orders: keeping inventory records is refused while they exist");
+check(resetRouteText.includes("clearAllOrderRuntimeState()") && resetRouteText.includes('"orders.reset_all"'), "reset orders: clears order overlays and writes an audit entry");
+check(!resetRouteText.includes("stockQuantity") && !resetRouteText.includes("inventoryItems"), "reset orders: never changes stock quantities or inventory items");
+const resetPanelText = fs.readFileSync("src/components/OrderResetPanel.tsx", "utf8");
+check(resetPanelText.includes("useState(false)") && resetPanelText.includes("useState(true)") && resetPanelText.includes("typed.trim() === confirmText"), "reset orders panel: keep invoices by default, delete inventory records by default, typed phrase gates the button");
+const resetSettingsText = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
+check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes("<OrderResetPanel />") && resetSettingsText.includes('activeSystemSection === "orders-reset" && isManager'), "reset orders: Settings shows the panel only to Managers");
+
 // ---- phase 2 feature 1: office roles do not run stations (START STATION / Log QA & Mins) ----
 const permsMod = require("./compiled/lib/permissions.js");
 const phase2PreviousCustomRoles = permsMod.getCustomRoles();

@@ -108,18 +108,10 @@ async function allowedOrderIdsSubquery(user: SessionUser) {
   // (financial fields stay redacted via isFloorRole below).
   if (user.role === "Floor Supervisor") return undefined;
 
-  if (user.role === "Sales Coordinator") {
-    // Sales sees only orders they created OR that are assigned to them
-    return db
-      .select({ id: orders.id })
-      .from(orders)
-      .where(
-        or(
-          eq(orders.createdById, user.id),
-          eq(orders.assignedSalesId, user.id),
-        ),
-      );
-  }
+  // Sales Coordinators see every order (owner decision 2026-10-15) so earlier
+  // orders made by colleagues stay visible. Editing is still limited to their
+  // own orders by the PATCH rule in src/app/api/orders/[id]/route.ts.
+  if (user.role === "Sales Coordinator") return undefined;
 
   if (user.role === "QA & Dispatch") {
     // QA & Dispatch sees orders in review or completed
