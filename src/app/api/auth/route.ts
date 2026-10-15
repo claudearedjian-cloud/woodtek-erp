@@ -112,11 +112,13 @@ export async function POST(request: Request) {
       avatarColor: candidate.avatarColor,
     };
 
+    // Remember me (opt-in per sign-in, for a dedicated station): a longer-lived session.
+    const remember = body.remember === true;
     const response = NextResponse.json({ user: safeUser });
     response.cookies.set(
       SESSION_COOKIE,
-      createSessionToken(candidate.id),
-      sessionCookieOptions(requestIsHttps(request)),
+      createSessionToken(candidate.id, remember),
+      sessionCookieOptions(requestIsHttps(request), remember),
     );
     return response;
   } catch (error: unknown) {

@@ -19,6 +19,7 @@ import {
 import jsPDF from "jspdf";
 import { digestToLines, digestTotalIssues, EMPTY_DIGEST, type DigestData } from "@/lib/digest";
 import { useT } from "@/lib/langContext";
+import CollapsibleSection from "@/components/CollapsibleSection";
 
 interface DashboardViewProps {
   data: any;
@@ -355,7 +356,8 @@ export default function DashboardView({ data, loading, onNavigate, currentUser, 
         </div>
       </div>
 
-      {/* Main Row: Live Manufacturing Stream & Machine Queue Table */}
+      {/* Main Row: Live Manufacturing Stream & Machine Queue Table (collapsible) */}
+      <CollapsibleSection id="dashboard-floor" title="Shop floor & machine stations">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Active Shop Floor Feed */}
         <div className="lg:col-span-2 bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-sm flex flex-col">
@@ -502,6 +504,7 @@ export default function DashboardView({ data, loading, onNavigate, currentUser, 
           </div>
         </div>
       </div>
+      </CollapsibleSection>
     </div>
   );
 }

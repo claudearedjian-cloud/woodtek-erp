@@ -23,6 +23,8 @@ import { readInstalledEdition } from "@/lib/installedEdition.server";
 
 export const SESSION_COOKIE = "woodtek_session";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // one working shift + margin
+// "Remember me" on a dedicated station: stay signed in for 30 days on this device.
+const REMEMBER_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const BCRYPT_ROUNDS = 10;
 
 /**
@@ -104,8 +106,10 @@ export function isPinHashed(stored: string | null | undefined): boolean {
 
 // ---------------------------------------------------------------- Session token
 
-export function createSessionToken(userId: number): string {
-  const payload = Buffer.from(JSON.stringify({ uid: userId, iat: Date.now() })).toString("base64url");
+export function createSessionToken(userId: number, remember = false): string {
+  const data: { uid: number; iat: number; remember?: true } = { uid: userId, iat: Date.now() };
+  if (remember) data.remember = true;
+  const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
   const sig = createHmac("sha256", getSecret()).update(payload).digest("base64url");
   return `${payload}.${sig}`;
 }
@@ -123,7 +127,8 @@ export function verifySessionToken(token: string | undefined | null): number | n
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (typeof data?.uid !== "number") return null;
-    if (typeof data?.iat !== "number" || Date.now() - data.iat > MAX_AGE_SECONDS * 1000) return null;
+    const lifetime = data?.remember === true ? REMEMBER_MAX_AGE_SECONDS : MAX_AGE_SECONDS;
+    if (typeof data?.iat !== "number" || Date.now() - data.iat > lifetime * 1000) return null;
     return data.uid;
   } catch {
     return null;
@@ -137,7 +142,7 @@ export function verifySessionToken(token: string | undefined | null): number | n
  *   AUTH_COOKIE_SECURE=false  force off (trusted LAN over plain HTTP)
  *   AUTH_COOKIE_SECURE=auto   follow the request protocol (default)
  */
-export function sessionCookieOptions(isHttps?: boolean) {
+export function sessionCookieOptions(isHttps?: boolean, remember = false) {
   const mode = (process.env.AUTH_COOKIE_SECURE ?? "auto").toLowerCase();
   const secure = mode === "true" ? true : mode === "false" ? false : Boolean(isHttps);
 
@@ -146,7 +151,7 @@ export function sessionCookieOptions(isHttps?: boolean) {
     sameSite: "lax" as const,
     secure,
     path: "/",
-    maxAge: MAX_AGE_SECONDS,
+    maxAge: remember ? REMEMBER_MAX_AGE_SECONDS : MAX_AGE_SECONDS,
   };
 }
 

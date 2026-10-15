@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("woodtek-theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t);}}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem("woodtek-theme");if(t==="light"||t==="dark"||t==="windows"){document.documentElement.setAttribute("data-theme",t);}}catch(e){}})();`,
           }}
         />
         {/* Inline (survives chunk-404 deploys): surfaces JS errors as a red

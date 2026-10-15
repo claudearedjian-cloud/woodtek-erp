@@ -88,6 +88,7 @@ const AR: Record<string, string> = {
   "Enter your personal four-digit PIN. Accounts lock for 5 minutes after 5 failed attempts.":
     "أدخل رمزك المكوّن من أربعة أرقام. يُقفل الحساب 5 دقائق بعد 5 محاولات فاشلة.",
   "Sign In": "تسجيل الدخول",
+  "Remember me on this device (30 days)": "تذكرني على هذا الجهاز (30 يومًا)",
   // --- sign-in screen: approved leave blocks the account ---
   "On leave": "في إجازة",
   "On approved leave": "في إجازة معتمدة",
@@ -231,6 +232,7 @@ const FR: Record<string, string> = {
   Exit: "Quitter",
   // --- sign-in screen ---
   "WoodTek ERP Sign In": "Connexion WoodTek ERP",
+  "Remember me on this device (30 days)": "Se souvenir de moi sur cet appareil (30 jours)",
   "Authorize Role Switch": "Confirmer le changement de profil",
   "Select your profile and enter your personal shop PIN.":
     "Choisissez votre profil et saisissez votre code personnel.",

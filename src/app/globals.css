@@ -133,7 +133,7 @@
    never come out with an ink-black background.
    ========================================================================== */
 @media screen {
-  :root[data-theme="light"] {
+  :root[data-theme="light"], :root[data-theme="windows"] {
     color-scheme: light;
 
     /* ---- neutral ramp, inverted ------------------------------------- */
@@ -214,8 +214,49 @@
     }
   }
 
+  /* ---- Windows light: the Windows 10/11 standard light look ----------
+     Shares every surface rule above (it is in the same selector list). Only
+     the values differ: a flat grey page (#f3f3f3), white cards, the Windows
+     accent blue (#0078d4) in place of the amber brand accent, and Segoe UI. */
+  :root[data-theme="windows"] {
+    --color-slate-50: #111111;
+    --color-slate-100: #1f1f1f; /* primary text            */
+    --color-slate-200: #292929;
+    --color-slate-300: #3d3d3d;
+    --color-slate-400: #5c5c5c;
+    --color-slate-500: #616161; /* muted text              */
+    --color-slate-600: #8a8a8a;
+    --color-slate-700: #c8c8c8; /* strong borders, hover   */
+    --color-slate-800: #e5e5e5; /* default borders         */
+    --color-slate-900: #ffffff; /* cards                   */
+    --color-slate-950: #f3f3f3; /* page                    */
+    --color-white: #1f1f1f;
+    --color-amber-200: #0067c0;
+    --color-amber-300: #0067c0;
+    --color-amber-400: #0067c0;
+    --color-amber-500: #0078d4;
+    --color-amber-600: #0067c0;
+    --color-amber-700: #004578;
+    --color-sky-400: #0067c0;
+    --color-sky-500: #0078d4;
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  :root[data-theme="windows"] body {
+    background-color: #f3f3f3;
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  :root[data-theme="windows"] .app-bg {
+    background-color: #f3f3f3;
+    background-image: none;
+  }
+  :root[data-theme="windows"] .glass,
+  :root[data-theme="windows"] .card-surface {
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+  }
+
   /* Ambient depth: the same amber/blue glow, on paper instead of near-black. */
-  :root[data-theme="light"] .app-bg {
+  :root[data-theme="light"], :root[data-theme="windows"] .app-bg {
     background-color: #f1f5f9;
     background-image:
       radial-gradient(1100px 700px at 12% -8%, rgba(245, 158, 11, 0.1) 0%, transparent 55%),
@@ -223,25 +264,25 @@
       radial-gradient(1000px 800px at 50% 120%, rgba(245, 158, 11, 0.07) 0%, transparent 55%);
   }
   /* Frosted panel → frosted white. */
-  :root[data-theme="light"] .glass {
+  :root[data-theme="light"], :root[data-theme="windows"] .glass {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.94));
     border: 1px solid rgba(148, 163, 184, 0.25);
   }
   /* Raised card surface → white with a hairline. */
-  :root[data-theme="light"] .card-surface {
+  :root[data-theme="light"], :root[data-theme="windows"] .card-surface {
     background: linear-gradient(180deg, #ffffff, #f8fafc);
     border: 1px solid rgba(148, 163, 184, 0.22);
   }
   /* Sign-in / modal backdrop → light scrim with the brand glow kept. */
-  :root[data-theme="light"] .modal-backdrop {
+  :root[data-theme="light"], :root[data-theme="windows"] .modal-backdrop {
     background:
       radial-gradient(1100px 700px at 50% -12%, rgba(245, 158, 11, 0.12), transparent 60%),
       rgba(241, 245, 249, 0.9);
   }
-  :root[data-theme="light"] .custom-scrollbar::-webkit-scrollbar-thumb {
+  :root[data-theme="light"], :root[data-theme="windows"] .custom-scrollbar::-webkit-scrollbar-thumb {
     background: #cbd5e1;
   }
-  :root[data-theme="light"] * {
+  :root[data-theme="light"], :root[data-theme="windows"] * {
     scrollbar-color: #cbd5e1 transparent;
   }
 }
@@ -268,4 +309,14 @@
   --color-white: #ffffff;
   background-color: #ffffff;
   color: #0f172a;
+}
+
+/* Collapse panels (every screen): ScreenCollapse wraps the screen in
+   [data-screen-collapse]; the screen's root <div> keeps its first block (the
+   title/top bar) and folds away the rest. Overlays and dialogs are fixed-
+   position and are excluded, so an open dialog is never hidden. Screen only. */
+@media screen {
+  [data-screen-collapse="closed"] > div > :not(:first-child):not(.fixed):not(.inset-0) {
+    display: none !important;
+  }
 }
