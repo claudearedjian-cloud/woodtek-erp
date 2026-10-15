@@ -33,7 +33,7 @@ import jsPDF from "jspdf";
 import QRCode from "qrcode";
 import { QUOTE_STRINGS, type Lang } from "@/lib/i18n";
 import autoTable from "jspdf-autotable";
-import { can, canAssignMachines } from "@/lib/permissions";
+import { can, canAssignMachines, canRunStationSteps } from "@/lib/permissions";
 import { machineCategoryMatches } from "@/lib/operationMachineCandidates";
 import { allowedStages } from "@/lib/materialProgress";
 import { buildJobTicketHtml } from "@/lib/jobTicket";
@@ -121,6 +121,8 @@ export default function OrderWorkflowDetail({
   const [allocBusy, setAllocBusy] = useState<boolean>(false);
   const [releasingId, setReleasingId] = useState<number | null>(null);
   const canManageBom = can(currentUser?.role, "orders:write");
+  // Office roles (Sales Coordinator, Warehouse Supervisor) never start a station or log QA here.
+  const canRunStations = canRunStationSteps(currentUser?.role);
 
   // Add Step Modal State
   const [showAddStep, setShowAddStep] = useState(false);
@@ -1266,7 +1268,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                       {/* Right: Operator Touch Actions */}
                       <div className="flex flex-wrap items-center gap-2.5 flex-shrink-0 pt-3 lg:pt-0 border-t lg:border-0 border-slate-800">
                         {/* Start / Pause / Complete Action Buttons */}
-                        {(op.status === "Ready" || op.status === "Rejected/Rework") && (
+                        {canRunStations && (op.status === "Ready" || op.status === "Rejected/Rework") && (
                           <button
                             onClick={() => handleUpdateOpStatus(op.id, "In Progress")}
                             disabled={busyOperationId !== null}
@@ -1315,6 +1317,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                           </button>
                         )}
 
+                        {canRunStations && (
                         <button
                           onClick={() => {
                             if (isEditing) {
@@ -1329,6 +1332,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         >
                           {isEditing ? "Close" : "Log QA & Mins"}
                         </button>
+                        )}
 
                         <button
                           onClick={() => handleUpdateOpStatus(op.id, "Rejected/Rework")}

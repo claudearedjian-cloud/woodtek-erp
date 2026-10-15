@@ -1916,6 +1916,25 @@ const owdSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf
 check(owdSource.includes("printJobTicket") && owdSource.includes("buildJobTicketHtml") && owdSource.includes("Job Ticket") && owdSource.includes("Printer"), "job ticket: order workflow exposes printable job ticket (button + print window via buildJobTicketHtml + QR)");
 check(owdSource.includes("inventoryItems, machines, qrDataUrl"), "job ticket: ticket builder receives live inventory dimensions and machine assignments");
 
+// ---- phase 2 feature 1: office roles do not run stations (START STATION / Log QA & Mins) ----
+const permsMod = require("./compiled/lib/permissions.js");
+const phase2PreviousCustomRoles = permsMod.getCustomRoles();
+permsMod.registerCustomRoles([
+  { name: "Shop Lead", base: "Machine Operator" },
+  { name: "Office Lead", base: "Sales Coordinator" },
+]);
+const runsStations = (role) => permsMod.canRunStationSteps(role);
+check(["Sales Coordinator", "Warehouse Supervisor"].every((r) => runsStations(r) === false), "station steps: Sales Coordinator and Warehouse Supervisor do not get START STATION / Log QA & Mins");
+check(["Manager", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"].every((r) => runsStations(r) === true), "station steps: Manager, Machine Operator, Floor Supervisor, QA & Dispatch and Technician keep START STATION / Log QA & Mins");
+check(runsStations("Shop Lead") === true && runsStations("Office Lead") === false, "station steps: custom roles follow the built-in role they inherit from");
+check(runsStations("") === false && runsStations(null) === false && runsStations(undefined) === false && runsStations("Unknown role") === false, "station steps: missing or unknown roles get no station controls");
+check(permsMod.OFFICE_ROLES.join("|") === "Sales Coordinator|Warehouse Supervisor", "station steps: office role list is exactly Sales Coordinator and Warehouse Supervisor");
+const owdPhase2 = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
+check(owdPhase2.includes("canRunStations && (op.status === \"Ready\"") && owdPhase2.includes("START REWORK") && owdPhase2.includes("\"START STATION\""), "station steps: START STATION button is guarded by canRunStations");
+check(/\{canRunStations && \(\s*<button[\s\S]*?Log QA & Mins[\s\S]*?<\/button>\s*\)\}/.test(owdPhase2), "station steps: Log QA & Mins button is guarded by canRunStations");
+check(owdPhase2.includes("canRunStationSteps } from \"@/lib/permissions\"") || owdPhase2.includes("canRunStationSteps }"), "station steps: workflow imports the shared canRunStationSteps rule");
+permsMod.registerCustomRoles(phase2PreviousCustomRoles);
+
 // ---- bundle 42: printable delivery note (client-facing, address & signatures) ----
 const dn = require("./compiled/lib/deliveryNote.js");
 check(dn.DELIVERY_NOTE_VERSION === 1, "delivery note: VERSION is 1");
