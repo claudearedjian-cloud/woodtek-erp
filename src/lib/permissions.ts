@@ -226,12 +226,12 @@ export function canAssignMachines(role: string | null | undefined): boolean {
 
 /**
  * Office roles never run a station step themselves: no START STATION and no
- * "Log QA & Mins" on the order workflow. Floor roles (Machine Operator, Floor
- * Supervisor, QA & Dispatch, Technician) keep both. Custom roles follow the
+ * "Log QA & Mins" on the order workflow. Manager and floor roles (Machine
+ * Operator, Floor Supervisor, QA & Dispatch, Technician) keep both. Custom roles follow the
  * built-in role they inherit from. UI hiding only - the server rules for
  * PATCH /api/operations/:id are unchanged.
  */
-export const OFFICE_ROLES: readonly string[] = ["Manager", "Sales Coordinator", "Warehouse Supervisor"];
+export const OFFICE_ROLES: readonly string[] = ["Sales Coordinator", "Warehouse Supervisor"];
 
 export function canRunStationSteps(role: string | null | undefined): boolean {
   const base = baseRoleOf(role);

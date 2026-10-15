@@ -121,7 +121,7 @@ export default function OrderWorkflowDetail({
   const [allocBusy, setAllocBusy] = useState<boolean>(false);
   const [releasingId, setReleasingId] = useState<number | null>(null);
   const canManageBom = can(currentUser?.role, "orders:write");
-  // Office roles (Manager, Sales Coordinator, Warehouse Supervisor) never start a station or log QA here.
+  // Office roles (Sales Coordinator, Warehouse Supervisor) never start a station or log QA here.
   const canRunStations = canRunStationSteps(currentUser?.role);
 
   // Add Step Modal State

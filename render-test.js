@@ -1924,11 +1924,11 @@ permsMod.registerCustomRoles([
   { name: "Office Lead", base: "Sales Coordinator" },
 ]);
 const runsStations = (role) => permsMod.canRunStationSteps(role);
-check(["Manager", "Sales Coordinator", "Warehouse Supervisor"].every((r) => runsStations(r) === false), "station steps: Manager, Sales Coordinator and Warehouse Supervisor do not get START STATION / Log QA & Mins");
-check(["Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"].every((r) => runsStations(r) === true), "station steps: Machine Operator, Floor Supervisor, QA & Dispatch and Technician keep START STATION / Log QA & Mins");
+check(["Sales Coordinator", "Warehouse Supervisor"].every((r) => runsStations(r) === false), "station steps: Sales Coordinator and Warehouse Supervisor do not get START STATION / Log QA & Mins");
+check(["Manager", "Machine Operator", "Floor Supervisor", "QA & Dispatch", "Technician"].every((r) => runsStations(r) === true), "station steps: Manager, Machine Operator, Floor Supervisor, QA & Dispatch and Technician keep START STATION / Log QA & Mins");
 check(runsStations("Shop Lead") === true && runsStations("Office Lead") === false, "station steps: custom roles follow the built-in role they inherit from");
 check(runsStations("") === false && runsStations(null) === false && runsStations(undefined) === false && runsStations("Unknown role") === false, "station steps: missing or unknown roles get no station controls");
-check(permsMod.OFFICE_ROLES.join("|") === "Manager|Sales Coordinator|Warehouse Supervisor", "station steps: office role list is exactly Manager, Sales Coordinator, Warehouse Supervisor");
+check(permsMod.OFFICE_ROLES.join("|") === "Sales Coordinator|Warehouse Supervisor", "station steps: office role list is exactly Sales Coordinator and Warehouse Supervisor");
 const owdPhase2 = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
 check(owdPhase2.includes("canRunStations && (op.status === \"Ready\"") && owdPhase2.includes("START REWORK") && owdPhase2.includes("\"START STATION\""), "station steps: START STATION button is guarded by canRunStations");
 check(/\{canRunStations && \(\s*<button[\s\S]*?Log QA & Mins[\s\S]*?<\/button>\s*\)\}/.test(owdPhase2), "station steps: Log QA & Mins button is guarded by canRunStations");
