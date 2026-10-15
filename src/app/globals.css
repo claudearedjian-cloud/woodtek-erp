@@ -310,3 +310,13 @@
   background-color: #ffffff;
   color: #0f172a;
 }
+
+/* Collapse panels (every screen): ScreenCollapse wraps the screen in
+   [data-screen-collapse]; the screen's root <div> keeps its first block (the
+   title/top bar) and folds away the rest. Overlays and dialogs are fixed-
+   position and are excluded, so an open dialog is never hidden. Screen only. */
+@media screen {
+  [data-screen-collapse="closed"] > div > :not(:first-child):not(.fixed):not(.inset-0) {
+    display: none !important;
+  }
+}

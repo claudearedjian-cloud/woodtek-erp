@@ -13,6 +13,7 @@ import { LangProvider } from "@/lib/langContext";
 import { AppearanceProvider } from "@/lib/appearanceContext";
 import { idleState, loadIdleMinutes, IDLE_WARN_SEC } from "@/lib/idle";
 import { registerCustomRoles, registerModuleOverrides } from "@/lib/permissions";
+import ScreenCollapse from "@/components/ScreenCollapse";
 import { canSeeMoney, sanitizeOptionalModules, screenAllowedForSubject, subjectHasModule, type OptionalModulesConfig } from "@/lib/optionalModules";
 
 const ScreenLoading = () => (
@@ -708,6 +709,7 @@ export default function WoodTekERP() {
 
         <main key={activeTab} className="flex-1 pb-16 animate-fade-up">
           {currentUser && (
+            <ScreenCollapse screenId={activeTab}>
             <>
           {activeTab === "dashboard" && <DashboardView data={dashboardData} loading={loading} onNavigate={navigateWithStatus} currentUser={currentUser} onCreatePurchaseOrder={canPurchase ? startPurchaseForItem : undefined} />}
           {activeTab === "plant" && <PlantView onNavigate={setActiveTab} />}
@@ -755,6 +757,7 @@ export default function WoodTekERP() {
           )}
           {activeTab === "settings" && <SettingsView currentUser={currentUser} />}
             </>
+            </ScreenCollapse>
           )}
         </main>
       </div>

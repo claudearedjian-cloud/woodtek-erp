@@ -533,3 +533,9 @@ schtasks /Run /TN "\WoodTek ERP"
 ## How the agent verified changes (rebuild if needed)
 - `npm install && npm run typecheck` (`tsc --noEmit`) in a clone — the project's own check.
 - A `render-test.js` SSR harness (typescript `transpileModule` + `react-dom/server`) rendered the real `Sidebar` per role and asserted hidden/visible labels (59 checks). Needs `typescript`, `react`, `react-dom`, `lucide-react` from the repo's package.json.
+
+## Collapse / expand on every screen (PR #45)
+- `src/components/ScreenCollapse.tsx` wraps each screen in `src/app/page.tsx` (`<ScreenCollapse screenId={activeTab}>`). It adds a "Collapse panels" / "Expand panels" button and sets `data-screen-collapse="open|closed"`. The choice is saved per screen in localStorage (`woodtek-screen-collapse:<screen>`).
+- `src/app/globals.css` (screen-only `@media screen` rule) hides the screen root's children except the first block (title bar). Elements with `fixed` or `inset-0` (dialogs, overlays) are never hidden.
+- Dashboard's bottom grid also has its own per-section `CollapsibleSection` (`dashboard-floor`).
+- Not verified in a browser: the sandbox cannot download Chromium. Check visually on the old PC before relying on it.
