@@ -1934,6 +1934,8 @@ check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes
 
 check(fs.readFileSync("src/components/OrderResetPanel.tsx", "utf8").includes("await onOrdersChanged?.();"), "reset orders: after a reset the page reloads the order list (deleted orders disappear from Orders & Routing)");
 check(fs.readFileSync("src/app/page.tsx", "utf8").includes("<SettingsView currentUser={currentUser} onOrdersChanged={refreshOrderWorkspace} />"), "reset orders: page passes its order-list refresh to Settings");
+const headerUiText = fs.readFileSync("src/components/Header.tsx", "utf8");
+check(headerUiText.includes("flex min-w-0 flex-wrap items-center justify-end gap-2.5") && headerUiText.includes("flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg"), "header: the action buttons wrap and New Order cannot be pushed off screen (Manager and Sales)");
 const appearanceUiText = fs.readFileSync("src/components/AppearanceSettings.tsx", "utf8");
 check(appearanceUiText.includes('mode: "windows" as const') && appearanceUiText.includes('title: "Windows"'), "windows theme: Appearance settings offers a Windows option");
 check(appearanceUiText.includes("sm:grid-cols-3"), "windows theme: the three theme options fit in one row");

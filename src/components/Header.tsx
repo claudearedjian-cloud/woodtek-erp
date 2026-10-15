@@ -262,7 +262,9 @@ export default function Header({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2.5">
+      {/* Wraps onto a second line on narrow windows, so "New Order" (the last item)
+          is never pushed off the right edge. */}
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2.5">
         {/* Live clock */}
         <div className="hidden items-center gap-2 rounded-full border border-slate-700/70 bg-slate-800/50 px-3 py-1.5 text-xs font-medium text-slate-300 md:flex">
           <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.9)]" />
@@ -602,7 +604,7 @@ export default function Header({
         {canCreateOrder && (
           <button
             onClick={onNewOrder}
-            className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 px-3.5 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-gradient-to-b from-amber-400 to-amber-600 px-3.5 py-2 text-xs font-black text-slate-950 shadow-lg shadow-amber-950/40 ring-1 ring-inset ring-amber-300/40 transition hover:from-amber-300 hover:to-amber-500 active:scale-[0.97]"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" />
             <span className="hidden sm:inline">{tt(lang, "New Order")}</span>
