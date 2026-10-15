@@ -59,6 +59,7 @@ import {
 
 interface SettingsViewProps {
   currentUser: any;
+  onOrdersChanged?: () => void | Promise<void>;
 }
 
 const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-purple-600", "bg-slate-600", "bg-indigo-600", "bg-teal-600"];
@@ -69,7 +70,7 @@ const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-
  */
 type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset" | "import-clients";
 
-export default function SettingsView({ currentUser }: SettingsViewProps) {
+export default function SettingsView({ currentUser, onOrdersChanged }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "system">("users");
   const [systemSection, setSystemSection] = useState<SystemSectionId>("appearance");
   const [entities, setEntities] = useState<any[]>([]);
@@ -1521,7 +1522,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
       )}
 
       {/* Reset all orders (Manager only) — System Settings → Reset all orders */}
-      {activeTab === "system" && activeSystemSection === "orders-reset" && isManager && <OrderResetPanel />}
+      {activeTab === "system" && activeSystemSection === "orders-reset" && isManager && <OrderResetPanel onOrdersChanged={onOrdersChanged} />}
 
       {/* Import clients from Excel (Manager only) — System Settings → Import clients (Excel) */}
       {activeTab === "system" && activeSystemSection === "import-clients" && isManager && <ClientImportPanel />}

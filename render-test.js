@@ -1930,7 +1930,20 @@ check(!resetRouteText.includes("stockQuantity") && !resetRouteText.includes("inv
 const resetPanelText = fs.readFileSync("src/components/OrderResetPanel.tsx", "utf8");
 check(resetPanelText.includes("useState(false)") && resetPanelText.includes("useState(true)") && resetPanelText.includes("typed.trim() === confirmText"), "reset orders panel: keep invoices by default, delete inventory records by default, typed phrase gates the button");
 const resetSettingsText = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
-check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes("<OrderResetPanel />") && resetSettingsText.includes('activeSystemSection === "orders-reset" && isManager'), "reset orders: Settings shows the panel only to Managers");
+check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes("<OrderResetPanel onOrdersChanged={onOrdersChanged} />") && resetSettingsText.includes('activeSystemSection === "orders-reset" && isManager'), "reset orders: Settings shows the panel only to Managers");
+
+check(fs.readFileSync("src/components/OrderResetPanel.tsx", "utf8").includes("await onOrdersChanged?.();"), "reset orders: after a reset the page reloads the order list (deleted orders disappear from Orders & Routing)");
+check(fs.readFileSync("src/app/page.tsx", "utf8").includes("<SettingsView currentUser={currentUser} onOrdersChanged={refreshOrderWorkspace} />"), "reset orders: page passes its order-list refresh to Settings");
+const appearanceUiText = fs.readFileSync("src/components/AppearanceSettings.tsx", "utf8");
+check(appearanceUiText.includes('mode: "windows" as const') && appearanceUiText.includes('title: "Windows"'), "windows theme: Appearance settings offers a Windows option");
+check(appearanceUiText.includes("sm:grid-cols-3"), "windows theme: the three theme options fit in one row");
+const cssText = fs.readFileSync("src/app/globals.css", "utf8");
+const windowsBlockAt = cssText.indexOf("/* ---- Windows light");
+const lightGlassAt = cssText.indexOf(':root[data-theme="light"], :root[data-theme="windows"] .glass');
+check(windowsBlockAt > lightGlassAt && lightGlassAt > 0, "windows theme: Windows overrides come after the shared light rules, so they win");
+const screenCollapseText = fs.readFileSync("src/components/ScreenCollapse.tsx", "utf8");
+check(screenCollapseText.includes("data-part-collapsed") && screenCollapseText.includes("Hide ") && screenCollapseText.includes("Show "), "collapse per part: every screen panel gets a Hide/Show bar");
+check(cssText.includes('[data-part-collapsed="true"]'), "collapse per part: CSS hides only the folded panel");
 
 {
 // ---- client Excel import, third theme, remember me, collapsible panels (2026-10-15) ----

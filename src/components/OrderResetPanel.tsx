@@ -22,7 +22,7 @@ function money(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function OrderResetPanel() {
+export default function OrderResetPanel({ onOrdersChanged }: { onOrdersChanged?: () => void | Promise<void> }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loadError, setLoadError] = useState("");
   const [deleteInvoices, setDeleteInvoices] = useState(false);
@@ -77,6 +77,9 @@ export default function OrderResetPanel() {
           "Stock quantities were not changed.",
       });
       await load();
+      // The Orders & Routing screens keep the order list in the page's state.
+      // Reload it now, or the deleted orders stay on screen until a page reload.
+      await onOrdersChanged?.();
     } catch {
       setMessage({ kind: "error", text: "Could not reach the server. Nothing was confirmed as changed; check the order list before trying again." });
     } finally {

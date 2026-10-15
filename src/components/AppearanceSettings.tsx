@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ImagePlus,
   Loader2,
+  Monitor,
   Moon,
   Palette,
   RotateCcw,
@@ -210,7 +211,7 @@ export default function AppearanceSettings() {
           Applies to every screen on every PC in the factory. Printed documents keep their own
           house style either way.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2 mt-4">
+        <div className="grid gap-3 sm:grid-cols-3 mt-4">
           {(
             [
               {
@@ -228,6 +229,14 @@ export default function AppearanceSettings() {
                 blurb: "Bright surfaces — better in a sunlit office.",
                 swatch: "bg-slate-100 border-slate-300",
                 ink: "bg-slate-400",
+              },
+              {
+                mode: "windows" as const,
+                icon: Monitor,
+                title: "Windows",
+                blurb: "Windows 10/11 standard light: grey page, white cards, Windows blue.",
+                swatch: "bg-[#f3f3f3] border-[#c8c8c8]",
+                ink: "bg-[#0078d4]",
               },
             ] as const
           ).map((opt) => {
