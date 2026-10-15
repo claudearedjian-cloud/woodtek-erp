@@ -4808,6 +4808,75 @@ check(
     + (requiresOffenders.length ? " - " + requiresOffenders.join(" | ") : ""),
 );
 
+// cmd.exe-safety gates (2026-10-15) -------------------------------------------
+// check-server.bat worked on the developer PC but died on the factory server
+// (Server 2012 R2): "... was unexpected at this time", no output at all, not
+// even from cmd /c. Two constructs made it the only shipped helper that could
+// do that - it jumped to an internal label (call :probeall) and it printed
+// round brackets inside if-blocks (an echo line naming NODE_SKIP_PLATFORM_
+// CHECK=1 in brackets). cmd.exe finds labels by counting bytes, and it reads a bracket
+// inside a block as the end of the block. Helpers shipped to the server must
+// stay straight-line; these gates fail the build if one stops being that.
+// The same class of bug cannot be caught by the ASCII gate or by running the
+// file on a newer Windows, so it is enforced on the source text.
+function cmdLabelProblems(text) {
+  const problems = [];
+  text.split(/\r?\n/).forEach(function (line, index) {
+    // goto :eof is part of the language, not a jump target - allow it.
+    if (/^\s*(goto|call)\s+:(?!eof\b)[A-Za-z_]/i.test(line)) problems.push("line " + (index + 1) + ": " + line.trim());
+  });
+  return problems;
+}
+function cmdBlockProblems(text) {
+  const problems = [];
+  const lines = text.split(/\r?\n/);
+  let depth = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const bare = raw.replace(/\^./g, ""); // ^( and ^) are escaped characters, not syntax
+    if (depth === 0) {
+      if ((/^\s*(if|for)\b/i.test(raw) || /^\s*\(\s*$/.test(raw)) && bare.trim().endsWith("(")) depth = 1;
+      continue;
+    }
+    if (/^\s*\)/.test(bare)) {                        // ")", ") > file", ") else ("
+      if (!/^\s*\)\s*else\b/i.test(bare)) depth--;
+      continue;
+    }
+    if (/^\s*\(\s*$/.test(bare)) { depth++; continue; }             // bare group opener
+    if (/^\s*(if|for)\b/i.test(bare) && bare.trim().endsWith("(")) { depth++; continue; }
+    if (/[()]/.test(bare)) problems.push("line " + (i + 1) + " (inside a block): " + raw.trim());
+  }
+  if (depth !== 0) problems.push("unbalanced block parentheses at end of file");
+  return problems;
+}
+check(
+  cmdLabelProblems("goto :FoundLatest\n").length === 1
+    && cmdLabelProblems("call :probeall\n").length === 1
+    && cmdLabelProblems("goto :eof\n").length === 0
+    && cmdLabelProblems("rem call :probeall is explained here\n").length === 0,
+  "cmd gate self-test: internal jump labels are caught; goto :eof and comments are not",
+);
+check(
+  cmdBlockProblems("if not defined X (\n  echo a (b) here\n)\n").length === 1
+    && cmdBlockProblems("if not defined X (\n  echo a ^(b^) here\n)\n").length === 0
+    && cmdBlockProblems('if "%A%"=="1" (\n  echo one\n) else (\n  echo two\n)\n').length === 0
+    && cmdBlockProblems("if not exist .gitignore (\n  (\n    echo node_modules/\n  ) > .gitignore\n)\n").length === 0,
+  "cmd gate self-test: a bracket printed inside a block is caught; escaped brackets, if/else and redirect groups are not",
+);
+
+const cmdGateOffenders = [];
+for (const file of shippedScriptFiles) {
+  if (!/\.(bat|cmd)$/i.test(file)) continue;
+  const text = fs.readFileSync(file, "utf8");
+  for (const problem of cmdLabelProblems(text)) cmdGateOffenders.push(file + " jump label " + problem);
+  for (const problem of cmdBlockProblems(text)) cmdGateOffenders.push(file + " " + problem);
+}
+check(
+  cmdGateOffenders.length === 0,
+  "cmd.exe safety: no shipped .bat/.cmd jumps to an internal label or prints an unescaped bracket inside an if-block (that is how check-server.bat died silently on the 2012 R2 server on 2026-10-15)"
+    + (cmdGateOffenders.length ? " - " + cmdGateOffenders.join(" | ") : ""),
+);
+
 const unblockSource = fs.readFileSync("unblock-update.bat", "utf8");
 check(
   unblockSource.includes("backups\\local-edits-%STAMP%") && unblockSource.includes("%SAVEDIR%\\local-edits.patch")
@@ -4956,11 +5025,16 @@ check(
   "check-server: read-only check of database version, the four factory row counts and /api/health, loading pg from the standalone bundle, never printing the password",
 );
 check(
-  checkServerBat.includes('if exist "%~dp0runtime\\node\\node.exe" call :trynode')
+  checkServerBat.includes('if exist "%~dp0runtime\\node\\node.exe" "%~dp0runtime\\node\\node.exe" --version')
     && checkServerBat.indexOf('runtime\\node\\node.exe') < checkServerBat.indexOf("%ProgramFiles%\\nodejs\\node.exe")
-    && checkServerBat.includes('"%~1" --version')
-    && checkServerBat.includes('set "NODE_SKIP_PLATFORM_CHECK=1"'),
+    && checkServerBat.includes("--version >nul 2>nul")
+    && checkServerBat.includes('set "NODE_SKIP_PLATFORM_CHECK=1"')
+    && checkServerBat.includes('if "%WT_RC%"=="216"'),
   "check-server: the launcher probes runtime\\node first, tests each candidate with --version, and keeps the platform-check skip as the last resort",
+);
+check(
+  checkServerBat.includes("straight-line") && !/\b(goto|call)\s+:/i.test(checkServerBat.replace(/^\s*rem.*$/gm, "")),
+  "check-server: the launcher is straight-line (no jump labels at all) - cmd.exe on the 2012 R2 server refused to parse the 2026-10-14 version, which had call :probeall",
 );
 check(
   copyBackupsPs1.includes('"db-*.dump"') && copyBackupsPs1.includes('"data-*.zip"')
@@ -5000,9 +5074,10 @@ check(
   "runbook: the dev-PC-to-FS200 update lane is written down (build pack, copy to the server, apply, verify)",
 );
 check(
-  runbookSource.includes("PUT THE NEW APPLY TOOL IN PLACE FIRST") && runbookSource.includes("apply-update.ps1")
-    && runbookSource.includes('click "Replace the files in the') && runbookSource.includes("never needed again"),
-  "runbook: the apply-tool bootstrap (copy the new apply-update.ps1/.bat out of the pack before applying) is explained with exact paths",
+  runbookSource.includes("ONLY IF ITS APPLY TOOL PREDATES 2026-10-14") && runbookSource.includes("apply-update.ps1")
+    && runbookSource.includes('click "Replace the files in the') && runbookSource.includes("never needed again")
+    && runbookSource.includes("SKIP THIS") && runbookSource.includes("FS200"),
+  "runbook: the apply-tool bootstrap (copy the new apply-update.ps1/.bat out of the pack before applying) is explained with exact paths - and marked done for FS200 (2026-10-15)",
 );
 check(
   runbookSource.includes("unblock-update.bat") && runbookSource.includes("The ampersand (&) character is not allowed")

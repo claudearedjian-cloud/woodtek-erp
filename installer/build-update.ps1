@@ -240,7 +240,26 @@ try {
         }
     }
 
-    # 3e. Manifest. apply-update.ps1 reads this to report what it is installing
+    # 3e. Windows line endings for batch files (2026-10-15). cmd.exe locates
+    #     jump labels by counting bytes, so a .bat that arrives with Unix
+    #     endings can abort with "... was unexpected at this time" before it
+    #     prints a single line - exactly what check-server.bat did on the
+    #     factory server while working perfectly on this PC. Force CRLF on
+    #     every .bat/.cmd in the pack so the endings can never depend on how
+    #     this PC happened to check the file out. (.gitattributes pins the
+    #     repository side; this pins the pack side.)
+    $crlfFixed = 0
+    foreach ($bat in (Get-ChildItem -Path $stageDir -Recurse -File | Where-Object { $_.Extension -match '^\.(bat|cmd)$' })) {
+        $batText = [System.IO.File]::ReadAllText($bat.FullName)
+        $batFixed = ($batText -replace "`r`n", "`n") -replace "`n", "`r`n"
+        if ($batFixed -ne $batText) {
+            [System.IO.File]::WriteAllText($bat.FullName, $batFixed, (New-Object System.Text.UTF8Encoding($false)))
+            $crlfFixed++
+        }
+    }
+    if ($crlfFixed -gt 0) { Write-Info "Normalised Windows line endings in $crlfFixed batch file(s)." }
+
+    # 3f. Manifest. apply-update.ps1 reads this to report what it is installing
     #     and to refuse a pack that is older than what is already installed.
     $fileCount = (Get-ChildItem -Path $stageDir -Recurse -File).Count
     $manifest = [ordered]@{

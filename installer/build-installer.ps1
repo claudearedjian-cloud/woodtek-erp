@@ -182,6 +182,21 @@ try {
         Write-Host "  -> Bundled offline PostgreSQL installer (prereqs\postgresql-setup.exe)" -ForegroundColor Gray
     }
 
+    # Windows line endings for batch files (2026-10-15) - full note in
+    # installer\build-update.ps1 section 3e: cmd.exe counts bytes to find jump
+    # labels, so a .bat with Unix endings can abort on the factory server
+    # before printing anything. The setup payload must carry CRLF too.
+    $crlfFixed = 0
+    foreach ($bat in (Get-ChildItem -Path $stageDir -Recurse -File | Where-Object { $_.Extension -match '^\.(bat|cmd)$' })) {
+        $batText = [System.IO.File]::ReadAllText($bat.FullName)
+        $batFixed = ($batText -replace "`r`n", "`n") -replace "`n", "`r`n"
+        if ($batFixed -ne $batText) {
+            [System.IO.File]::WriteAllText($bat.FullName, $batFixed, (New-Object System.Text.UTF8Encoding($false)))
+            $crlfFixed++
+        }
+    }
+    if ($crlfFixed -gt 0) { Write-Host "  -> Normalised Windows line endings in $crlfFixed batch file(s)" -ForegroundColor Gray }
+
     # ------------------------------------------------------------------------
     # 3. Compress staged payload into a ZIP archive
     # ------------------------------------------------------------------------

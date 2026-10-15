@@ -28,6 +28,15 @@ TWO COMPUTERS (since 2026-10-14)
   FS200 -> double-click its apply file -> check the result there.
 
 SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
+  THE GOAL, in the owner's words (2026-10-15): ONE double-click on the old PC
+  to build what I changed, ONE double-click on FS200 to apply it - no renaming
+  folders, no replacing files by hand, ever. The packs carry the APP ONLY
+  (code and structure). The inserted data - the database itself - never
+  travels in a pack and is never overwritten by one: .env, data\, backups\,
+  logs\ and runtime\ are protected by name, and the database is only checked
+  for new tables (see "DATABASE BACKUPS" for moving data, which is a different
+  job). If an update ever asks for hand-work again, that is a bug - report it
+  instead of doing the hand-work twice.
   Small updates: just edit on the old PC, then send a pack. The factory keeps
   working on FS200 the whole time except a 1-3 minute restart while the pack
   is applied - do that at lunch or after hours.
@@ -44,17 +53,18 @@ SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
      press Enter (a login prompt may appear - the FS200 administrator account),
      then paste the .zip and the .sha256 into that folder. A USB stick works
      too if the VM can see it.
-  3. ON FS200 (the factory server) - PUT THE NEW APPLY TOOL IN PLACE FIRST
-     The apply tool already on the server (built before 2026-10-14) nests
-     folders and cannot finish an update - that is exactly what stopped the
-     2026-10-14 attempt. The new pack carries the fixed tool; copy it in
-     BEFORE applying (only this once):
+  3. ON FS200 (the factory server) - ONLY IF ITS APPLY TOOL PREDATES 2026-10-14
+     FS200's apply tool was replaced on 2026-10-14 and is current - SKIP THIS
+     STEP for FS200 and go to step 4. It is kept here for any other PC whose
+     installed apply tool is older (that tool nested folders and could not
+     finish an update - it is what stopped the 2026-10-14 attempt). The pack
+     carries the fixed tool; copy it in BEFORE applying (once):
        a. open the copied .zip (double-click it - Windows shows what is inside)
        b. open the  installer  folder inside it
        c. copy the two files  apply-update.ps1  and  apply-update.bat  into
           C:\WoodTek-ERP\installer\   (click "Replace the files in the
           destination" when Windows asks)
-     After this pack is applied once, the tool replaces itself with every pack
+     After one pack is applied, the tool replaces itself with every later pack
      and this step is never needed again.
   4. ON FS200 - APPLY THE PACK
        double-click  C:\WoodTek-ERP\installer\apply-update.bat
@@ -119,6 +129,19 @@ THE UPDATE RITUAL (every modification, no exceptions)
     it shows what is edited, saves a copy to
     backups\local-edits-<date>\local-edits.patch, then pulls). Run the script
     again; if it still fails, send a photo of the window to the agent.
+  IF A HELPER WINDOW OPENS AND CLOSES INSTANTLY (no text, not even an error)
+    A double-clicked helper that vanishes before printing one line was refused
+    by cmd.exe itself. check-server.bat did exactly this on FS200 (2026-10-15):
+    it was the only helper that jumped to an internal label and printed round
+    brackets inside if-blocks, and the cmd.exe of Server 2012 R2 refuses both
+    (it says "... was unexpected at this time" only in a console window that
+    stays open). The app is NOT affected. Fixed since: check-server.bat is
+    straight-line now, the build REFUSES to pack a helper with either
+    construct (render-test.js), and every pack carries Windows line endings
+    for .bat files (.gitattributes + both builders). Do NOT start renaming or
+    replacing files by hand - ask the agent, and if a helper is needed right
+    away, the same report is reachable by running the .js file directly with
+    the app's own runtime\node\node.exe.
   IF THE UPDATE STOPS WITH GARBAGE LINES OR A FALSE "git pull failed"
     (a line like 'h' or 'vel' is not recognized, then "git pull failed" while
     the lines above it clearly show the pull fetched and fast-forwarded): that
