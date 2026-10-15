@@ -755,7 +755,7 @@ export default function WoodTekERP() {
           {activeTab === "designer" && (
             <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />
           )}
-          {activeTab === "settings" && <SettingsView currentUser={currentUser} />}
+          {activeTab === "settings" && <SettingsView currentUser={currentUser} onOrdersChanged={refreshOrderWorkspace} />}
             </>
             </ScreenCollapse>
           )}

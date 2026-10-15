@@ -214,6 +214,24 @@
     }
   }
 
+  /* Ambient depth: the same amber/blue glow, on paper instead of near-black. */
+  :root[data-theme="light"], :root[data-theme="windows"] .app-bg {
+    background-color: #f1f5f9;
+    background-image:
+      radial-gradient(1100px 700px at 12% -8%, rgba(245, 158, 11, 0.1) 0%, transparent 55%),
+      radial-gradient(900px 650px at 105% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+      radial-gradient(1000px 800px at 50% 120%, rgba(245, 158, 11, 0.07) 0%, transparent 55%);
+  }
+  /* Frosted panel → frosted white. */
+  :root[data-theme="light"], :root[data-theme="windows"] .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.94));
+    border: 1px solid rgba(148, 163, 184, 0.25);
+  }
+  /* Raised card surface → white with a hairline. */
+  :root[data-theme="light"], :root[data-theme="windows"] .card-surface {
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+  }
   /* ---- Windows light: the Windows 10/11 standard light look ----------
      Shares every surface rule above (it is in the same selector list). Only
      the values differ: a flat grey page (#f3f3f3), white cards, the Windows
@@ -255,24 +273,6 @@
     border: 1px solid #e5e5e5;
   }
 
-  /* Ambient depth: the same amber/blue glow, on paper instead of near-black. */
-  :root[data-theme="light"], :root[data-theme="windows"] .app-bg {
-    background-color: #f1f5f9;
-    background-image:
-      radial-gradient(1100px 700px at 12% -8%, rgba(245, 158, 11, 0.1) 0%, transparent 55%),
-      radial-gradient(900px 650px at 105% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-      radial-gradient(1000px 800px at 50% 120%, rgba(245, 158, 11, 0.07) 0%, transparent 55%);
-  }
-  /* Frosted panel → frosted white. */
-  :root[data-theme="light"], :root[data-theme="windows"] .glass {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(241, 245, 249, 0.94));
-    border: 1px solid rgba(148, 163, 184, 0.25);
-  }
-  /* Raised card surface → white with a hairline. */
-  :root[data-theme="light"], :root[data-theme="windows"] .card-surface {
-    background: linear-gradient(180deg, #ffffff, #f8fafc);
-    border: 1px solid rgba(148, 163, 184, 0.22);
-  }
   /* Sign-in / modal backdrop → light scrim with the brand glow kept. */
   :root[data-theme="light"], :root[data-theme="windows"] .modal-backdrop {
     background:
@@ -311,12 +311,12 @@
   color: #0f172a;
 }
 
-/* Collapse panels (every screen): ScreenCollapse wraps the screen in
-   [data-screen-collapse]; the screen's root <div> keeps its first block (the
-   title/top bar) and folds away the rest. Overlays and dialogs are fixed-
-   position and are excluded, so an open dialog is never hidden. Screen only. */
+/* Collapse per panel (every screen): ScreenCollapse puts a "Hide / Show" bar
+   above each panel and marks the panel data-part-collapsed="true" when folded.
+   Only that panel is hidden; its bar stays so it can be opened again. Screen
+   only, so printing is never affected. */
 @media screen {
-  [data-screen-collapse="closed"] > div > :not(:first-child):not(.fixed):not(.inset-0) {
+  [data-part-collapsed="true"] {
     display: none !important;
   }
 }
