@@ -1,0 +1,16 @@
+# Windows batch files MUST keep Windows line endings (added 2026-10-15).
+#
+# cmd.exe finds jump labels (goto/call targets) by counting bytes, so a .bat
+# checked out with Unix endings can abort with "... was unexpected at this
+# time" before it prints a single line. That is exactly how check-server.bat
+# died on the factory server (Server 2012 R2) on 2026-10-15 while working
+# perfectly on the developer PC - the file had travelled with LF endings.
+#
+# With these attributes the repository stores the files with LF and every
+# checkout writes CRLF, on every machine, whatever core.autocrlf says.
+# The pack builders also normalise staged .bat/.cmd to CRLF (see
+# installer/build-update.ps1 section 3e and installer/build-installer.ps1),
+# and render-test.js refuses to ship a batch file that jumps to an internal
+# label or prints a bracket inside an if-block.
+*.bat text eol=crlf
+*.cmd text eol=crlf
