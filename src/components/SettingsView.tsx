@@ -36,6 +36,8 @@ import { canAccessModule, MODULE_LABELS, listModulesForRole, type ModuleId } fro
 import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes } from "@/lib/idle";
 import AppearanceSettings from "@/components/AppearanceSettings";
 import OrderResetPanel from "@/components/OrderResetPanel";
+import ClientImportPanel from "@/components/ClientImportPanel";
+import { FileSpreadsheet } from "lucide-react";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 import { Timer } from "lucide-react";
 import { ListChecks } from "lucide-react";
@@ -65,7 +67,7 @@ const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-
  * Sections inside the "System Settings" tab. Appearance and the auto-lock
  * timer are open to every signed-in role; the rest are Manager tools.
  */
-type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset";
+type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset" | "import-clients";
 
 export default function SettingsView({ currentUser }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "system">("users");
@@ -1013,6 +1015,7 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
           { id: "audit", label: "Audit log", icon: History, managerOnly: true },
           { id: "modules", label: "Optional modules", icon: Blocks, managerOnly: true },
           { id: "orders-reset", label: "Reset all orders", icon: Trash2, managerOnly: true },
+          { id: "import-clients", label: "Import clients (Excel)", icon: FileSpreadsheet, managerOnly: true },
         ] as const)
       : []),
     { id: "device", label: "Auto-lock & device", icon: Timer, managerOnly: false },
@@ -1519,6 +1522,9 @@ export default function SettingsView({ currentUser }: SettingsViewProps) {
 
       {/* Reset all orders (Manager only) — System Settings → Reset all orders */}
       {activeTab === "system" && activeSystemSection === "orders-reset" && isManager && <OrderResetPanel />}
+
+      {/* Import clients from Excel (Manager only) — System Settings → Import clients (Excel) */}
+      {activeTab === "system" && activeSystemSection === "import-clients" && isManager && <ClientImportPanel />}
 
       {/* Build stamp (Manager only) — footer of the System Settings tab */}
       {activeTab === "system" && isManager && (

@@ -1932,6 +1932,46 @@ check(resetPanelText.includes("useState(false)") && resetPanelText.includes("use
 const resetSettingsText = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
 check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes("<OrderResetPanel />") && resetSettingsText.includes('activeSystemSection === "orders-reset" && isManager'), "reset orders: Settings shows the panel only to Managers");
 
+{
+// ---- client Excel import, third theme, remember me, collapsible panels (2026-10-15) ----
+compile("src/lib/clientImport.ts", "lib/clientImport.js");
+compile("src/lib/appearance.ts", "lib/appearance.js");
+const clientImport = require("./compiled/lib/clientImport.js");
+const appearanceLib = require("./compiled/lib/appearance.js");
+const clientHeader = ["Name", "Company", "Email", "Phone", "Address", "Credit limit", "Notes"];
+const planned = clientImport.planClientImport([
+  clientHeader,
+  ["Lars Kjellgren", "Nordic Form", "lars@nordic.se", "+46 1", "Hamngatan 14", "50000", "oak"],
+  ["  ", "", "", "", "", "", ""],
+  ["Valeria Gomez", "Astra", "valeria@astra.com", "", "", "", ""],
+  ["New Person", "Acme", "", "", "", "", ""],
+], [{ name: "Valeria Gomez", company: "Astra Architects", email: "VALERIA@astra.com" }]);
+check(planned.valid && planned.createCount === 2 && planned.existsCount === 1 && planned.errorCount === 0, "client import: creates new clients, skips an existing email case-insensitively, ignores blank rows");
+check(planned.rows.find((r) => r.name === "Lars Kjellgren").creditLimit === "50000", "client import: credit limit is read as a number");
+check(clientImport.planClientImport([clientHeader, ["", "x", "", "", "", "", ""]], []).errorCount === 1, "client import: a row without a name is an error");
+check(clientImport.planClientImport([clientHeader, ["A", "", "not-an-email", "", "", "", ""]], []).valid === false, "client import: an invalid email is refused");
+check(clientImport.planClientImport([clientHeader, ["A", "", "", "", "", "-5", ""]], []).valid === false, "client import: a negative credit limit is refused");
+check(clientImport.planClientImport([clientHeader, ["A", "Co", "", "", "", "", ""], ["A", "Co", "", "", "", "", ""]], []).errorCount === 1, "client import: the same name and company twice in the file is an error on the second row");
+check(clientImport.planClientImport([["Company", "Email"], ["x", "y"]], []).headerError.includes("Name") && clientImport.planClientImport([], []).valid === false, "client import: a file without a Name column or without rows is refused");
+const sanitizedWindows = appearanceLib.sanitizeAppearance({ theme: "windows" });
+check(sanitizedWindows.theme === "windows" && appearanceLib.sanitizeAppearance({ theme: "light" }).theme === "light" && appearanceLib.sanitizeAppearance({ theme: "neon" }).theme === "dark", "theme: windows is kept, light is kept, unknown values fall back to dark");
+const globalsCss = fs.readFileSync("src/app/globals.css", "utf8");
+check(globalsCss.includes(':root[data-theme="windows"] {') && globalsCss.includes('--color-amber-500: #0078d4;'), "theme: the Windows light palette is defined (Windows blue accent)");
+const layoutSource = fs.readFileSync("src/app/layout.tsx", "utf8");
+check(layoutSource.includes('t==="windows"'), "theme: the pre-paint script restores the Windows light theme");
+const authSource = fs.readFileSync("src/app/api/auth/route.ts", "utf8");
+check(authSource.includes("body.remember === true") && authSource.includes("createSessionToken(candidate.id, remember)") && authSource.includes("sessionCookieOptions(requestIsHttps(request), remember)"), "remember me: sign-in passes the choice to the session cookie");
+const authLibSource = fs.readFileSync("src/lib/auth.ts", "utf8");
+check(authLibSource.includes("REMEMBER_MAX_AGE_SECONDS = 60 * 60 * 24 * 30") && authLibSource.includes("data?.remember === true ? REMEMBER_MAX_AGE_SECONDS"), "remember me: a remembered session lasts 30 days, others 12 hours");
+const authGateSource = fs.readFileSync("src/components/AuthGate.tsx", "utf8");
+check(authGateSource.includes('type="checkbox" checked={rememberMe}') && authGateSource.includes("remember: rememberMe"), "remember me: the login screen has an opt-in checkbox sent with the PIN");
+const collapsibleSource = fs.readFileSync("src/components/CollapsibleSection.tsx", "utf8");
+check(collapsibleSource.includes("woodtek-collapse:") && collapsibleSource.includes("aria-expanded"), "collapse: sections remember their state per device and expose aria-expanded");
+check(fs.readFileSync("src/components/DashboardView.tsx", "utf8").includes('<CollapsibleSection id="dashboard-floor"'), "collapse: the Dashboard shop-floor panel is collapsible");
+const clientImportPanelSource = fs.readFileSync("src/components/ClientImportPanel.tsx", "utf8");
+check(clientImportPanelSource.includes('"/api/customers/import"') && fs.readFileSync("src/components/SettingsView.tsx", "utf8").includes("<ClientImportPanel />"), "client import: Settings shows the import panel to Managers");
+
+}
 // ---- phase 2 feature 1: office roles do not run stations (START STATION / Log QA & Mins) ----
 const permsMod = require("./compiled/lib/permissions.js");
 const phase2PreviousCustomRoles = permsMod.getCustomRoles();

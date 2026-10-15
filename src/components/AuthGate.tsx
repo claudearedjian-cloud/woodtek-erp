@@ -45,6 +45,8 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Remember me: opt-in per sign-in (off by default on shared PCs). A dedicated station keeps the session 30 days.
+  const [rememberMe, setRememberMe] = useState(false);
 
   // First-run owner setup (shown only while the roster is empty)
   const [ownerName, setOwnerName] = useState("");
@@ -78,7 +80,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
       const response = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: targetUserId || selectedId, pin: targetPin }),
+        body: JSON.stringify({ userId: targetUserId || selectedId, pin: targetPin, remember: rememberMe }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Authentication failed.");
@@ -89,7 +91,7 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
     } finally {
       setSubmitting(false);
     }
-  }, [selectedId, onAuthenticated]);
+  }, [selectedId, onAuthenticated, rememberMe]);
 
   // Handle physical keyboard input
   useEffect(() => {
@@ -371,6 +373,10 @@ export default function AuthGate({ users, initialUser, required, onAuthenticated
               <button onClick={() => addDigit("0")} className="h-11 rounded-xl border border-slate-700 bg-slate-800 text-base font-black text-white transition hover:border-amber-500 hover:bg-slate-700 active:scale-95">0</button>
               <button onClick={() => setPin(value => value.slice(0, -1))} className="flex h-11 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 hover:text-white"><Delete className="h-4 w-4" /></button>
             </div>
+            <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 text-[11px] font-bold text-slate-300">
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" />
+              <span>{tt(lang, "Remember me on this device (30 days)")}</span>
+            </label>
             {error && <div className="mt-3 rounded-lg bg-rose-500/10 p-2 text-center text-[11px] font-bold text-rose-300">{error}</div>}
             <button
               onClick={() => authenticateWithPin(pin, selectedId)}

@@ -21,6 +21,7 @@ import {
   sanitizeAppearance,
   setCurrentAppearance,
   type AppearanceConfig,
+  THEME_MODES,
   type ThemeMode,
 } from "@/lib/appearance";
 
@@ -28,7 +29,7 @@ const THEME_KEY = "woodtek-theme";
 
 export function applyTheme(theme: ThemeMode): void {
   if (typeof document === "undefined") return;
-  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = THEME_MODES.includes(theme) ? theme : "dark";
   try {
     localStorage.setItem(THEME_KEY, theme);
   } catch {

@@ -14,7 +14,9 @@
 //      identity, because that is what the client sees.
 // ============================================================================
 
-export type ThemeMode = "dark" | "light";
+// "windows" = a Windows 10/11-style light theme (grey page, white cards, Windows blue, Segoe UI).
+export type ThemeMode = "dark" | "light" | "windows";
+export const THEME_MODES: readonly ThemeMode[] = ["dark", "light", "windows"];
 
 export interface AppearanceConfig {
   version: 1;
@@ -73,7 +75,7 @@ export function sanitizeAppearance(input: unknown): AppearanceConfig {
       : "";
   return {
     version: 1,
-    theme: raw.theme === "light" ? "light" : "dark",
+    theme: THEME_MODES.includes(raw.theme as ThemeMode) ? (raw.theme as ThemeMode) : "dark",
     factoryName: text(raw.factoryName, FACTORY_NAME_MAX).trim(),
     tagline: text(raw.tagline, TAGLINE_MAX).trim(),
     logoDataUrl: logo,
