@@ -224,6 +224,21 @@ export function canAssignMachines(role: string | null | undefined): boolean {
   return can(role, "operations:assign-machine") || baseRoleOf(role) === "Floor Supervisor";
 }
 
+/**
+ * Office roles never run a station step themselves: no START STATION and no
+ * "Log QA & Mins" on the order workflow. Floor roles (Machine Operator, Floor
+ * Supervisor, QA & Dispatch, Technician) keep both. Custom roles follow the
+ * built-in role they inherit from. UI hiding only - the server rules for
+ * PATCH /api/operations/:id are unchanged.
+ */
+export const OFFICE_ROLES: readonly string[] = ["Manager", "Sales Coordinator", "Warehouse Supervisor"];
+
+export function canRunStationSteps(role: string | null | undefined): boolean {
+  const base = baseRoleOf(role);
+  if (!base || OFFICE_ROLES.includes(base)) return false;
+  return can(base, "operations:update-status");
+}
+
 // ------------------------------------------------------- module overrides
 // Managers can re-pick the screens ANY role sees (Settings > Manage roles).
 // Overrides are keyed by role name (built-in or custom) and stored in
