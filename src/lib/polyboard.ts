@@ -34,6 +34,16 @@ export interface PolyboardHardware {
 
 export type PolyboardCixMatchMethod = "reference" | "name" | "dimensions";
 
+/** Why a part was rejected at the assembly check. */
+export type PolyboardRejectReason = "defect" | "wrong_dimensions" | "other";
+
+export interface PolyboardRejection {
+  reason: PolyboardRejectReason;
+  note?: string;
+  rejectedAt: string;
+  rejectedBy?: string;
+}
+
 export interface PolyboardPart {
   id: string; // unique part identifier / cix reference / barcode
   cabinetName: string;
@@ -63,6 +73,8 @@ export interface PolyboardPart {
   isScanned?: boolean;
   scannedAt?: string;
   scannedBy?: string;
+  /** Set when the checker rejects the part (defect or wrong size). A rejected part is never "available". */
+  rejection?: PolyboardRejection;
   cixData?: ParsedCixPart; // Face 0, retained for backward compatibility.
   cixDataFace6?: ParsedCixPart;
   grain?: number;

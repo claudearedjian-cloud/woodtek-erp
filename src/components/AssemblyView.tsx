@@ -21,13 +21,15 @@ import {
   Info,
   Printer,
   Wrench,
+  XCircle,
 } from "lucide-react";
-import { WOODTEK_CSV_COLUMNS, type PolyboardCsvLayout, type PolyboardProject } from "@/lib/polyboard";
+import { WOODTEK_CSV_COLUMNS, type PolyboardCsvLayout, type PolyboardProject, type PolyboardRejectReason } from "@/lib/polyboard";
 import type { AssemblyProjectDetails } from "@/lib/assemblyProject";
 import { can } from "@/lib/permissions";
 import AssemblyProjectDialog from "./AssemblyProjectDialog";
 import { SAMPLE_PB_PROJ, SAMPLE_CUTLIST_CSV, SAMPLE_CIX_FILES } from "@/lib/samplePolyboardData";
 import { generatePartLabelsHtml } from "@/lib/partLabels";
+import { REJECT_REASONS, buildRejectedPartsHtml, collectRejectedParts, rejectReasonLabel } from "@/lib/assemblyRejects";
 
 // Dynamically import 3D Viewer to prevent SSR issues with WebGL/Three.js
 const Cabinet3DViewer = dynamic(() => import("./Cabinet3DViewer"), {
@@ -89,6 +91,9 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
   const [importing, setImporting] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState<"parts" | "hardware">("parts");
+  // Rejected parts: the reject form open on one part, and the project-wide list.
+  const [rejectDraft, setRejectDraft] = useState<{ partId: string; reason: PolyboardRejectReason; note: string } | null>(null);
+  const [showRejectedList, setShowRejectedList] = useState(false);
 
   // Orders list for routing sync
   const [erpOrders, setErpOrders] = useState<Array<{ id: number; orderNumber: string; title?: string }>>([]);
@@ -262,6 +267,62 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
       console.error("Failed to toggle part", err);
     } finally {
       setScanning(false);
+    }
+  };
+
+  // ---- Rejected parts (assembly check) ----
+  const rejectedRows = collectRejectedParts(activeProject);
+
+  // One POST for reject / clear-reject. Returns true when the server accepted it.
+  const postRejectAction = async (cabinetId: string, body: Record<string, unknown>): Promise<boolean> => {
+    if (!activeProject || scanning) return false;
+    setScanning(true);
+    try {
+      const res = await fetch("/api/assembly/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: activeProject.id, cabinetId, ...body }),
+      });
+      const data = await res.json();
+      if (res.ok && data.project) updateProject(data.project);
+      setScanFeedback(
+        res.ok
+          ? { type: "success", message: data.message || "Saved." }
+          : { type: "error", message: data.error || "The rejected-part update failed." },
+      );
+      return res.ok;
+    } catch (err: any) {
+      setScanFeedback({ type: "error", message: err?.message || "Network error while updating rejected parts." });
+      return false;
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleRejectSubmit = async () => {
+    if (!rejectDraft || !selectedCabinet) return;
+    const ok = await postRejectAction(selectedCabinet.id, {
+      action: "reject",
+      partId: rejectDraft.partId,
+      reason: rejectDraft.reason,
+      note: rejectDraft.note,
+    });
+    if (ok) setRejectDraft(null);
+  };
+
+  const handleClearReject = (cabinetId: string, partId: string) =>
+    postRejectAction(cabinetId, { action: "clear-reject", partId });
+
+  // Printable fixing / remaking list for every rejected part in the project.
+  const handlePrintRejected = () => {
+    if (!activeProject) return;
+    const html = buildRejectedPartsHtml(rejectedRows, new Date(), activeProject.name);
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } else {
+      alert("Please enable pop-ups to print the rejected parts list.");
     }
   };
 
@@ -552,6 +613,17 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                 Delete Project
               </button>
             </>
+          )}
+
+          {activeProject && (
+            <button
+              onClick={() => setShowRejectedList(true)}
+              className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold px-3.5 py-2 rounded-xl text-sm border border-rose-500/30 transition"
+              title="Every rejected part in this project: fix or remake them, then print the list"
+            >
+              <XCircle className="w-4 h-4" />
+              Rejected parts ({rejectedRows.length})
+            </button>
           )}
 
           {selectedCabinet && (
@@ -864,6 +936,88 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
             )}
           </div>
 
+          {/* Rejected parts list: collected for the whole project, printable for fixing / remaking */}
+          {showRejectedList && activeProject && (
+            <div
+              className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+              onClick={() => setShowRejectedList(false)}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-4xl max-h-[85vh] flex flex-col bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl"
+              >
+                <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-800">
+                  <div>
+                    <h3 className="text-sm font-black text-white flex items-center gap-2">
+                      <XCircle className="w-4 h-4 text-rose-400" /> Rejected parts · {activeProject.name}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {rejectedRows.length} part(s) to fix or remake. Clear a row once it is fixed; it can then be scanned again.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={rejectedRows.length === 0}
+                      onClick={handlePrintRejected}
+                      className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-1.5 rounded-xl text-xs border border-slate-700 transition disabled:opacity-50"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-sky-400" /> Print list
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowRejectedList(false)}
+                      className="text-xs font-bold text-slate-400 hover:text-white px-2 py-1"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-auto p-4">
+                  {rejectedRows.length === 0 ? (
+                    <div className="text-sm text-slate-400 text-center py-10">No rejected parts in this project.</div>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-[10px] uppercase text-slate-500 border-b border-slate-800">
+                          <th className="py-2 pr-2">Cabinet</th>
+                          <th className="py-2 pr-2">Part</th>
+                          <th className="py-2 pr-2">Size (mm)</th>
+                          <th className="py-2 pr-2">Reason</th>
+                          <th className="py-2 pr-2">Note</th>
+                          <th className="py-2 pr-2">By</th>
+                          <th className="py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rejectedRows.map((row) => (
+                          <tr key={`${row.cabinetId}-${row.partId}`} className="border-b border-slate-800/70 text-slate-300">
+                            <td className="py-2 pr-2">{row.cabinetName}</td>
+                            <td className="py-2 pr-2 font-bold text-white">{row.partName}</td>
+                            <td className="py-2 pr-2 font-mono">{row.length} × {row.width} × {row.thickness}</td>
+                            <td className="py-2 pr-2 text-rose-300 font-bold">{row.reasonLabel}</td>
+                            <td className="py-2 pr-2">{row.note || "—"}</td>
+                            <td className="py-2 pr-2">{row.rejectedBy || "—"}</td>
+                            <td className="py-2 text-right">
+                              <button
+                                type="button"
+                                disabled={scanning}
+                                onClick={() => handleClearReject(row.cabinetId, row.partId)}
+                                className="text-[11px] font-bold text-amber-300 hover:text-amber-200 border border-amber-500/40 rounded px-2 py-1 disabled:opacity-50"
+                              >
+                                Fixed / remade
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Right Column: Parts Breakdown & Hardware Kit (4 cols on xl) */}
           <div className="xl:col-span-4 flex flex-col gap-3">
             {selectedCabinet && (
@@ -908,12 +1062,14 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                       const hasCix = !!part.cixData || !!part.cixDataFace6;
 
                       return (
+                        <React.Fragment key={part.id}>
                         <div
-                          key={part.id}
                           onClick={() => setSelectedPartId(part.id)}
                           className={`p-3 rounded-2xl border transition cursor-pointer flex items-center justify-between gap-3 ${
                             isSelected
                               ? "bg-slate-800/90 border-amber-500"
+                              : part.rejection
+                              ? "bg-rose-950/30 border-rose-700/70 hover:bg-rose-950/50"
                               : part.isScanned
                               ? "bg-emerald-950/20 border-emerald-900/60 hover:bg-slate-800/50"
                               : "bg-slate-900/60 border-slate-800 hover:bg-slate-800/50"
@@ -922,7 +1078,7 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              disabled={scanning}
+                              disabled={scanning || !!part.rejection}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleTogglePart(part.id);
@@ -958,18 +1114,97 @@ export default function AssemblyView({ currentUser }: { currentUser: { role: str
                             </div>
                           </div>
 
-                          <div className="flex flex-col items-end">
+                          <div className="flex flex-col items-end gap-1">
                             <span
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                part.isScanned
+                                part.rejection
+                                  ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                  : part.isScanned
                                   ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                                   : "bg-slate-800 text-slate-400 border border-slate-700"
                               }`}
+                              title={part.rejection ? `${rejectReasonLabel(part.rejection.reason)}${part.rejection.note ? `: ${part.rejection.note}` : ""}` : undefined}
                             >
-                              {part.isScanned ? "Available" : "Pending"}
+                              {part.rejection ? `Rejected · ${rejectReasonLabel(part.rejection.reason)}` : part.isScanned ? "Available" : "Pending"}
                             </span>
+                            {part.rejection ? (
+                              <button
+                                type="button"
+                                disabled={scanning}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleClearReject(selectedCabinet.id, part.id);
+                                }}
+                                className="text-[10px] font-bold text-amber-300 hover:text-amber-200 border border-amber-500/40 rounded px-1.5 py-0.5 disabled:opacity-50"
+                                title="The part was fixed or remade: clear the rejection so it can be scanned"
+                              >
+                                Fixed / remade
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={scanning}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRejectDraft({ partId: part.id, reason: "defect", note: "" });
+                                }}
+                                className="text-[10px] font-bold text-rose-300 hover:text-rose-200 border border-rose-500/40 rounded px-1.5 py-0.5 disabled:opacity-50"
+                                title="Reject this part: defect or wrong dimensions"
+                              >
+                                Reject
+                              </button>
+                            )}
                           </div>
                         </div>
+                        {rejectDraft?.partId === part.id && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mx-1 mb-1 p-3 rounded-2xl border border-rose-500/40 bg-rose-950/30 flex flex-col gap-2"
+                          >
+                            <div className="text-[11px] font-bold text-rose-300">Reject {part.name}</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {REJECT_REASONS.map((r) => (
+                                <button
+                                  key={r.value}
+                                  type="button"
+                                  onClick={() => setRejectDraft((d) => (d ? { ...d, reason: r.value } : d))}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                                    rejectDraft.reason === r.value
+                                      ? "bg-rose-500/20 border-rose-400 text-rose-200"
+                                      : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white"
+                                  }`}
+                                >
+                                  {r.label}
+                                </button>
+                              ))}
+                            </div>
+                            <input
+                              value={rejectDraft.note}
+                              maxLength={300}
+                              onChange={(e) => setRejectDraft((d) => (d ? { ...d, note: e.target.value } : d))}
+                              placeholder="What is wrong? e.g. chipped edge, 3 mm too short"
+                              className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-rose-400"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRejectDraft(null)}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={scanning}
+                                onClick={handleRejectSubmit}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-50"
+                              >
+                                Reject part
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </div>

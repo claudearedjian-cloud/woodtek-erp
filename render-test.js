@@ -79,6 +79,8 @@ compile("src/lib/hrCalendar.server.ts", "lib/hrCalendar.server.js");
 compile("src/lib/leaveAvailability.ts", "lib/leaveAvailability.js");
 compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
+compile("src/lib/sidebarMode.ts", "lib/sidebarMode.js");
+compile("src/lib/assemblyRejects.ts", "lib/assemblyRejects.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 compile("src/components/SupplierBillsView.tsx", "components/SupplierBillsView.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
@@ -5395,6 +5397,74 @@ async function checkAssemblyProjectApi() {
     else process.env.WOODTEK_DATA_DIR = previousDataDir;
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+// ---- Left menu: keep / auto-hide / hide (per device) ----
+{
+  const sm = require("./compiled/lib/sidebarMode.js");
+  check(sm.normalizeSidebarMode("hide") === "hide" && sm.normalizeSidebarMode("autohide") === "autohide", "sidebar mode: stored values are accepted");
+  check(sm.normalizeSidebarMode("bogus") === "keep" && sm.normalizeSidebarMode(null) === "keep", "sidebar mode: unknown or missing value falls back to keep");
+  check(sm.sidebarDesktopClasses("keep", false).includes("md:relative") && !sm.sidebarDesktopClasses("keep", false).includes("md:fixed"), "sidebar mode: keep stays in the layout on desktop");
+  check(sm.sidebarDesktopClasses("hide", false).includes("md:-translate-x-full") && sm.sidebarDesktopClasses("hide", true).includes("md:translate-x-0"), "sidebar mode: hide is off-canvas until opened");
+  check(sm.sidebarDesktopClasses("autohide", false).includes("md:fixed") && sm.sidebarDesktopClasses("autohide", true).includes("md:translate-x-0"), "sidebar mode: auto-hide slides out and back");
+  const smProps = (mode) => ({
+    activeTab: "dashboard",
+    setActiveTab: () => {},
+    currentUser: { role: "Manager" },
+    menuConfig: null,
+    isOpen: false,
+    onClose: () => {},
+    mode,
+    onModeChange: () => {},
+    onOpen: () => {},
+  });
+  const keepHtml = renderToString(React.createElement(Sidebar, smProps("keep")));
+  const hideHtml = renderToString(React.createElement(Sidebar, smProps("hide")));
+  check(keepHtml.includes("Menu behaviour") && keepHtml.includes("Keep") && keepHtml.includes("Auto-hide") && keepHtml.includes("Hide"), "sidebar mode: the Keep / Auto-hide / Hide choice shows on the menu");
+  check(keepHtml.includes('aria-pressed="true"') && keepHtml.indexOf("aria-pressed=\"true\"") < keepHtml.indexOf("Auto-hide"), "sidebar mode: the current choice is marked");
+  check(hideHtml.includes("md:-translate-x-full"), "sidebar mode: the hide setting closes the panel on desktop");
+  check(!renderToString(React.createElement(Sidebar, { ...smProps("keep"), onModeChange: undefined })).includes("Menu behaviour"), "sidebar mode: the choice is hidden when no change handler is given");
+}
+
+// ---- Rejected parts at the assembly check ----
+{
+  const rej = require("./compiled/lib/assemblyRejects.js");
+  const project = {
+    id: "p1",
+    name: "Kitchen <A>",
+    cabinets: [
+      {
+        id: "c1",
+        name: "Base 1",
+        parts: [
+          { id: "a", name: "Side", material: "Oak", length: 700, width: 500, thickness: 18, quantity: 2, barcode: "BC1", isScanned: false, rejection: { reason: "defect", note: "<script>alert(1)</script> chip", rejectedAt: "2026-10-16T08:00:00.000Z", rejectedBy: "Checker" } },
+          { id: "b", name: "Top", material: "Oak", length: 600, width: 500, thickness: 18, quantity: 1, barcode: "BC2", isScanned: true },
+        ],
+      },
+      {
+        id: "c2",
+        name: "Wall 2",
+        parts: [
+          { id: "c", name: "Shelf", material: "Oak", length: 500, width: 300, thickness: 18, quantity: 3, barcode: "BC3", isScanned: false, rejection: { reason: "wrong_dimensions", note: "", rejectedAt: "2026-10-16T09:00:00.000Z" } },
+        ],
+      },
+    ],
+  };
+  const rows = rej.collectRejectedParts(project);
+  check(rows.length === 2 && rows.every((r) => r.partId !== "b"), "rejected list: only rejected parts are collected");
+  check(rows[0].reasonLabel === "Defect" && rows[1].reasonLabel === "Wrong dimensions", "rejected list: reasons are labelled");
+  check(rej.collectRejectedParts({ name: "x", cabinets: [] }).length === 0 && rej.collectRejectedParts(null).length === 0, "rejected list: empty and missing projects give no rows");
+  const html = rej.buildRejectedPartsHtml(rows, new Date("2026-10-16T10:00:00Z"), project.name);
+  check(!html.includes("<script>alert(1)</script>") && html.includes("&lt;script&gt;"), "rejected list print: user notes are escaped");
+  check(html.includes("Kitchen &lt;A&gt;") && !html.includes("Kitchen <A>"), "rejected list print: project name is escaped");
+  check(html.includes("Fixed / remade") && html.includes("Checked by:"), "rejected list print: has the fixed / remade column and sign-off line");
+  check(rej.buildRejectedPartsHtml([], new Date(), "P").includes("No rejected parts."), "rejected list print: empty list still prints");
+  const storageSrc = fs.readFileSync("src/lib/assemblyStorage.server.ts", "utf8");
+  check(/rejected/i.test(storageSrc) && storageSrc.includes("export function rejectPart") && storageSrc.includes("export function clearPartRejection"), "assembly storage: reject and clear-reject functions exist");
+  const routeSrc = fs.readFileSync("src/app/api/assembly/scan/route.ts", "utf8");
+  check(routeSrc.includes('"reject"') && routeSrc.includes('"clear-reject"') && routeSrc.includes("status: 409"), "assembly scan API: reject, clear-reject and 409 on a rejected toggle");
+  const viewSrc = fs.readFileSync("src/components/AssemblyView.tsx", "utf8");
+  check(viewSrc.includes("Rejected parts (") && viewSrc.includes("Fixed / remade") && viewSrc.includes("buildRejectedPartsHtml"), "assembly view: rejected button, fixed / remade action and print list are wired");
 }
 
 checkAssemblyProjectApi()

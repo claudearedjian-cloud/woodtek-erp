@@ -68,6 +68,13 @@ import { screenAllowedForSubject, type OptionalModulesConfig } from "@/lib/optio
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 import { currentAppearance } from "@/lib/appearance";
+import {
+  SIDEBAR_MODES,
+  SIDEBAR_MODE_HINTS,
+  SIDEBAR_MODE_LABELS,
+  sidebarDesktopClasses,
+  type SidebarMode,
+} from "@/lib/sidebarMode";
 
 const ICONS: Record<string, any> = {
   dashboard: LayoutDashboard,
@@ -147,6 +154,11 @@ interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   lang?: Lang;
+  /** Desktop behaviour: keep, auto-hide or hide (per device). */
+  mode?: SidebarMode;
+  onModeChange?: (mode: SidebarMode) => void;
+  /** Opens the menu (auto-hide edge trigger). */
+  onOpen?: () => void;
 }
 
 export default function Sidebar({
@@ -158,6 +170,9 @@ export default function Sidebar({
   isOpen,
   onClose,
   lang = "en",
+  mode = "keep",
+  onModeChange,
+  onOpen,
 }: SidebarProps) {
   // Factory branding (Settings → Appearance). Read from the module cache the
   // AppearanceProvider fills at start-up — defaults until it loads.
@@ -269,7 +284,19 @@ export default function Sidebar({
     resolved.sections.every((s) => s.items.length === 0);
 
   return (
-    <aside className={`fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:relative md:translate-x-0 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
+    <>
+    {/* Auto-hide: a thin strip at the left edge opens the menu when the mouse reaches it. */}
+    {mode === "autohide" && !isOpen && onOpen && (
+      <div
+        aria-hidden="true"
+        onMouseEnter={onOpen}
+        className="hidden md:block fixed inset-y-0 left-0 w-2 z-40"
+      />
+    )}
+    <aside
+      onMouseLeave={() => { if (mode === "autohide" && isOpen) onClose(); }}
+      className={`fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"} ${sidebarDesktopClasses(mode, isOpen)}`}
+    >
       {/* Brand & Factory Header */}
       <div className="relative border-b border-slate-800 p-5">
         <div className="flex items-center gap-3">
@@ -286,6 +313,24 @@ export default function Sidebar({
             </p>
           </div>
         </div>
+        {onModeChange && (
+          <div className="mt-4 hidden items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/60 p-1 md:flex" role="group" aria-label="Menu behaviour">
+            {SIDEBAR_MODES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onModeChange(m)}
+                title={SIDEBAR_MODE_HINTS[m]}
+                aria-pressed={mode === m}
+                className={`flex-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+                  mode === m ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {SIDEBAR_MODE_LABELS[m]}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="pointer-events-none absolute inset-x-5 bottom-0 h-px bg-gradient-to-r from-amber-500/40 via-slate-700/40 to-transparent" />
       </div>
 
@@ -357,5 +402,6 @@ export default function Sidebar({
         </div>
       </div>
     </aside>
+    </>
   );
 }
