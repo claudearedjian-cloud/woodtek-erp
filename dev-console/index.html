@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WoodTek dev console</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #020617; color: #e2e8f0; }
+  header { padding: 18px 24px 10px; border-bottom: 1px solid #1e293b; }
+  h1 { margin: 0; font-size: 20px; font-weight: 800; color: #fff; }
+  .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { font-size: 11px; background: #0f172a; border: 1px solid #334155; border-radius: 999px; padding: 4px 10px; color: #cbd5e1; }
+  .chip b { color: #fbbf24; }
+  .tabs { display: flex; gap: 8px; padding: 14px 24px 0; }
+  .tab { background: #0f172a; color: #cbd5e1; border: 1px solid #334155; border-radius: 10px 10px 0 0; padding: 10px 18px; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .tab.active { background: #f59e0b; color: #0f172a; border-color: #f59e0b; }
+  main { padding: 18px 24px 40px; }
+  .banner { border-radius: 12px; padding: 12px 14px; font-size: 12px; margin-bottom: 16px; line-height: 1.5; }
+  .banner.old { background: #0c4a6e33; border: 1px solid #0ea5e966; color: #bae6fd; }
+  .banner.fs { background: #7c2d1233; border: 1px solid #f9731666; color: #fed7aa; }
+  .group { margin: 22px 0 10px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #64748b; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .card { background: #0f172a; border: 1px solid #1e293b; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .card h3 { margin: 0; font-size: 14px; color: #fff; }
+  .card p { margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.5; }
+  .file { font-family: Consolas, monospace; font-size: 11px; color: #7dd3fc; word-break: break-all; }
+  .warn { font-size: 12px; color: #fecaca; background: #7f1d1d33; border: 1px solid #ef444466; border-radius: 8px; padding: 8px; }
+  ol { margin: 0; padding-left: 18px; font-size: 12px; color: #cbd5e1; line-height: 1.6; }
+  .actions { display: flex; gap: 8px; margin-top: auto; flex-wrap: wrap; }
+  button.btn { border: 1px solid #334155; background: #1e293b; color: #f1f5f9; border-radius: 9px; padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  button.btn:hover { background: #334155; }
+  button.primary { background: #f59e0b; border-color: #f59e0b; color: #0f172a; }
+  button.primary:hover { background: #fbbf24; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .flow { background: #0f172a; border: 1px dashed #334155; border-radius: 14px; padding: 14px; margin-bottom: 16px; font-size: 12px; color: #cbd5e1; line-height: 1.7; }
+  .flow b { color: #fbbf24; }
+  #log { position: fixed; left: 0; right: 0; bottom: 0; background: #020617; border-top: 1px solid #334155; max-height: 34vh; display: none; flex-direction: column; }
+  #log.open { display: flex; }
+  #log .bar { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; font-size: 12px; color: #94a3b8; }
+  #log pre { margin: 0; padding: 0 16px 14px; overflow: auto; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; color: #e2e8f0; }
+  #log .ok { color: #86efac; }
+  #log .bad { color: #fca5a5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WoodTek dev console</h1>
+  <div class="sub">Standalone development buttons. Runs on the development PC only. It is not part of the ERP menu.</div>
+  <div class="status" id="status"><span class="chip">Loading status…</span></div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-tab="old-pc">Old PC (development)</button>
+  <button class="tab" data-tab="fs200">FS200 (factory server)</button>
+</div>
+
+<main>
+  <div id="view"></div>
+</main>
+
+<div id="log">
+  <div class="bar"><span id="log-title">Output</span><button class="btn" id="log-close">Close</button></div>
+  <pre id="log-body"></pre>
+</div>
+
+<script>
+(function () {
+  var commands = [];
+  var status = {};
+  var currentTab = "old-pc";
+  var busy = {};
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function showLog(title, text, ok) {
+    var log = document.getElementById("log");
+    document.getElementById("log-title").textContent = title;
+    var body = document.getElementById("log-body");
+    body.innerHTML = "";
+    var span = document.createElement("span");
+    span.className = ok === false ? "bad" : ok === true ? "ok" : "";
+    span.textContent = text;
+    body.appendChild(span);
+    log.classList.add("open");
+  }
+
+  document.getElementById("log-close").onclick = function () {
+    document.getElementById("log").classList.remove("open");
+  };
+
+  function copy(text, label) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { showLog("Copied", label, true); });
+    } else {
+      showLog("Copy", text, null);
+    }
+  }
+
+  function api(path, method) {
+    return fetch(path, {
+      method: method || "GET",
+      headers: { "Content-Type": "application/json" },
+      body: method === "POST" ? "{}" : undefined,
+      cache: "no-store",
+    }).then(function (res) {
+      return res.json().then(function (data) { return { status: res.status, data: data }; });
+    });
+  }
+
+  function run(command, button) {
+    if (busy[command.id]) return;
+    busy[command.id] = true;
+    if (button) button.disabled = true;
+    api("/api/run/" + command.id, "POST")
+      .then(function (result) {
+        var ok = result.data.ok;
+        showLog(command.title, result.data.output || "(no output)", ok);
+        if (command.id === "verify-pack" || command.id === "build-update") loadStatus();
+      })
+      .catch(function (err) {
+        showLog(command.title, "The console could not reach its server: " + err, false);
+      })
+      .finally(function () {
+        busy[command.id] = false;
+        if (button) button.disabled = false;
+      });
+  }
+
+  function cardFor(command) {
+    var el = document.createElement("div");
+    el.className = "card";
+    var html = "<h3>" + esc(command.title) + "</h3>";
+    html += "<p>" + esc(command.description) + "</p>";
+    if (command.file) html += '<div class="file">' + esc(command.file) + "</div>";
+    if (command.warning) html += '<div class="warn">' + esc(command.warning) + "</div>";
+    if (command.steps && command.steps.length) {
+      html += "<ol>" + command.steps.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ol>";
+    }
+    html += '<div class="actions"></div>';
+    el.innerHTML = html;
+    var actions = el.querySelector(".actions");
+
+    if (command.kind === "guide") {
+      var copyPath = document.createElement("button");
+      copyPath.className = "btn";
+      copyPath.textContent = "Copy file name";
+      copyPath.onclick = function () { copy(command.file, command.file + " copied. Use it on FS200."); };
+      actions.appendChild(copyPath);
+      var copySteps = document.createElement("button");
+      copySteps.className = "btn";
+      copySteps.textContent = "Copy steps";
+      copySteps.onclick = function () {
+        copy(command.title + "\n" + command.steps.map(function (s, i) { return (i + 1) + ". " + s; }).join("\n"), "Steps copied.");
+      };
+      actions.appendChild(copySteps);
+    } else {
+      var runButton = document.createElement("button");
+      runButton.className = "btn primary";
+      runButton.textContent = command.kind === "bat" ? "Open in its own window" : command.kind === "open" ? "Open folder" : "Run check";
+      runButton.onclick = function () { run(command, runButton); };
+      actions.appendChild(runButton);
+    }
+    return el;
+  }
+
+  function renderOld() {
+    return '<div class="banner old">Development happens on this PC. Helpers marked <b>Open in its own window</b> start exactly as a double-click would, so their UAC prompts and pauses work in that window.</div>' +
+      '<div class="flow"><b>Typical update:</b> 1 Snapshot before changes → 2 Pull latest code → 3 Build update pack → 4 Verify latest pack → 5 Continue on the FS200 tab.</div>';
+  }
+
+  function renderFs() {
+    return '<div class="banner fs">FS200 is production. Nothing here runs on FS200. Its helpers are double-clicked on FS200 only. Never edit, build, or run git there. Carry the pack over by USB.</div>';
+  }
+
+  function render() {
+    var view = document.getElementById("view");
+    var list = commands.filter(function (c) { return c.tabs.indexOf(currentTab) !== -1; });
+    var groups = {};
+    var order = [];
+    list.forEach(function (c) {
+      if (!groups[c.group]) { groups[c.group] = []; order.push(c.group); }
+      groups[c.group].push(c);
+    });
+    var html = currentTab === "old-pc" ? renderOld() : renderFs();
+    order.forEach(function (name) {
+      html += '<div class="group">' + esc(name) + '</div><div class="grid" data-group="' + esc(name) + '"></div>';
+    });
+    view.innerHTML = html;
+    order.forEach(function (name) {
+      var grid = view.querySelector('[data-group="' + name.replace(/"/g, '\\"') + '"]');
+      groups[name].forEach(function (c) { grid.appendChild(cardFor(c)); });
+    });
+  }
+
+  function renderStatus() {
+    var el = document.getElementById("status");
+    el.innerHTML =
+      '<span class="chip">App <b>' + esc(status.version || "unknown") + "</b></span>" +
+      '<span class="chip">Commit <b>' + esc(status.commit || "unknown") + "</b></span>" +
+      '<span class="chip">Latest pack <b>' + esc(status.latestPack || "none built yet") + "</b></span>" +
+      (status.dryRun ? '<span class="chip">Dry run: nothing is launched</span>' : "");
+  }
+
+  function loadStatus() {
+    api("/api/status").then(function (result) { status = result.data; renderStatus(); });
+  }
+
+  document.querySelectorAll(".tab").forEach(function (button) {
+    button.onclick = function () {
+      currentTab = button.getAttribute("data-tab");
+      document.querySelectorAll(".tab").forEach(function (b) { b.classList.toggle("active", b === button); });
+      render();
+    };
+  });
+
+  api("/api/commands").then(function (result) {
+    commands = result.data.commands || [];
+    render();
+  });
+  loadStatus();
+})();
+</script>
+</body>
+</html>

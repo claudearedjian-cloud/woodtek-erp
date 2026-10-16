@@ -573,3 +573,12 @@ schtasks /Run /TN "\WoodTek ERP"
 - Left menu: the signed-in user's name appears under the Factory Automation block; "WOODTEK-ERP V<version>" appears under the copyright.
 - Version: version.json holds major and minor (1.0 at this point). scripts/build-prod.cjs (run by installer/build-update.ps1 on the dev PC) raises the minor number on every production build, and next.config.ts passes it into the app. Plain `next build` does not bump it.
 - Verification: tsc exit 0; render-test ALL PASS (new checks: factory structure, warehouse branch, supervisor picker, sidebar name and version, version bump); eslint 0 errors; next build exit 0 (needs DATABASE_URL set at build time).
+
+## Standalone dev console (dev-console/)
+
+- `dev-console.bat` (repo root, old PC only) starts `dev-console/server.cjs` on 127.0.0.1:4500 and opens `dev-console/index.html`.
+- Old PC tab: launches the existing helpers in their own window (`update-woodtek.bat`, `build-update.bat`, `build-installer.bat`, snapshot, backups, branch helpers, checks). Read-only checks: git status, verify latest pack (SHA-256 against the .sha256 file).
+- FS200 tab: guides for `installer\apply-update.bat` and the FS200 helpers. The console never reaches FS200. Guides are not runnable from the console.
+- Safety: fixed action list, localhost Host and Origin only, JSON content type required on POST.
+- Tests: scripts/dev-console-test.cjs (called from render-test.js). Dry-run mode: DEV_CONSOLE_DRY_RUN=1.
+- Not tested on Windows: the bat launch path (`cmd /c start`) and the Explorer open. Only the dry-run path ran here.
