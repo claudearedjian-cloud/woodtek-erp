@@ -5534,6 +5534,14 @@ checkAssemblyProjectApi()
       console.error(error);
     }
   })
+  .then(async () => {
+    try {
+      await require("./scripts/dev-console-test.cjs")({ check });
+    } catch (error) {
+      check(false, "dev console checks completed without an unexpected exception");
+      console.error(error);
+    }
+  })
   .finally(() => {
     console.log(fails === 0 ? "ALL PASS" : fails + " FAILURES");
     process.exitCode = fails === 0 ? 0 : 1;
