@@ -477,9 +477,36 @@ export default function WoodTekERP() {
     setSidebarOpen(false);
   };
 
+  // Custom roles, their screen overrides and the Menu Designer config are read
+  // once at page start. A tab that stayed open (a station) can therefore hold
+  // a copy from before a Manager created or changed a profile, and the new
+  // profile then sees no screens. Re-read them at every sign-in.
+  const refreshAccessRules = async (): Promise<MenuConfig | null> => {
+    let freshMenu: MenuConfig | null = null;
+    try {
+      const [rolesRes, menuRes] = await Promise.all([
+        fetch("/api/roles", { cache: "no-store" }),
+        fetch("/api/menu-config", { cache: "no-store" }),
+      ]);
+      if (rolesRes.ok) {
+        const roleData = await rolesRes.json();
+        registerCustomRoles(Array.isArray(roleData.roles) ? roleData.roles : []);
+        registerModuleOverrides(roleData.overrides && typeof roleData.overrides === "object" ? roleData.overrides : {});
+      }
+      if (menuRes.ok) {
+        freshMenu = (await menuRes.json()).config ?? null;
+        if (freshMenu) setMenuConfig(freshMenu);
+      }
+    } catch (error) {
+      console.error("Could not refresh access rules at sign-in", error);
+    }
+    return freshMenu;
+  };
+
   const handleAuthenticated = async (user: any) => {
     const loginSequence = ++loginSequenceRef.current;
     setManagerDowntimeWarnings([]);
+    const freshMenu = await refreshAccessRules();
     setCurrentUser(user);
     setAuthOpen(false);
     setAuthCandidate(null);
@@ -508,8 +535,8 @@ export default function WoodTekERP() {
     // Menu Designer override wins (checked for the display role, then the
     // base role); built-in factory behaviour is the fallback.
     const landing =
-      getLandingTab(user.displayRole || user.role, menuConfig) ??
-      getLandingTab(user.role, menuConfig) ??
+      getLandingTab(user.displayRole || user.role, freshMenu ?? menuConfig) ??
+      getLandingTab(user.role, freshMenu ?? menuConfig) ??
       LANDING_TAB[user.role];
     if (landing) {
       setActiveTab(landing);

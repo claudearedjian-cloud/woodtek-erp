@@ -1934,6 +1934,9 @@ check(resetSettingsText.includes('"orders-reset"') && resetSettingsText.includes
 
 check(fs.readFileSync("src/components/OrderResetPanel.tsx", "utf8").includes("await onOrdersChanged?.();"), "reset orders: after a reset the page reloads the order list (deleted orders disappear from Orders & Routing)");
 check(fs.readFileSync("src/app/page.tsx", "utf8").includes("<SettingsView currentUser={currentUser} onOrdersChanged={refreshOrderWorkspace} />"), "reset orders: page passes its order-list refresh to Settings");
+const pageLoginText = fs.readFileSync("src/app/page.tsx", "utf8");
+check(pageLoginText.includes("const freshMenu = await refreshAccessRules();") && pageLoginText.includes("getLandingTab(user.role, freshMenu ?? menuConfig)"), "sign-in: custom roles, overrides and menu are re-read at every login (a stale tab cannot show an empty screen for Manager 2)");
+check(fs.readFileSync("src/lib/rolesConfig.server.ts", "utf8").includes("registerCustomRoles([]);"), "roles config: a missing or unreadable roles file clears the registered custom roles");
 const headerUiText = fs.readFileSync("src/components/Header.tsx", "utf8");
 check(headerUiText.includes("flex min-w-0 flex-wrap items-center justify-end gap-2.5") && headerUiText.includes("flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg"), "header: the action buttons wrap and New Order cannot be pushed off screen (Manager and Sales)");
 const appearanceUiText = fs.readFileSync("src/components/AppearanceSettings.tsx", "utf8");
