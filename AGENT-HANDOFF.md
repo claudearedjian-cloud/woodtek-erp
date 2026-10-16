@@ -554,3 +554,11 @@ schtasks /Run /TN "\WoodTek ERP"
 - **Server:** `readRolesConfig` (src/lib/rolesConfig.server.ts) now clears registered custom roles when the roles file is missing or unreadable, instead of keeping stale ones.
 - **Verification:** `tsc` clean; `render-test.js` ALL PASS (2 new checks); eslint 0 errors (warnings unchanged); `next build` exit 0. The login flow itself was not clicked in a browser.
 - **Still open (not changed):** eslint shows about 757 warnings project-wide (mostly pre-existing style warnings). `PUT /api/roles` updates the in-memory registry before writing the file, so a failed write can leave the two out of step until restart.
+
+## Cabinet assembly rejects + left menu behaviour (branch arena/38ec1170-woodtek-erp)
+
+- Assembly check: a part can be **Rejected** (reason: Defect, Wrong dimensions, Other; optional note up to 300 characters). A rejected part is never Available: scanning refuses it, the toggle returns 409, and the cabinet is not ready. "Fixed / remade" clears the rejection and returns the part to Pending, so it must be scanned again.
+- API: `POST /api/assembly/scan` with `action: "reject"` (`reason`, `note`, `partId`) or `action: "clear-reject"`. Both are audit logged and use the same `orders:write` gate as scanning.
+- "Rejected parts (N)" button in the assembly header lists every rejected part in the project and prints the fixing / remaking list (`src/lib/assemblyRejects.ts`). The print has a blank "Fixed / remade" column for hand ticking.
+- Left menu: Keep (default, old behaviour), Auto-hide, or Hide, chosen per device in localStorage (`woodtek-sidebar-mode`) and applied on every screen. The three-way control sits at the top of the menu. On phones the menu is always a drawer. The header menu button shows on desktop when the mode is not Keep.
+- Verification: `tsc --noEmit` exit 0; `node render-test.js` ALL PASS (new checks for the menu modes, rejected list, print escaping, and the reject UI wiring); eslint 0 errors; `next build` exit 0 (needs a `DATABASE_URL` value to be set at build time).

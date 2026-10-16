@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "@/lib/atomicFile.server";
-import type { PolyboardProject, PolyboardPart } from "./polyboard";
+import type { PolyboardProject, PolyboardPart, PolyboardRejectReason } from "./polyboard";
 import type { AssemblyProjectDetails } from "./assemblyProject";
 
 export interface AssemblyStore {
@@ -207,6 +207,21 @@ export function scanPart(
     };
   }
 
+  // A rejected part is never available until it is fixed or remade and the
+  // rejection is cleared.
+  if (targetPart.rejection) {
+    const scannedCount = cab.parts.filter((p) => p.isScanned).length;
+    return {
+      success: false,
+      message: `Part "${targetPart.name}" is REJECTED (${targetPart.rejection.reason.replace("_", " ")}). Fix or remake it, then clear the rejection before scanning.`,
+      matchedPart: targetPart,
+      cabinetReady: !!cab.isReadyForAssembly,
+      totalParts: cab.parts.length,
+      scannedParts: scannedCount,
+      project,
+    };
+  }
+
   // Mark part as scanned
   targetPart.isScanned = true;
   targetPart.scannedAt = new Date().toISOString();
@@ -250,6 +265,7 @@ export function togglePartStatus(
   success: boolean;
   project: PolyboardProject | null;
   cabinetReady: boolean;
+  rejected?: boolean;
 } {
   const store = readAssemblyStore();
   const project = store.projects.find((p) => p.id === projectId);
@@ -262,6 +278,10 @@ export function togglePartStatus(
   if (!part) return { success: false, project, cabinetReady: !!cab.isReadyForAssembly };
 
   const nextStatus = forceStatus !== undefined ? forceStatus : !part.isScanned;
+  if (nextStatus && part.rejection) {
+    // A rejected part cannot be marked available by a click.
+    return { success: false, project, cabinetReady: !!cab.isReadyForAssembly, rejected: true };
+  }
   part.isScanned = nextStatus;
   if (nextStatus) {
     part.scannedAt = new Date().toISOString();
@@ -281,4 +301,60 @@ export function togglePartStatus(
 
   writeAssemblyStore(store);
   return { success: true, project, cabinetReady: allScanned };
+}
+
+/**
+ * Reject a part at the assembly check (defect or wrong dimensions). The part
+ * stops counting as available and the cabinet cannot be ready until it is
+ * fixed or remade and the rejection is cleared.
+ */
+export function rejectPart(
+  projectId: string,
+  cabinetId: string,
+  partId: string,
+  reason: PolyboardRejectReason,
+  note: string,
+  rejectedBy?: string,
+): { success: boolean; message: string; project: PolyboardProject | null } {
+  const store = readAssemblyStore();
+  const project = store.projects.find((p) => p.id === projectId);
+  if (!project) return { success: false, message: "Project not found.", project: null };
+  const cab = project.cabinets.find((c) => c.id === cabinetId);
+  if (!cab) return { success: false, message: "Cabinet not found in this project.", project };
+  const part = cab.parts.find((p) => p.id === partId);
+  if (!part) return { success: false, message: "Part not found in this cabinet.", project };
+
+  part.isScanned = false;
+  part.scannedAt = undefined;
+  part.scannedBy = undefined;
+  part.rejection = {
+    reason,
+    note: note.trim().slice(0, 300),
+    rejectedAt: new Date().toISOString(),
+    ...(rejectedBy ? { rejectedBy } : {}),
+  };
+  cab.isReadyForAssembly = false;
+  cab.assembledAt = undefined;
+  writeAssemblyStore(store);
+  return { success: true, message: `Part "${part.name}" rejected.`, project };
+}
+
+/** Clear a rejection after the part was fixed or remade. The part goes back to Pending. */
+export function clearPartRejection(
+  projectId: string,
+  cabinetId: string,
+  partId: string,
+): { success: boolean; message: string; project: PolyboardProject | null } {
+  const store = readAssemblyStore();
+  const project = store.projects.find((p) => p.id === projectId);
+  if (!project) return { success: false, message: "Project not found.", project: null };
+  const cab = project.cabinets.find((c) => c.id === cabinetId);
+  if (!cab) return { success: false, message: "Cabinet not found in this project.", project };
+  const part = cab.parts.find((p) => p.id === partId);
+  if (!part) return { success: false, message: "Part not found in this cabinet.", project };
+  if (!part.rejection) return { success: true, message: "Part was not rejected.", project };
+
+  part.rejection = undefined;
+  writeAssemblyStore(store);
+  return { success: true, message: `Rejection cleared for "${part.name}". Scan it again when it is ready.`, project };
 }

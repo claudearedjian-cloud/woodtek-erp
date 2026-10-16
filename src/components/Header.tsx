@@ -13,6 +13,8 @@ interface HeaderProps {
   bottleneckCount: number;
   lowStockCount: number;
   onOpenMenu: () => void;
+  /** True when the desktop menu is hidden or auto-hidden, so the menu button shows on desktop too. */
+  menuButtonOnDesktop?: boolean;
   onSwitchProfile: () => void;
   onLock: () => void;
   onExit: () => void;
@@ -35,6 +37,7 @@ export default function Header({
   bottleneckCount,
   lowStockCount,
   onOpenMenu,
+  menuButtonOnDesktop = false,
   onSwitchProfile,
   onLock,
   onExit,
@@ -244,7 +247,7 @@ export default function Header({
     <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/70 px-3 py-3 backdrop-blur-xl sm:px-6">
       {/* Title & context */}
       <div className="flex min-w-0 items-center gap-3">
-        <button onClick={onOpenMenu} className={`${iconBtn} md:hidden`} aria-label="Open navigation">
+        <button onClick={onOpenMenu} className={`${iconBtn} ${menuButtonOnDesktop ? "" : "md:hidden"}`} aria-label="Open navigation">
           <Menu className="h-5 w-5" />
         </button>
 

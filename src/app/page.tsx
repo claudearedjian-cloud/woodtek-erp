@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Sidebar from "@/components/Sidebar";
+import { readSidebarMode, writeSidebarMode, type SidebarMode } from "@/lib/sidebarMode";
 import Header from "@/components/Header";
 import AuthGate from "@/components/AuthGate";
 import FullscreenSplash from "@/components/FullscreenSplash";
@@ -76,6 +77,13 @@ export default function WoodTekERP() {
     setShowNewModal(true);
   };
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop menu behaviour (keep / auto-hide / hide), per device. Read after mount so SSR matches.
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("keep");
+  useEffect(() => { setSidebarMode(readSidebarMode()); }, []);
+  const changeSidebarMode = (mode: SidebarMode) => {
+    setSidebarMode(mode);
+    writeSidebarMode(mode);
+  };
   const [authOpen, setAuthOpen] = useState(false);
   const [authCandidate, setAuthCandidate] = useState<any>(null);
   const [managerDowntimeWarnings, setManagerDowntimeWarnings] = useState<any[]>([]);
@@ -695,7 +703,7 @@ export default function WoodTekERP() {
           }}
         />
       )}
-      {sidebarOpen && <button className="fixed inset-0 z-40 bg-slate-950/75 backdrop-blur-sm md:hidden" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
+      {sidebarOpen && <button className={`fixed inset-0 z-40 bg-slate-950/75 backdrop-blur-sm ${sidebarMode === "keep" ? "md:hidden" : ""}`} onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -704,6 +712,9 @@ export default function WoodTekERP() {
         optionalModulesConfig={optionalConfig}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onOpen={() => setSidebarOpen(true)}
+        mode={sidebarMode}
+        onModeChange={changeSidebarMode}
         lang={lang}
       />
 
@@ -728,6 +739,7 @@ export default function WoodTekERP() {
           bottleneckCount={dashboardData?.primaryBottleneck?.queueLength > 1 ? 1 : 0}
           lowStockCount={dashboardData?.lowStockItems?.length || 0}
           onOpenMenu={() => setSidebarOpen(true)}
+          menuButtonOnDesktop={sidebarMode !== "keep"}
           onSwitchProfile={() => requestProfileSwitch()}
           onLock={lockWorkspace}
           onExit={exitApp}
