@@ -34,6 +34,9 @@ export function readRolesConfig(): RolesConfig {
     cache = { mtimeMs: st.mtimeMs, cfg };
     return cfg;
   } catch {
+    // No readable file: no custom roles and no overrides. Clear both, otherwise
+    // a role removed from disk would stay registered in this process.
+    registerCustomRoles([]);
     registerModuleOverrides({});
     return { version: 1, roles: [], overrides: {} };
   }
