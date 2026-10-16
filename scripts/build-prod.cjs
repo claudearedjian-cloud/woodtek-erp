@@ -140,6 +140,14 @@ async function main() {
     log(`Port ${port} is free - continuing.`);
   }
 
+  // Every production build is one update: raise the minor version (V1.0 -> V1.1 ...).
+  // next.config.ts reads version.json, so the new number goes into this build.
+  const versionFile = path.join(ROOT, "version.json");
+  const versionInfo = JSON.parse(fs.readFileSync(versionFile, "utf8"));
+  versionInfo.minor = Number(versionInfo.minor || 0) + 1;
+  fs.writeFileSync(versionFile, JSON.stringify(versionInfo, null, 2) + "\n");
+  log(`App version for this update: ${versionInfo.product || "WOODTEK-ERP"} V${versionInfo.major}.${versionInfo.minor}`);
+
   log("Step 1/3: Building Next.js production bundle (standalone)...");
   // Stamp the built app with the current git commit so the Settings screen
   // can show exactly which version is running (support asks this first).

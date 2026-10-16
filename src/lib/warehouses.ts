@@ -9,10 +9,14 @@
 // Storage: <data>/warehouses.json (see warehouses.server.ts).
 // ============================================================================
 
+import { DEFAULT_BRANCH_ID } from "@/lib/sites";
+
 export interface Warehouse {
   /** Stable id (slug) — items keep their location TEXT, so ids never leak. */
   id: string;
   name: string;
+  /** The factory branch (location) this warehouse belongs to — see sites.ts. */
+  branchId: string;
   /** Short code shown in tables, e.g. MAIN, PANEL. Optional. */
   code: string;
   /** Optional free-text note (address, keeper, opening hours…). */
@@ -31,6 +35,7 @@ export const DEFAULT_WAREHOUSES: Warehouse[] = [
   {
     id: "main",
     name: "Main Warehouse",
+    branchId: DEFAULT_BRANCH_ID,
     code: "MAIN",
     address: "",
     active: true,
@@ -61,6 +66,7 @@ export function sanitizeWarehouse(raw: unknown, fallbackId = ""): Warehouse | nu
   if (!name) return null;
   const code = cleanWarehouseText(source.code, WAREHOUSE_CODE_MAX).toUpperCase();
   const address = cleanWarehouseText(source.address, WAREHOUSE_ADDRESS_MAX);
+  const branchId = cleanWarehouseText(source.branchId, 60) || DEFAULT_BRANCH_ID;
   const id = cleanWarehouseText(source.id, 60) || fallbackId || slugifyWarehouseId(name);
   const createdAt = typeof source.createdAt === "string" && !Number.isNaN(new Date(source.createdAt).getTime())
     ? new Date(source.createdAt).toISOString()
@@ -68,6 +74,7 @@ export function sanitizeWarehouse(raw: unknown, fallbackId = ""): Warehouse | nu
   return {
     id: id.slice(0, 60),
     name,
+    branchId,
     code,
     address,
     active: source.active === undefined ? true : Boolean(source.active),

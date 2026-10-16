@@ -81,6 +81,10 @@ compile("src/lib/reportMoney.ts", "lib/reportMoney.js");
 compile("src/components/BrandMark.tsx", "components/BrandMark.js");
 compile("src/lib/sidebarMode.ts", "lib/sidebarMode.js");
 compile("src/lib/assemblyRejects.ts", "lib/assemblyRejects.js");
+compile("src/lib/sites.ts", "lib/sites.js");
+compile("src/lib/warehouses.ts", "lib/warehouses.js");
+compile("src/lib/appVersion.ts", "lib/appVersion.js");
+compile("src/components/SiteAssignmentPicker.tsx", "components/SiteAssignmentPicker.js");
 compile("src/components/Sidebar.tsx", "components/Sidebar.js");
 compile("src/components/SupplierBillsView.tsx", "components/SupplierBillsView.js");
 compile("src/components/NewOrderWizard.tsx", "components/NewOrderWizard.js");
@@ -5465,6 +5469,59 @@ async function checkAssemblyProjectApi() {
   check(routeSrc.includes('"reject"') && routeSrc.includes('"clear-reject"') && routeSrc.includes("status: 409"), "assembly scan API: reject, clear-reject and 409 on a rejected toggle");
   const viewSrc = fs.readFileSync("src/components/AssemblyView.tsx", "utf8");
   check(viewSrc.includes("Rejected parts (") && viewSrc.includes("Fixed / remade") && viewSrc.includes("buildRejectedPartsHtml"), "assembly view: rejected button, fixed / remade action and print list are wired");
+}
+
+// ---- Factory structure: company, branches, floors; supervisor links; version label ----
+{
+  const sites = require("./compiled/lib/sites.js");
+  const whLib = require("./compiled/lib/warehouses.js");
+  const appVersion = require("./compiled/lib/appVersion.js");
+  const emptyCfg = sites.sanitizeSites(null);
+  check(emptyCfg.company === "SAAD GROUPE" && emptyCfg.branches.length === 1 && emptyCfg.branches[0].id === "main", "factory structure: defaults are SAAD GROUPE with one main branch");
+  const report = sites.sanitizeSitesReport({
+    company: "  SAAD   GROUPE ",
+    branches: [{ id: "north", name: "North" }, { name: "north" }, { name: "" }, { name: "Yard", code: "yd" }],
+    floors: [{ name: "Floor 1", branchId: "north" }, { name: "floor 1", branchId: "north" }, { name: "Orphan", branchId: "nowhere" }, { name: "Floor 2", branchId: "yard" }],
+  });
+  check(report.config.company === "SAAD GROUPE", "factory structure: company name is trimmed and spaces collapsed");
+  check(report.config.branches.map((b) => b.name).join("|") === "North|Yard" && report.config.branches[1].code === "YD", "factory structure: duplicate and blank branches are dropped, codes upper-cased");
+  check(report.config.floors.map((f) => f.name).join("|") === "Floor 1|Floor 2" && report.dropped === 4, "factory structure: repeated and orphaned floors are dropped and counted");
+  check(report.config.floors.every((f) => sites.branchExists(report.config, f.branchId)), "factory structure: every floor points at a real branch");
+  check(sites.sanitizeSites({ branches: [] }).branches[0].id === "main", "factory structure: no branch left falls back to the main branch");
+  check(whLib.sanitizeWarehouse({ name: "Panel Store" }, "panel").branchId === "main", "warehouse: a warehouse without a branch belongs to the main branch");
+  check(whLib.sanitizeWarehouse({ name: "Panel Store", branchId: "yard" }, "panel").branchId === "yard", "warehouse: a warehouse keeps its branch");
+  const map = sites.sanitizeAssignments({ "7": { warehouseIds: ["a", "a", "b"], floorIds: [] }, "x": { warehouseIds: ["z"] }, "9": {} });
+  check(JSON.stringify(map) === JSON.stringify({ "7": { warehouseIds: ["a", "b"], floorIds: [] } }), "supervisor links: only numeric user ids with real links are kept, duplicates removed");
+  check(sites.assignmentFor(map, 99).warehouseIds.length === 0 && sites.assignmentFor(map, 7).warehouseIds.length === 2, "supervisor links: unknown users have no links");
+  check(appVersion.APP_VERSION_LABEL === "WOODTEK-ERP V" + appVersion.APP_VERSION, "version: the label reads WOODTEK-ERP V<version>");
+  const versionFile = JSON.parse(fs.readFileSync("version.json", "utf8"));
+  check(versionFile.product === "WOODTEK-ERP" && Number.isInteger(versionFile.major) && Number.isInteger(versionFile.minor), "version: version.json holds the product, major and minor number");
+  const buildSrc = fs.readFileSync("scripts/build-prod.cjs", "utf8");
+  check(buildSrc.includes("versionInfo.minor = Number(versionInfo.minor || 0) + 1") && buildSrc.indexOf("version.json") < buildSrc.indexOf("Step 1/3"), "version: every production build raises the minor version before building");
+  check(fs.readFileSync("next.config.ts", "utf8").includes("NEXT_PUBLIC_WOODTEK_VERSION: readAppVersion()"), "version: next.config passes the version into the app");
+
+  // Supervisor picker: groups render and the selected items are marked.
+  const SitePicker = require("./compiled/components/SiteAssignmentPicker.js").default;
+  const pickerHtml = renderToString(React.createElement(SitePicker, {
+    title: "Floors this supervisor oversees",
+    hint: "hint",
+    groups: [{ label: "North", items: [{ id: "f1", label: "Floor 1" }, { id: "f2", label: "Floor 2" }] }],
+    selected: ["f2"],
+    onChange: () => {},
+    emptyText: "none",
+  }));
+  check(pickerHtml.includes("North") && pickerHtml.includes("Floor 1") && pickerHtml.split('aria-pressed="true"').length === 2 && pickerHtml.includes("✓"), "supervisor picker: items are grouped by branch and the selection is shown");
+  check(renderToString(React.createElement(SitePicker, { title: "t", hint: "h", groups: [], selected: [], onChange: () => {}, emptyText: "No floors yet." })).includes("No floors yet."), "supervisor picker: empty state is shown");
+
+  // Sidebar: signed-in name under Factory Automation and the version under the copyright.
+  const named = renderToString(React.createElement(Sidebar, { activeTab: "dashboard", setActiveTab: () => {}, currentUser: { role: "Manager", name: "Sara Haddad" }, menuConfig: null, isOpen: false, onClose: () => {}, mode: "keep" }));
+  check(named.includes("Sara Haddad") && named.includes("Signed in as"), "sidebar: the signed-in user's name is shown");
+  check(named.includes("WOODTEK-ERP V") && named.indexOf("WOODTEK-ERP V") > named.indexOf("Claude Aredjian"), "sidebar: the version is shown below the copyright");
+
+  // Settings: the Warehouses tab and the panel; the lucide icon exists.
+  const settingsSrc = fs.readFileSync("src/components/SettingsView.tsx", "utf8");
+  check(settingsSrc.includes('"technicians", "clients", "warehouses"') && settingsSrc.includes("<WarehousesSitesPanel />"), "settings: a Warehouses tab sits next to the other settings tabs");
+  check(typeof require("lucide-react").Warehouse !== "undefined", "settings: the Warehouse icon exists in the installed icon set");
 }
 
 checkAssemblyProjectApi()

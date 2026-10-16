@@ -68,6 +68,7 @@ import { screenAllowedForSubject, type OptionalModulesConfig } from "@/lib/optio
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
 import { currentAppearance } from "@/lib/appearance";
+import { APP_VERSION_LABEL } from "@/lib/appVersion";
 import {
   SIDEBAR_MODES,
   SIDEBAR_MODE_HINTS,
@@ -389,6 +390,14 @@ export default function Sidebar({
             Completing an order operation automatically advances the part to the next machine along the line.
           </p>
         </div>
+
+        {currentUser?.name && (
+          <div className="mx-1 mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-3.5 py-3">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400/80">Signed in as</div>
+            <div className="mt-0.5 truncate text-base font-extrabold text-white">{currentUser.name}</div>
+            <div className="truncate text-[11px] font-semibold text-slate-400">{currentUser.displayRole || currentUser.role}</div>
+          </div>
+        )}
       </div>
 
       {/* Footer: copyright only. The active-role persona card and the
@@ -399,6 +408,9 @@ export default function Sidebar({
       <div className="border-t border-slate-800 bg-slate-950/80 px-4 py-3">
         <div className="text-center text-[11px] font-bold uppercase tracking-wider text-slate-500">
           © {new Date().getFullYear()} Claude Aredjian
+        </div>
+        <div className="mt-1 text-center text-[11px] font-black tracking-wider text-amber-400">
+          {APP_VERSION_LABEL}
         </div>
       </div>
     </aside>

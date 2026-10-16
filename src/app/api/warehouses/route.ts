@@ -25,6 +25,8 @@ import {
   warehouseRename,
   type Warehouse,
 } from "@/lib/warehouses";
+import { branchExists } from "@/lib/sites";
+import { pruneAssignments, readSiteAssignments, readSitesConfig, writeSiteAssignments } from "@/lib/sites.server";
 import {
   effectiveWarehouseList,
   renameWarehouseItems,
@@ -69,6 +71,9 @@ export async function POST(request: Request) {
   if (!draft) return NextResponse.json({ error: "Give the warehouse a name." }, { status: 400 });
   const problem = validateWarehouseInput(draft, list);
   if (problem) return NextResponse.json({ error: problem.error }, { status: 400 });
+  if (!branchExists(readSitesConfig(), draft.branchId)) {
+    return NextResponse.json({ error: "Choose the branch this warehouse belongs to." }, { status: 400 });
+  }
 
   // Never reuse an existing id, even after a delete/rename dance.
   const taken = new Set(list.map((warehouse) => warehouse.id));
@@ -105,6 +110,9 @@ export async function PUT(request: Request) {
   if (!draft) return NextResponse.json({ error: "Give the warehouse a name." }, { status: 400 });
   const problem = validateWarehouseInput(draft, list, { editingId: previous.id });
   if (problem) return NextResponse.json({ error: problem.error }, { status: 400 });
+  if (!branchExists(readSitesConfig(), draft.branchId)) {
+    return NextResponse.json({ error: "Choose the branch this warehouse belongs to." }, { status: 400 });
+  }
 
   const rename = warehouseRename(previous, draft);
   const next = list.map((warehouse) => (warehouse.id === previous.id ? { ...draft, createdAt: previous.createdAt } : warehouse));
@@ -156,6 +164,15 @@ export async function DELETE(request: Request) {
   const fallback = next[0];
   const moved = inUse > 0 ? await renameWarehouseItems(target.name, fallback.name) : 0;
   const saved = writeWarehousesFile(next);
+
+  // Supervisors linked to this warehouse lose the link (no dangling ids).
+  const floorIds = new Set(readSitesConfig().floors.map((floor) => floor.id));
+  writeSiteAssignments(
+    pruneAssignments(readSiteAssignments(), {
+      warehouseIds: new Set(saved.map((warehouse) => warehouse.id)),
+      floorIds,
+    }),
+  );
 
   logAudit(
     user,
