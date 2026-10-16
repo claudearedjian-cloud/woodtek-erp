@@ -562,3 +562,14 @@ schtasks /Run /TN "\WoodTek ERP"
 - "Rejected parts (N)" button in the assembly header lists every rejected part in the project and prints the fixing / remaking list (`src/lib/assemblyRejects.ts`). The print has a blank "Fixed / remade" column for hand ticking.
 - Left menu: Keep (default, old behaviour), Auto-hide, or Hide, chosen per device in localStorage (`woodtek-sidebar-mode`) and applied on every screen. The three-way control sits at the top of the menu. On phones the menu is always a drawer. The header menu button shows on desktop when the mode is not Keep.
 - Verification: `tsc --noEmit` exit 0; `node render-test.js` ALL PASS (new checks for the menu modes, rejected list, print escaping, and the reject UI wiring); eslint 0 errors; `next build` exit 0 (needs a `DATABASE_URL` value to be set at build time).
+
+## Factory structure, supervisor sites, app version, signed-in name (branch arena/1ab287b9-woodtek-erp)
+
+- Factory structure: company (default SAAD GROUPE) -> branches (locations) -> floors and warehouses. Stored in data/factory-sites.json (defaults when missing: one "Main factory" branch). Warehouses now carry a branchId (data/warehouses.json; older entries use the main branch).
+- Settings -> Warehouses tab (next to All Users / Operators / Technicians / Clients): edit the company name, branches, floors and warehouses in place. Refuses to delete a branch that still holds warehouses; deleting a floor removes it from supervisor links.
+- User form: a Warehouse Supervisor picks warehouses (grouped by branch); a Floor Supervisor picks floors (grouped by branch). Stored in data/site-assignments.json, keyed by user id. Links are saved with the user and cleared when the role is not a supervisor role.
+- API: GET/PUT /api/sites (users:manage); GET/PUT /api/sites/assignments (users:manage). /api/warehouses POST/PUT refuse an unknown branch.
+- NOT YET ENFORCED: the links are stored and shown, but they do not yet limit what a supervisor can see or change. That needs a separate decision.
+- Left menu: the signed-in user's name appears under the Factory Automation block; "WOODTEK-ERP V<version>" appears under the copyright.
+- Version: version.json holds major and minor (1.0 at this point). scripts/build-prod.cjs (run by installer/build-update.ps1 on the dev PC) raises the minor number on every production build, and next.config.ts passes it into the app. Plain `next build` does not bump it.
+- Verification: tsc exit 0; render-test ALL PASS (new checks: factory structure, warehouse branch, supervisor picker, sidebar name and version, version bump); eslint 0 errors; next build exit 0 (needs DATABASE_URL set at build time).

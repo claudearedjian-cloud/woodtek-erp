@@ -1,6 +1,22 @@
 import type { NextConfig } from "next";
+import fs from "node:fs";
+import path from "node:path";
+
+// Product version from version.json (raised by scripts/build-prod.cjs on each build).
+function readAppVersion(): string {
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(process.cwd(), "version.json"), "utf8"));
+    return `${info.major}.${info.minor}`;
+  } catch {
+    return "1.0";
+  }
+}
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_WOODTEK_VERSION: readAppVersion(),
+  },
+
   // Enable Next.js standalone output for the portable .exe builder.
   // This produces a minimal .next/standalone folder containing only what's
   // needed to run the app, which we then bundle with Node.js into a single

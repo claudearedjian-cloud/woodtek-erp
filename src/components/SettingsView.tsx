@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import WarehousesSitesPanel from "@/components/WarehousesSitesPanel";
+import SiteAssignmentPicker, { type PickerGroup } from "@/components/SiteAssignmentPicker";
+import { floorsOfBranch, type SiteBranch, type SiteFloor } from "@/lib/sites";
 import { 
   Settings, 
   Users, 
@@ -22,7 +25,8 @@ import {
   History,
   Download,
   Palette,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Warehouse as WarehouseIcon,
 } from "lucide-react";
 import {
   ROLES,
@@ -71,7 +75,7 @@ const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-
 type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset" | "import-clients";
 
 export default function SettingsView({ currentUser, onOrdersChanged }: SettingsViewProps) {
-  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "system">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "warehouses" | "system">("users");
   const [systemSection, setSystemSection] = useState<SystemSectionId>("appearance");
   const [entities, setEntities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,6 +104,9 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
   });
 
   // ---- auto-lock this device (everyone; stored per device) ----
+  // Supervisor links for the user form: the factory structure and this user's picks.
+  const [siteOptions, setSiteOptions] = useState<{ branches: SiteBranch[]; floors: SiteFloor[]; warehouses: { id: string; name: string; branchId: string }[] }>({ branches: [], floors: [], warehouses: [] });
+  const [siteAssign, setSiteAssign] = useState<{ warehouseIds: string[]; floorIds: string[] }>({ warehouseIds: [], floorIds: [] });
   const [idleMins, setIdleMins] = useState<number>(() => loadIdleMinutes());
   const changeIdleMins = (v: number) => {
     const mins = normalizeIdleMinutes(v);
@@ -866,7 +873,41 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
     fetchEntities();
   }, [activeTab]);
 
+  // Load the factory structure, and this user's supervisor links, when the user form opens.
+  useEffect(() => {
+    if (!showModal || activeTab !== "users") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [sitesRes, warehouseRes, assignRes] = await Promise.all([
+          fetch("/api/sites", { cache: "no-store" }),
+          fetch("/api/warehouses", { cache: "no-store" }),
+          editingEntity ? fetch("/api/sites/assignments", { cache: "no-store" }) : Promise.resolve(null),
+        ]);
+        const sites = await sitesRes.json();
+        const warehouseData = await warehouseRes.json();
+        if (cancelled) return;
+        setSiteOptions({
+          branches: sites.config?.branches ?? [],
+          floors: sites.config?.floors ?? [],
+          warehouses: warehouseData.warehouses ?? [],
+        });
+        if (assignRes) {
+          const data = await assignRes.json();
+          const mine = data.assignments?.[String(editingEntity.id)];
+          setSiteAssign({ warehouseIds: mine?.warehouseIds ?? [], floorIds: mine?.floorIds ?? [] });
+        }
+      } catch {
+        /* the pickers stay empty; the rest of the form still saves */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showModal, activeTab, editingEntity]);
+
   const openModal = (entity?: any) => {
+    setSiteAssign({ warehouseIds: [], floorIds: [] });
     if (entity) {
       setEditingEntity(entity);
       setFormData({
@@ -919,7 +960,27 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Failed to save");
-      
+
+      // Supervisor links: only the picker that matches the role is kept; any other role clears them.
+      if (entityType === "users") {
+        const savedUserId = editingEntity ? editingEntity.id : result?.id;
+        if (savedUserId) {
+          const assignRes = await fetch("/api/sites/assignments", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: savedUserId,
+              warehouseIds: formData.role === "Warehouse Supervisor" ? siteAssign.warehouseIds : [],
+              floorIds: formData.role === "Floor Supervisor" ? siteAssign.floorIds : [],
+            }),
+          });
+          if (!assignRes.ok) {
+            const assignData = await assignRes.json().catch(() => ({}));
+            throw new Error(assignData.error || "The user was saved, but the supervisor links were not.");
+          }
+        }
+      }
+
       setShowModal(false);
       setNotice(editingEntity ? "Updated successfully" : "Created successfully");
       setTimeout(() => setNotice(""), 3000);
@@ -1056,7 +1117,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
 
         {/* Tabs */}
         <div className="flex flex-wrap items-center gap-2 mt-6">
-          {(["users", "operators", "technicians", "clients"] as const).map((tab) => (
+          {(["users", "operators", "technicians", "clients", "warehouses"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1066,7 +1127,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
                   : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
               }`}
             >
-              {tab === "clients" ? <Building2 className="w-4 h-4" /> : tab === "operators" ? <UserCog className="w-4 h-4" /> : tab === "technicians" ? <Wrench className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+              {tab === "warehouses" ? <WarehouseIcon className="w-4 h-4" /> : tab === "clients" ? <Building2 className="w-4 h-4" /> : tab === "operators" ? <UserCog className="w-4 h-4" /> : tab === "technicians" ? <Wrench className="w-4 h-4" /> : <Users className="w-4 h-4" />}
               <span className="capitalize">{tab === "users" ? "All Users" : tab}</span>
             </button>
           ))}
@@ -1129,7 +1190,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
       )}
 
       {/* Search & Add */}
-      {activeTab !== "system" && (
+      {activeTab !== "system" && activeTab !== "warehouses" && (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1175,8 +1236,10 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{accessProfilesPanel}</div>
       )}
 
+      {activeTab === "warehouses" && <WarehousesSitesPanel />}
+
       {/* Entity List */}
-      {activeTab !== "system" && (loading ? (
+      {activeTab !== "system" && activeTab !== "warehouses" && (loading ? (
         <div className="p-12 text-center text-slate-400 animate-pulse">Loading...</div>
       ) : filteredEntities.length === 0 ? (
         <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-16 text-center">
@@ -1687,6 +1750,36 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
                       </div>
                     </div>
                   </div>
+                  {formData.role === "Warehouse Supervisor" && (
+                    <SiteAssignmentPicker
+                      title="Warehouses this supervisor covers"
+                      hint="Tick the warehouses this Warehouse Supervisor is responsible for. Warehouses are set up in Settings → Warehouses."
+                      groups={siteOptions.branches
+                        .map((branch) => ({
+                          label: branch.name,
+                          items: siteOptions.warehouses.filter((w) => w.branchId === branch.id).map((w) => ({ id: w.id, label: w.name })),
+                        }))
+                        .filter((group) => group.items.length > 0) as PickerGroup[]}
+                      selected={siteAssign.warehouseIds}
+                      onChange={(next) => setSiteAssign((prev) => ({ ...prev, warehouseIds: next }))}
+                      emptyText="No warehouses yet. Add them in Settings → Warehouses."
+                    />
+                  )}
+                  {formData.role === "Floor Supervisor" && (
+                    <SiteAssignmentPicker
+                      title="Floors this supervisor oversees"
+                      hint="Tick the floors, grouped by branch, this Floor Supervisor oversees. Floors are set up in Settings → Warehouses."
+                      groups={siteOptions.branches
+                        .map((branch) => ({
+                          label: branch.name,
+                          items: floorsOfBranch({ company: "", branches: siteOptions.branches, floors: siteOptions.floors }, branch.id).map((f) => ({ id: f.id, label: f.name })),
+                        }))
+                        .filter((group) => group.items.length > 0) as PickerGroup[]}
+                      selected={siteAssign.floorIds}
+                      onChange={(next) => setSiteAssign((prev) => ({ ...prev, floorIds: next }))}
+                      emptyText="No floors yet. Add them in Settings → Warehouses."
+                    />
+                  )}
                   <div className="rounded-xl border border-sky-500/25 bg-sky-950/15 p-3">
                     <div className="flex items-start gap-2">
                       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
