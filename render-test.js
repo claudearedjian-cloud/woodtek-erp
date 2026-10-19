@@ -30,6 +30,7 @@ compile("src/lib/machineCategories.ts", "lib/machineCategories.js");
 compile("src/lib/permissions.ts", "lib/permissions.js");
 compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
 compile("src/lib/menuIcons.ts", "lib/menuIcons.js");
+compile("src/lib/menuDesigner.ts", "lib/menuDesigner.js");
 compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
@@ -552,6 +553,85 @@ check(resNav.sections.length === 1 && resNav.sections[0].icon === "target", "ico
 check(resNav.top.concat(...resNav.sections.map((s) => s.items)).find((i) => i.id === "quality").icon === "hammer", "icons: item icon resolved");
 const ssrNav = renderToString(React.createElement(Sidebar, props("Manager", sanNav)));
 check(ssrNav.includes("Board"), "icons SSR: sidebar renders with pinned icons (no crash)");
+
+// ---- Advanced Menu Designer helpers + embedded live preview ----
+{
+  const designerHelpers = require("./compiled/lib/menuDesigner.js");
+  const makeDesignerRow = (id, group, extra = {}) => ({ id, label: id, badge: "", group, icon: "", roles: {}, ...extra });
+  const designerBaseRows = [
+    makeDesignerRow("dashboard", "top", { label: "Dashboard" }),
+    makeDesignerRow("inventory", "settings", { label: "Inventory" }),
+    makeDesignerRow("orders", "Production", { label: "Orders" }),
+    makeDesignerRow("schedule", "Production", { label: "Schedule" }),
+    makeDesignerRow("customers", "Office", { label: "Customers" }),
+    makeDesignerRow("reports", "top", { label: "Reports" }),
+  ];
+  const designerGroups = designerHelpers.groupDesignerRows(designerBaseRows, [" Empty One ", "top", "production"]);
+  check(designerGroups.map((g) => g.key).join("|") === "top|settings|Production|Office|Empty One", "menu designer helpers: placements are grouped in sidebar order and staged empty sections are appended once");
+  check(designerGroups[0].rows.map((r) => r.id).join("|") === "dashboard|reports" && designerGroups[2].rows.map((r) => r.id).join("|") === "orders|schedule", "menu designer helpers: grouped rows preserve first-appearance order");
+
+  const movedWithin = designerHelpers.moveDesignerRowWithinGroup(designerBaseRows, "dashboard", 1);
+  check(movedWithin.filter((r) => r.group === "top").map((r) => r.id).join("|") === "reports|dashboard", "menu designer helpers: arrow move swaps only inside its own placement");
+  const movedBefore = designerHelpers.moveDesignerRowTo(designerBaseRows, "reports", "Production", "schedule");
+  check(movedBefore.filter((r) => r.group === "Production").map((r) => r.id).join("|") === "orders|reports|schedule" && movedBefore.find((r) => r.id === "reports").group === "Production", "menu designer helpers: drag before a row inserts there and adopts the destination placement");
+  const movedAppend = designerHelpers.moveDesignerRowTo(designerBaseRows, "inventory", "Office", null);
+  check(movedAppend.filter((r) => r.group === "Office").map((r) => r.id).join("|") === "customers|inventory", "menu designer helpers: dropping on a placement appends to that placement");
+
+  check(designerHelpers.designerSectionNames(designerHelpers.moveDesignerSection(designerBaseRows, "Office", -1)).join("|") === "Office|Production", "menu designer helpers: custom section can move earlier by first appearance");
+  check(designerHelpers.designerSectionNames(designerHelpers.moveDesignerSection(designerBaseRows, "Production", 1)).join("|") === "Office|Production", "menu designer helpers: custom section can move later without changing rows inside either section");
+  const renamedRows = designerHelpers.renameDesignerSection(designerBaseRows, "Production", " Planning ");
+  check(designerHelpers.designerSectionNames(renamedRows).join("|") === "Planning|Office", "menu designer helpers: section rename trims and moves every member together");
+  check(designerHelpers.renameDesignerSection(designerBaseRows, "Production", "office") === designerBaseRows, "menu designer helpers: case-insensitive section-name conflict is refused");
+  const clearedRows = designerHelpers.clearDesignerSection(designerBaseRows, "Office");
+  check(!designerHelpers.designerSectionNames(clearedRows).includes("Office") && clearedRows.find((r) => r.id === "customers").group === "top", "menu designer helpers: deleting a section sends its items to Top level");
+  check(designerHelpers.designerRowMatches({ ...designerBaseRows[2], badge: "HOT", target: "orders" }, "hot") && designerHelpers.designerRowMatches(designerBaseRows[2], "production") && !designerHelpers.designerRowMatches(designerBaseRows[2], "missing"), "menu designer helpers: search covers label, id, placement, target and badge");
+
+  const builtDesignerRows = designerHelpers.buildDesignerRows({
+    version: 1,
+    items: [
+      { id: "orders", label: "Order Board", group: "Production", roles: { Manager: false } },
+      { id: "custom-portal1", label: "Portal", custom: true, kind: "link", target: "https://example.com", roles: { Manager: true, "Machine Operator": false } },
+    ],
+    landing: { Manager: "orders", "Ghost Role": "dashboard" },
+    sectionIcons: { Production: "target" },
+  });
+  check(!builtDesignerRows.some((r) => r.id === "designer") && builtDesignerRows.find((r) => r.id === "custom-portal1").roles.Manager === true, "menu designer helpers: saved rows build without the designer itself and preserve website-link audience");
+  check(designerHelpers.pickDesignerLanding({ version: 1, items: [], landing: { Manager: "orders", "Ghost Role": "dashboard" } }).Manager === "orders" && !designerHelpers.pickDesignerLanding({ version: 1, items: [], landing: { "Ghost Role": "dashboard" } })["Ghost Role"], "menu designer helpers: landing editor keeps known roles only");
+
+  const designerDraft = designerHelpers.designerDraftConfig(builtDesignerRows, { Manager: "orders" }, { Production: "target" });
+  const builtInDraftItem = designerDraft.items.find((i) => i.id === "orders");
+  const linkDraftItem = designerDraft.items.find((i) => i.id === "custom-portal1");
+  check(!Object.prototype.hasOwnProperty.call(builtInDraftItem, "roles") && linkDraftItem.roles.Manager === true, "menu designer helpers: save payload keeps role audience only on external website links");
+  const customTabItem = designerHelpers.designerRowToMenuItem(makeDesignerRow("custom-board1", "top", { custom: true, kind: "tab", target: "orders", roles: { Manager: false } }));
+  check(!Object.prototype.hasOwnProperty.call(customTabItem, "roles"), "menu designer helpers: a custom in-app shortcut cannot smuggle a per-menu permission override");
+  const draftResolved = menuCfg.resolveMenu("Manager", designerDraft);
+  check(draftResolved.sections.some((section) => section.name === "Production" && section.items.some((i) => i.id === "orders" && i.label === "Order Board")), "menu designer helpers: menu layout edits cannot revoke a built-in screen from its Access Profile");
+  check(designerHelpers.visibleRolesForDesignerRow(builtDesignerRows.find((r) => r.id === "custom-portal1")).join("|") === "Manager", "menu designer helpers: visible-role note follows the external-link audience");
+
+  const designerPreviewHtml = renderToString(React.createElement(Sidebar, {
+    ...props("Manager", designerDraft),
+    preview: true,
+    isOpen: false,
+    mode: "autohide",
+    onOpen: () => {},
+    onModeChange: () => {},
+  }));
+  check(designerPreviewHtml.includes('data-sidebar-preview="true"') && designerPreviewHtml.includes('aria-label="Menu preview"') && designerPreviewHtml.includes("relative flex h-full"), "menu designer preview SSR: the real Sidebar renders embedded rather than as fixed navigation");
+  check(designerPreviewHtml.includes("Portal") && designerPreviewHtml.includes("disabled=") && !designerPreviewHtml.includes("https://example.com") && !designerPreviewHtml.includes('target="_blank"'), "menu designer preview SSR: normal items are inert and external links cannot open the target site");
+  check(!designerPreviewHtml.includes("Menu behaviour") && !designerPreviewHtml.includes("fixed inset-y-0 left-0 w-2"), "menu designer preview SSR: sidebar mode switcher and auto-hide edge strip are suppressed");
+  const normalDraftHtml = renderToString(React.createElement(Sidebar, props("Manager", designerDraft)));
+  check(normalDraftHtml.includes("https://example.com") && normalDraftHtml.includes('target="_blank"'), "menu designer preview SSR: the production Sidebar still renders the same external link as a real new-tab link");
+
+  const customRolePreviewHtml = renderToString(React.createElement(Sidebar, {
+    ...props("Machine Operator", designerDraft),
+    preview: true,
+    currentUser: { name: "Preview", role: perms.baseRoleOf("Foreman"), displayRole: "Foreman" },
+  }));
+  check(customRolePreviewHtml.includes("Operator Station Mode") && !customRolePreviewHtml.includes("Order Board") && !customRolePreviewHtml.includes("Portal"), "menu designer preview SSR: synthetic custom-role user keeps its custom display role and its built-in base profile");
+  const designerViewSource = fs.readFileSync("src/components/MenuDesignerView.tsx", "utf8");
+  check(designerViewSource.includes("baseRoleOf(previewRole)") && designerViewSource.includes("displayRole: previewRole") && designerViewSource.includes("optionalModulesConfig={optionalModulesConfig}") && designerViewSource.includes("preview"), "menu designer source: live preview uses the custom-role subject shape and the same optional-module config as the real sidebar");
+  check(pageSource.includes("<MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} optionalModulesConfig={optionalConfig} onSaved={setMenuConfig} />"), "menu designer source: page passes the live optional-module config into the designer preview");
+}
 
 // ---- partial BOM delivery helpers ----
 const bd = require("./compiled/lib/bomDelivery.js");

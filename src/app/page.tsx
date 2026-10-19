@@ -792,7 +792,7 @@ export default function WoodTekERP() {
           {activeTab === "assembly" && <AssemblyView key={currentUser.id} currentUser={currentUser} />}
           {activeTab === "pims" && <PimsImportView onSelectOrder={handleSelectOrder} />}
           {activeTab === "designer" && (
-            <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} onSaved={setMenuConfig} />
+            <MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} optionalModulesConfig={optionalConfig} onSaved={setMenuConfig} />
           )}
           {activeTab === "settings" && <SettingsView currentUser={currentUser} onOrdersChanged={refreshOrderWorkspace} />}
             </>
