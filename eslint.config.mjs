@@ -66,10 +66,17 @@ export default defineConfig([
   ...withSeverityOverrides(nextCoreWebVitals),
   ...withSeverityOverrides(nextTypescript),
   {
-    // Plain CommonJS: the watchdog launcher, build script, the SSR test
-    // harness and check-server.js (the double-click server health check).
+    // Plain CommonJS: the watchdog launcher, build script, dev-console server,
+    // SSR test harness and check-server.js (the double-click server health check).
     // require() is the correct module system for these.
-    files: ["*.cjs", "render-test.js", "check-server.js", "scripts/**/*.cjs", "installer/**/*.cjs"],
+    files: [
+      "*.cjs",
+      "dev-console/**/*.cjs",
+      "render-test.js",
+      "check-server.js",
+      "scripts/**/*.cjs",
+      "installer/**/*.cjs",
+    ],
     rules: {
       "@typescript-eslint/no-require-imports": "off",
     },
