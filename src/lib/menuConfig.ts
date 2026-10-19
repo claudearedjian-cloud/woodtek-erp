@@ -15,6 +15,28 @@ export const LABEL_MAX = 60;
 export const BADGE_MAX = 20;
 export const GROUP_MAX = 30;
 
+// Presentation-only colour choices for custom sidebar section headers. The
+// matching Tailwind class bundles live in menuIcons.ts; this allowlist is the
+// server-safe source of truth for stored JSON.
+export const MENU_SECTION_COLOR_KEYS = [
+  "amber",
+  "sky",
+  "emerald",
+  "rose",
+  "violet",
+  "slate",
+] as const;
+export type MenuSectionColor = (typeof MENU_SECTION_COLOR_KEYS)[number];
+
+export interface MenuSectionSettings {
+  color?: MenuSectionColor;
+  /** Default state when a device has not stored its own section toggle. */
+  collapsed?: boolean;
+}
+
+const isSectionColorKey = (v: unknown): v is MenuSectionColor =>
+  typeof v === "string" && (MENU_SECTION_COLOR_KEYS as readonly string[]).includes(v);
+
 // Allowlist of icon keys a menu item / section header may use. The visual
 // (lucide component) for each key lives in src/lib/menuIcons.ts — kept apart
 // so this file stays import-safe from server routes. "" = automatic icon
@@ -86,7 +108,7 @@ export interface MenuConfigItem {
   roles?: Record<string, boolean>;
   // Designer-created entries only (id starts with "custom-"):
   custom?: true;
-  kind?: "tab" | "link"; // default "tab" (opens an existing screen)
+  kind?: "tab" | "link" | "separator"; // default "tab" (opens an existing screen)
   target?: string; // tab id (kind "tab") or http(s) URL (kind "link")
 }
 export interface MenuConfig {
@@ -94,6 +116,7 @@ export interface MenuConfig {
   items: MenuConfigItem[];
   landing?: Record<string, string>; // role -> first screen after login (tab id)
   sectionIcons?: Record<string, string>; // custom section name -> icon key
+  sectionSettings?: Record<string, MenuSectionSettings>;
 }
 
 export interface ResolvedMenuItem {
@@ -101,13 +124,15 @@ export interface ResolvedMenuItem {
   label: string;
   badge: string;
   icon?: string; // set when the config pins a specific icon
-  kind?: "tab" | "link"; // present on designer-created entries
+  kind?: "tab" | "link" | "separator"; // present on designer-created entries
   target?: string; // where the entry navigates
 }
 
 export interface ResolvedSection {
   name: string;
   icon?: string;
+  color?: MenuSectionColor;
+  defaultCollapsed?: boolean;
   items: ResolvedMenuItem[];
 }
 
@@ -124,6 +149,9 @@ export function defaultVisibleFor(
   item?: MenuConfigItem,
 ): boolean {
   if (isCustomId(id)) {
+    // A separator is layout furniture, not a screen. The Sidebar prunes it
+    // when it would be orphaned by the role's actually visible items.
+    if (item?.kind === "separator") return true;
     const nav = safeCustomNav(item);
     if (nav.kind === "link") {
       // External links have no app permission profile, so keep their audience
@@ -187,6 +215,7 @@ export function resolveMenu(
   ];
   const canSeeSettings = canAccessModule(role, "settings");
   const sectionIconsRaw = config?.sectionIcons ?? {};
+  const sectionSettingsRaw = config?.sectionSettings ?? {};
   const top: ResolvedMenuItem[] = [];
   const settings: ResolvedMenuItem[] = [];
   const sections: ResolvedSection[] = [];
@@ -196,16 +225,23 @@ export function resolveMenu(
     const cfg = byId.get(id);
     const visible = defaultVisibleFor(role, id, cfg);
     if (!visible) continue;
+    const isSeparator = isCustomId(id) && cfg?.kind === "separator";
     const item: ResolvedMenuItem = {
       id,
-      label: (cfg?.label ?? reg?.label ?? "New menu item").slice(0, LABEL_MAX),
-      badge: (cfg?.badge ?? reg?.badge ?? "").slice(0, BADGE_MAX),
+      label: isSeparator
+        ? (cfg?.label ?? "").slice(0, LABEL_MAX)
+        : (cfg?.label ?? reg?.label ?? "New menu item").slice(0, LABEL_MAX),
+      badge: isSeparator ? "" : (cfg?.badge ?? reg?.badge ?? "").slice(0, BADGE_MAX),
     };
-    if (isIconKey(cfg?.icon)) item.icon = cfg.icon;
+    if (!isSeparator && isIconKey(cfg?.icon)) item.icon = cfg.icon;
     if (isCustomId(id)) {
-      const nav = safeCustomNav(cfg);
-      item.kind = nav.kind;
-      item.target = nav.target;
+      if (isSeparator) {
+        item.kind = "separator";
+      } else {
+        const nav = safeCustomNav(cfg);
+        item.kind = nav.kind;
+        item.target = nav.target;
+      }
     }
     let group: string = normalizeGroup(cfg?.group ?? reg?.group ?? "top");
     if (group === "top" || group === "settings") {
@@ -222,6 +258,11 @@ export function resolveMenu(
         const secIcon = sectionIconsRaw[group];
         sec = { name: group, items: [] };
         if (isIconKey(secIcon)) sec.icon = secIcon;
+        const secSettings = sectionSettingsRaw[group] as MenuSectionSettings | undefined;
+        if (isSectionColorKey(secSettings?.color)) sec.color = secSettings.color;
+        if (typeof secSettings?.collapsed === "boolean") {
+          sec.defaultCollapsed = secSettings.collapsed;
+        }
         sectionByName.set(group, sec);
         sections.push(sec);
       }
@@ -249,7 +290,12 @@ export function getLandingTab(
 const CUSTOM_ID_RE = /^custom-[a-z0-9-]{1,40}$/;
 
 export function sanitizeMenuConfig(body: unknown): MenuConfig {
-  const raw = body as { items?: unknown; landing?: unknown; sectionIcons?: unknown } | null;
+  const raw = body as {
+    items?: unknown;
+    landing?: unknown;
+    sectionIcons?: unknown;
+    sectionSettings?: unknown;
+  } | null;
   const src = Array.isArray(raw?.items) ? (raw!.items as unknown[]) : [];
   const seen = new Set<string>();
   const items: MenuConfigItem[] = [];
@@ -264,18 +310,22 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
     const item: MenuConfigItem = { id };
     if (typeof e.label === "string" && e.label.trim()) {
       item.label = e.label.trim().slice(0, LABEL_MAX);
-    } else if (customItem) {
+    } else if (customItem && e.kind !== "separator") {
       item.label = "New menu item";
     }
-    if (typeof e.badge === "string") item.badge = e.badge.trim().slice(0, BADGE_MAX);
-    if (isIconKey(e.icon)) item.icon = e.icon;
+    if (e.kind !== "separator" && typeof e.badge === "string") {
+      item.badge = e.badge.trim().slice(0, BADGE_MAX);
+    }
+    if (e.kind !== "separator" && isIconKey(e.icon)) item.icon = e.icon;
     if (typeof e.group === "string" && e.group.trim()) {
       item.group = e.group.trim().slice(0, GROUP_MAX);
     }
     if (customItem) {
       item.custom = true;
       const target = typeof e.target === "string" ? e.target.trim() : "";
-      if (e.kind === "link" && isHttpUrl(target)) {
+      if (e.kind === "separator") {
+        item.kind = "separator";
+      } else if (e.kind === "link" && isHttpUrl(target)) {
         item.kind = "link";
         item.target = target.slice(0, 500);
       } else {
@@ -321,5 +371,157 @@ export function sanitizeMenuConfig(body: unknown): MenuConfig {
     }
     if (Object.keys(sectionIcons).length) config.sectionIcons = sectionIcons;
   }
+  // Custom section presentation: an allowlisted colour and default state.
+  if (raw?.sectionSettings && typeof raw.sectionSettings === "object") {
+    const sectionSettings: Record<string, MenuSectionSettings> = {};
+    for (const [k, v] of Object.entries(raw.sectionSettings as Record<string, unknown>)) {
+      const name = k.trim().slice(0, GROUP_MAX);
+      if (!name || name === "top" || name === "settings") continue;
+      if (!v || typeof v !== "object") continue;
+      const rawSettings = v as Record<string, unknown>;
+      const settings: MenuSectionSettings = {};
+      if (isSectionColorKey(rawSettings.color)) settings.color = rawSettings.color;
+      if (typeof rawSettings.collapsed === "boolean") settings.collapsed = rawSettings.collapsed;
+      if (Object.keys(settings).length) sectionSettings[name] = settings;
+      if (Object.keys(sectionSettings).length >= 20) break;
+    }
+    if (Object.keys(sectionSettings).length) config.sectionSettings = sectionSettings;
+  }
   return config;
+}
+
+// ============================================================================
+// Named menu layouts + portable layout files.
+//
+// A named layout is only a stored MenuConfig snapshot. Loading one in the
+// designer changes the draft; it cannot grant screens because every snapshot
+// still passes through sanitizeMenuConfig() and resolveMenu().
+// ============================================================================
+
+export const MENU_LAYOUT_NAME_MAX = 60;
+export const MENU_LAYOUT_LIMIT = 30;
+
+export interface MenuLayoutSnapshot {
+  name: string;
+  createdAt?: string;
+  updatedAt?: string;
+  config: MenuConfig;
+}
+
+export interface MenuLayoutLibrary {
+  version: 1;
+  layouts: MenuLayoutSnapshot[];
+}
+
+export interface MenuLayoutFile {
+  kind: "woodtek-menu-layout";
+  version: 1;
+  name: string;
+  exportedAt: string;
+  config: MenuConfig;
+}
+
+const cleanMenuLayoutName = (value: unknown): string =>
+  typeof value === "string" ? value.trim().slice(0, MENU_LAYOUT_NAME_MAX) : "";
+
+const cleanLayoutTimestamp = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim().slice(0, 40) : undefined;
+
+export function makeMenuLayoutFile(
+  name: string,
+  config: MenuConfig,
+  exportedAt = new Date().toISOString(),
+): MenuLayoutFile {
+  return {
+    kind: "woodtek-menu-layout",
+    version: 1,
+    name: cleanMenuLayoutName(name) || "WoodTek menu layout",
+    exportedAt,
+    config: sanitizeMenuConfig(config),
+  };
+}
+
+export function parseMenuLayoutFile(
+  body: unknown,
+): { name: string; config: MenuConfig } | null {
+  if (!body || typeof body !== "object") return null;
+  const raw = body as Record<string, unknown>;
+  const wrappedConfig =
+    raw.kind === "woodtek-menu-layout" && raw.config && typeof raw.config === "object"
+      ? (raw.config as Record<string, unknown>)
+      : null;
+  const configRaw = wrappedConfig ?? (Array.isArray(raw.items) ? raw : null);
+  if (!configRaw || !Array.isArray(configRaw.items)) return null;
+  return {
+    name: cleanMenuLayoutName(raw.name) || "Imported menu layout",
+    config: sanitizeMenuConfig(configRaw),
+  };
+}
+
+export function sanitizeMenuLayoutLibrary(body: unknown): MenuLayoutLibrary {
+  const source =
+    body && typeof body === "object" && Array.isArray((body as Record<string, unknown>).layouts)
+      ? ((body as Record<string, unknown>).layouts as unknown[])
+      : Array.isArray(body)
+        ? body
+        : [];
+  const byName = new Map<string, MenuLayoutSnapshot>();
+  for (const entry of source) {
+    if (!entry || typeof entry !== "object") continue;
+    const raw = entry as Record<string, unknown>;
+    const parsed = parseMenuLayoutFile(
+      raw.config && typeof raw.config === "object"
+        ? { kind: "woodtek-menu-layout", name: raw.name, config: raw.config }
+        : entry,
+    );
+    if (!parsed) continue;
+    const name = cleanMenuLayoutName(raw.name) || parsed.name;
+    if (!name) continue;
+    const snapshot: MenuLayoutSnapshot = { name, config: parsed.config };
+    const createdAt = cleanLayoutTimestamp(raw.createdAt);
+    const updatedAt = cleanLayoutTimestamp(raw.updatedAt) ?? createdAt;
+    if (createdAt) snapshot.createdAt = createdAt;
+    if (updatedAt) snapshot.updatedAt = updatedAt;
+    const key = name.toLowerCase();
+    byName.delete(key);
+    byName.set(key, snapshot);
+  }
+  return { version: 1, layouts: Array.from(byName.values()).slice(0, MENU_LAYOUT_LIMIT) };
+}
+
+export function upsertMenuLayout(
+  library: MenuLayoutLibrary,
+  name: string,
+  config: MenuConfig,
+  nowIso = new Date().toISOString(),
+): MenuLayoutLibrary {
+  const cleanName = cleanMenuLayoutName(name);
+  const clean = sanitizeMenuLayoutLibrary(library);
+  if (!cleanName) return clean;
+  const existingIndex = clean.layouts.findIndex(
+    (layout) => layout.name.toLowerCase() === cleanName.toLowerCase(),
+  );
+  if (existingIndex < 0 && clean.layouts.length >= MENU_LAYOUT_LIMIT) return clean;
+  const existing = existingIndex >= 0 ? clean.layouts[existingIndex] : undefined;
+  const snapshot: MenuLayoutSnapshot = {
+    name: cleanName,
+    createdAt: existing?.createdAt ?? nowIso,
+    updatedAt: nowIso,
+    config: sanitizeMenuConfig(config),
+  };
+  if (existingIndex >= 0) clean.layouts[existingIndex] = snapshot;
+  else clean.layouts.push(snapshot);
+  return clean;
+}
+
+export function deleteMenuLayout(
+  library: MenuLayoutLibrary,
+  name: string,
+): MenuLayoutLibrary {
+  const cleanName = cleanMenuLayoutName(name).toLowerCase();
+  const clean = sanitizeMenuLayoutLibrary(library);
+  clean.layouts = clean.layouts.filter(
+    (layout) => layout.name.toLowerCase() !== cleanName,
+  );
+  return clean;
 }

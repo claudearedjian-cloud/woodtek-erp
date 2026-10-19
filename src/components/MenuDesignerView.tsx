@@ -5,11 +5,14 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Download,
   Eye,
   EyeOff,
   Globe,
   GripVertical,
   Layers,
+  LayoutTemplate,
+  Minus,
   Pencil,
   Plus,
   Redo2,
@@ -19,6 +22,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Undo2,
+  Upload,
   X,
 } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
@@ -26,11 +30,20 @@ import {
   BADGE_MAX,
   GROUP_MAX,
   LABEL_MAX,
+  MENU_LAYOUT_NAME_MAX,
   MENU_REGISTRY,
+  makeMenuLayoutFile,
+  parseMenuLayoutFile,
+  sanitizeMenuLayoutLibrary,
   type MenuConfig,
+  type MenuLayoutSnapshot,
+  type MenuSectionColor,
+  type MenuSectionSettings,
 } from "@/lib/menuConfig";
 import {
+  DESIGNER_STARTER_TEMPLATES,
   buildDesignerRows,
+  buildStarterTemplateRows,
   cleanSectionName,
   clearDesignerSection,
   designerDraftConfig,
@@ -42,12 +55,19 @@ import {
   moveDesignerSection,
   pickDesignerLanding,
   pickDesignerSectionIcons,
+  pickDesignerSectionSettings,
   renameDesignerSection,
   visibleRolesForDesignerRow,
   type DesignerGroup,
   type DesignerRow,
+  type DesignerStarterTemplate,
 } from "@/lib/menuDesigner";
-import { MENU_ICON_CHOICES, iconChoice } from "@/lib/menuIcons";
+import {
+  MENU_ICON_CHOICES,
+  MENU_SECTION_COLOR_CHOICES,
+  iconChoice,
+  sectionColorChoice,
+} from "@/lib/menuIcons";
 import { listModulesForRole } from "@/lib/moduleAccess";
 import type { OptionalModulesConfig } from "@/lib/optionalModules";
 import { allRoles, baseRoleOf, registerCustomRoles } from "@/lib/permissions";
@@ -63,6 +83,7 @@ interface EditorSnapshot {
   rows: DesignerRow[];
   landing: Record<string, string>;
   sectionIcons: Record<string, string>;
+  sectionSettings: Record<string, MenuSectionSettings>;
 }
 
 type IconPickerTarget =
@@ -73,6 +94,16 @@ interface DropTarget {
   group: string;
   rowId: string | null;
   after: boolean;
+}
+
+interface PointerDragState {
+  id: string;
+  pointerId: number;
+  pointerType: string;
+  active: boolean;
+  startY: number;
+  lastX: number;
+  lastY: number;
 }
 
 const NEW_GROUP = "__new-section__";
@@ -88,6 +119,7 @@ function snapshotFromConfig(cfg: MenuConfig | null): EditorSnapshot {
     rows: buildDesignerRows(cfg),
     landing: pickDesignerLanding(cfg),
     sectionIcons: pickDesignerSectionIcons(cfg),
+    sectionSettings: pickDesignerSectionSettings(cfg),
   };
 }
 
@@ -242,6 +274,9 @@ export default function MenuDesignerView({
   const [sectionIcons, setSectionIcons] = useState<Record<string, string>>(
     () => cloneSnapshot(baseline).sectionIcons,
   );
+  const [sectionSettings, setSectionSettings] = useState<
+    Record<string, MenuSectionSettings>
+  >(() => cloneSnapshot(baseline).sectionSettings);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
@@ -252,16 +287,21 @@ export default function MenuDesignerView({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [iconTarget, setIconTarget] = useState<IconPickerTarget | null>(null);
+  const [namedLayouts, setNamedLayouts] = useState<MenuLayoutSnapshot[]>([]);
+  const [layoutName, setLayoutName] = useState("");
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [showPreview, setShowPreview] = useState(true);
   const [previewRole, setPreviewRole] = useState(
     () => currentUser?.displayRole || currentUser?.role || "Manager",
   );
-  const [, setRolesVersion] = useState(0);
+  const [rolesVersion, setRolesVersion] = useState(0);
   const [, setHistoryVersion] = useState(0);
 
   const currentSnapshot = useMemo<EditorSnapshot>(
-    () => ({ rows, landing, sectionIcons }),
-    [landing, rows, sectionIcons],
+    () => ({ rows, landing, sectionIcons, sectionSettings }),
+    [landing, rows, sectionIcons, sectionSettings],
   );
   const currentSnapshotRef = useRef<EditorSnapshot>(currentSnapshot);
   const baselineRef = useRef<EditorSnapshot>(baseline);
@@ -271,6 +311,8 @@ export default function MenuDesignerView({
   const applyingHistoryRef = useRef(false);
   const pendingCoalesceRef = useRef<string | null>(null);
   const lastHistoryRef = useRef<{ key: string; at: number } | null>(null);
+  const pointerDragRef = useRef<PointerDragState | null>(null);
+  const pointerAutoScrollRef = useRef<number | null>(null);
 
   useEffect(() => {
     currentSnapshotRef.current = currentSnapshot;
@@ -326,8 +368,8 @@ export default function MenuDesignerView({
 
   const roles = allRoles();
   const draftConfig = useMemo(
-    () => designerDraftConfig(rows, landing, sectionIcons),
-    [landing, rows, sectionIcons],
+    () => designerDraftConfig(rows, landing, sectionIcons, sectionSettings),
+    [landing, rows, sectionIcons, sectionSettings],
   );
   const sectionNames = designerSectionNames(rows);
   const groups = groupDesignerRows(rows, stagedSections);
@@ -368,6 +410,7 @@ export default function MenuDesignerView({
     setRows(next.rows);
     setLanding(next.landing);
     setSectionIcons(next.sectionIcons);
+    setSectionSettings(next.sectionSettings);
     currentSnapshotRef.current = next;
     if (options.makeBaseline) {
       const cleanBaseline = cloneSnapshot(next);
@@ -392,12 +435,47 @@ export default function MenuDesignerView({
           replaceSnapshot(fresh, { makeBaseline: true });
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setRolesVersion((version) => version + 1);
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (rolesVersion === 0) return;
+    let cancelled = false;
+    fetch("/api/menu-config/layouts", { cache: "no-store" })
+      .then((response) =>
+        response.ok ? response.json() : Promise.reject(new Error("Could not load named layouts")),
+      )
+      .then((data) => {
+        if (cancelled) return;
+        setNamedLayouts(sanitizeMenuLayoutLibrary(data.library).layouts);
+        setLibraryLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLibraryLoaded(true);
+        setStatus((current) =>
+          current || "Error: named menu layouts could not be loaded. The live menu is unchanged.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rolesVersion]);
+
+  useEffect(
+    () => () => {
+      if (pointerAutoScrollRef.current !== null) {
+        cancelAnimationFrame(pointerAutoScrollRef.current);
+      }
+    },
+    [],
+  );
 
   const markEdit = (coalesceKey?: string) => {
     pendingCoalesceRef.current = coalesceKey ?? null;
@@ -471,10 +549,30 @@ export default function MenuDesignerView({
     setStatus("New item added. Name it and choose a screen or website. Screen access follows Access Profiles.");
   };
 
+  const addSeparator = (groupKey = "top") => {
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const newRow: DesignerRow = {
+      id,
+      label: "",
+      badge: "",
+      group: groupKey,
+      icon: "",
+      roles: {},
+      custom: true,
+      kind: "separator",
+      target: "",
+    };
+    setSearch("");
+    applyRows(moveDesignerRowTo([newRow, ...rows], id, groupKey, null));
+    setStatus("Separator added. Give it an optional caption or leave it blank for a plain divider line.");
+  };
+
   const removeRow = (row: DesignerRow) => {
     applyRows(rows.filter((entry) => entry.id !== row.id));
     if (iconTarget?.kind === "row" && iconTarget.id === row.id) setIconTarget(null);
-    setStatus(`Removed "${row.label}". Undo can bring it back before you save.`);
+    const displayLabel =
+      row.kind === "separator" ? row.label.trim() || "Separator" : row.label;
+    setStatus(`Removed "${displayLabel}". Undo can bring it back before you save.`);
   };
 
   const landingChoices = (role: string) => {
@@ -506,6 +604,28 @@ export default function MenuDesignerView({
     setSectionIcons((previous) => {
       const next = { ...previous };
       if (icon) next[name] = icon;
+      else delete next[name];
+      return next;
+    });
+  };
+
+  const setSectionSetting = (
+    name: string,
+    patch: Partial<{ color: MenuSectionColor | ""; collapsed: boolean }>,
+  ) => {
+    markEdit();
+    setSectionSettings((previous) => {
+      const nextSettings: MenuSectionSettings = { ...(previous[name] ?? {}) };
+      if ("color" in patch) {
+        if (patch.color) nextSettings.color = patch.color;
+        else delete nextSettings.color;
+      }
+      if ("collapsed" in patch) {
+        if (patch.collapsed) nextSettings.collapsed = true;
+        else delete nextSettings.collapsed;
+      }
+      const next = { ...previous };
+      if (Object.keys(nextSettings).length) next[name] = nextSettings;
       else delete next[name];
       return next;
     });
@@ -609,6 +729,12 @@ export default function MenuDesignerView({
       delete next[group.key];
       return next;
     });
+    setSectionSettings((previous) => {
+      if (!previous[group.key]) return previous;
+      const next = { ...previous, [nextName]: previous[group.key] };
+      delete next[group.key];
+      return next;
+    });
     if (iconTarget?.kind === "section" && iconTarget.name === group.key) {
       setIconTarget({ kind: "section", name: nextName });
     }
@@ -626,6 +752,12 @@ export default function MenuDesignerView({
       setRows(clearDesignerSection(rows, group.key));
     }
     setSectionIcons((previous) => {
+      if (!previous[group.key]) return previous;
+      const next = { ...previous };
+      delete next[group.key];
+      return next;
+    });
+    setSectionSettings((previous) => {
       if (!previous[group.key]) return previous;
       const next = { ...previous };
       delete next[group.key];
@@ -659,7 +791,19 @@ export default function MenuDesignerView({
     return iconTarget.kind === "row" ? iconTarget.label : `Section: ${iconTarget.name}`;
   };
 
+  const stopPointerAutoScroll = () => {
+    if (pointerAutoScrollRef.current !== null) {
+      cancelAnimationFrame(pointerAutoScrollRef.current);
+      pointerAutoScrollRef.current = null;
+    }
+  };
+
   const startDrag = (event: React.DragEvent<HTMLElement>, row: DesignerRow) => {
+    const pointerDrag = pointerDragRef.current;
+    if (pointerDrag?.id === row.id && pointerDrag.pointerType !== "mouse") {
+      event.preventDefault();
+      return;
+    }
     if (busy || searchActive) {
       event.preventDefault();
       return;
@@ -671,6 +815,8 @@ export default function MenuDesignerView({
   };
 
   const finishDrag = () => {
+    stopPointerAutoScroll();
+    pointerDragRef.current = null;
     setDraggedId(null);
     setDropTarget(null);
   };
@@ -732,9 +878,164 @@ export default function MenuDesignerView({
     finishDrag();
   };
 
-  const changeCustomKind = (row: DesignerRow, nextKind: "tab" | "link") => {
+  const pointerTargetAt = (
+    clientX: number,
+    clientY: number,
+    draggedIdValue: string,
+  ): DropTarget | null => {
+    const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (!element) return null;
+    const rowElement = element.closest<HTMLElement>("[data-menu-designer-row-id]");
+    if (rowElement) {
+      const rowId = rowElement.dataset.menuDesignerRowId;
+      const group = rowElement.dataset.menuDesignerGroup;
+      if (!rowId || !group || rowId === draggedIdValue) return null;
+      const rect = rowElement.getBoundingClientRect();
+      return {
+        group,
+        rowId,
+        after: clientY > rect.top + rect.height / 2,
+      };
+    }
+    const groupElement = element.closest<HTMLElement>("[data-menu-designer-group]");
+    const group = groupElement?.dataset.menuDesignerGroup;
+    return group ? { group, rowId: null, after: true } : null;
+  };
+
+  const updatePointerDropTarget = (drag: PointerDragState): DropTarget | null => {
+    const target = pointerTargetAt(drag.lastX, drag.lastY, drag.id);
+    setDropTarget((previous) =>
+      previous?.group === target?.group &&
+      previous?.rowId === target?.rowId &&
+      previous?.after === target?.after
+        ? previous
+        : target,
+    );
+    return target;
+  };
+
+  const runPointerAutoScroll = () => {
+    const drag = pointerDragRef.current;
+    if (!drag?.active) {
+      pointerAutoScrollRef.current = null;
+      return;
+    }
+    const edge = 88;
+    const speed = 16;
+    if (drag.lastY < edge) window.scrollBy(0, -speed);
+    else if (drag.lastY > window.innerHeight - edge) window.scrollBy(0, speed);
+    updatePointerDropTarget(drag);
+    pointerAutoScrollRef.current = requestAnimationFrame(runPointerAutoScroll);
+  };
+
+  const ensurePointerAutoScroll = () => {
+    if (pointerAutoScrollRef.current === null) {
+      pointerAutoScrollRef.current = requestAnimationFrame(runPointerAutoScroll);
+    }
+  };
+
+  const commitDropTarget = (dragged: string, target: DropTarget | null) => {
+    if (!dragged || !target) return;
+    if (!target.rowId) {
+      applyRows(moveDesignerRowTo(rows, dragged, target.group, null));
+      return;
+    }
+    let beforeId: string | null = target.rowId;
+    if (target.after) {
+      const groupRows = rows.filter((entry) => entry.group === target.group);
+      const targetIndex = groupRows.findIndex((entry) => entry.id === target.rowId);
+      beforeId =
+        groupRows.slice(targetIndex + 1).find((entry) => entry.id !== dragged)?.id ?? null;
+    }
+    applyRows(moveDesignerRowTo(rows, dragged, target.group, beforeId));
+  };
+
+  const startPointerDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    row: DesignerRow,
+  ) => {
+    if (event.pointerType === "mouse" || busy || searchActive) return;
+    pointerDragRef.current = {
+      id: row.id,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      active: false,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is an enhancement; the move handlers still work on
+      // browsers that decline it for a particular input device.
+    }
+  };
+
+  const movePointerDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    row: DesignerRow,
+  ) => {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.id !== row.id || drag.pointerId !== event.pointerId) return;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    if (!drag.active) {
+      if (Math.abs(event.clientY - drag.startY) < 8) return;
+      drag.active = true;
+      setDraggedId(row.id);
+      ensurePointerAutoScroll();
+    }
+    event.preventDefault();
+    updatePointerDropTarget(drag);
+  };
+
+  const finishPointerDrag = (
+    event: React.PointerEvent<HTMLElement>,
+    row: DesignerRow,
+    commit: boolean,
+  ) => {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.id !== row.id || drag.pointerId !== event.pointerId) return;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    const draggedIdValue = drag.id;
+    const target =
+      commit && drag.active
+        ? pointerTargetAt(event.clientX, event.clientY, draggedIdValue)
+        : null;
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // The browser may already have released capture on pointercancel.
+    }
+    pointerDragRef.current = null;
+    stopPointerAutoScroll();
+    if (target) commitDropTarget(draggedIdValue, target);
+    finishDrag();
+  };
+
+  const changeCustomKind = (
+    row: DesignerRow,
+    nextKind: "tab" | "link" | "separator",
+  ) => {
+    if (nextKind === "separator") {
+      patchRow(row.id, {
+        kind: "separator",
+        badge: "",
+        icon: "",
+        target: "",
+        roles: {},
+      });
+      return;
+    }
     patchRow(row.id, {
       kind: nextKind,
+      ...(row.kind === "separator" && !row.label.trim()
+        ? { label: "New menu item" }
+        : {}),
       target:
         nextKind === "link"
           ? ""
@@ -743,15 +1044,199 @@ export default function MenuDesignerView({
             : "dashboard",
       ...(nextKind === "link" && row.kind !== "link"
         ? { roles: Object.fromEntries(roles.map((role) => [role, role === "Manager"])) }
-        : {}),
+        : nextKind === "tab"
+          ? { roles: {} }
+          : {}),
     });
+  };
+
+  const firstInvalidLinkRow = () =>
+    rows.find(
+      (row) => row.custom && row.kind === "link" && !isHttpUrl((row.target ?? "").trim()),
+    );
+
+  const applyDraftConfig = (config: MenuConfig, sourceLabel: string) => {
+    markEdit();
+    replaceSnapshot(snapshotFromConfig(config));
+    setStagedSections([]);
+    setIconTarget(null);
+    setRenamingSection(null);
+    finishDrag();
+    setStatus(
+      `${sourceLabel} loaded into the draft. Review the preview, then Save changes to make it the live shared layout. Undo can return to the previous draft.`,
+    );
+  };
+
+  const applyStarterTemplate = (template: DesignerStarterTemplate) => {
+    if (busy || libraryBusy) return;
+    const confirmed = window.confirm(
+      `Apply the "${template.name}" starter template to the draft? Built-in screens will be rearranged. Your custom entries and landing-screen choices stay, and nothing is live until Save changes.`,
+    );
+    if (!confirmed) return;
+    markEdit();
+    setRows(buildStarterTemplateRows(rows, template));
+    setSectionIcons((previous) => ({
+      ...pickDesignerSectionIcons(template.config),
+      ...previous,
+    }));
+    setSectionSettings((previous) => ({
+      ...pickDesignerSectionSettings(template.config),
+      ...previous,
+    }));
+    setStagedSections([]);
+    setIconTarget(null);
+    setRenamingSection(null);
+    finishDrag();
+    setStatus(
+      `Starter template "${template.name}" applied to the draft. Custom entries and landing screens were preserved; Save changes to make it live.`,
+    );
+  };
+
+  const applyLibraryResponse = (data: any) => {
+    const library = sanitizeMenuLayoutLibrary(data?.library);
+    setNamedLayouts(library.layouts);
+    setLibraryLoaded(true);
+    return library;
+  };
+
+  const saveNamedLayout = async () => {
+    if (busy || libraryBusy) return;
+    const name = layoutName.trim().slice(0, MENU_LAYOUT_NAME_MAX);
+    if (!name) {
+      setStatus("Error: type a name for this layout first.");
+      return;
+    }
+    const invalidLink = firstInvalidLinkRow();
+    if (invalidLink) {
+      setStatus(
+        `Error: "${invalidLink.label}" needs a full http:// or https:// website address before this draft can be stored as a layout.`,
+      );
+      return;
+    }
+
+    setLibraryBusy(true);
+    setStatus("");
+    try {
+      const response = await fetch("/api/menu-config/layouts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, config: draftConfig }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not save the named layout");
+      applyLibraryResponse(data);
+      const savedName = typeof data.layout?.name === "string" ? data.layout.name : name;
+      setLayoutName(savedName);
+      setStatus(
+        `Named layout "${savedName}" saved from the current draft. This does not change the live sidebar; use Save changes for that.`,
+      );
+    } catch (error: any) {
+      setStatus("Error: " + (error?.message || error));
+    } finally {
+      setLibraryBusy(false);
+    }
+  };
+
+  const loadNamedLayout = (layout: MenuLayoutSnapshot) => {
+    if (busy || libraryBusy) return;
+    if (
+      dirty &&
+      !window.confirm(
+        `Replace the current unsaved draft with named layout "${layout.name}"? Undo can bring the current draft back, and the live sidebar does not change until Save changes.`,
+      )
+    ) {
+      return;
+    }
+    applyDraftConfig(layout.config, `Named layout "${layout.name}"`);
+    setLayoutName(layout.name);
+  };
+
+  const deleteNamedLayout = async (layout: MenuLayoutSnapshot) => {
+    if (busy || libraryBusy) return;
+    if (!window.confirm(`Delete the named menu layout "${layout.name}"? The live sidebar layout will not change.`)) {
+      return;
+    }
+    setLibraryBusy(true);
+    setStatus("");
+    try {
+      const response = await fetch(
+        `/api/menu-config/layouts?name=${encodeURIComponent(layout.name)}`,
+        { method: "DELETE" },
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not delete the named layout");
+      applyLibraryResponse(data);
+      setStatus(`Named layout "${layout.name}" deleted. The live sidebar is unchanged.`);
+    } catch (error: any) {
+      setStatus("Error: " + (error?.message || error));
+    } finally {
+      setLibraryBusy(false);
+    }
+  };
+
+  const exportLayoutFile = () => {
+    if (busy || libraryBusy) return;
+    const invalidLink = firstInvalidLinkRow();
+    if (invalidLink) {
+      setStatus(
+        `Error: "${invalidLink.label}" needs a full http:// or https:// website address before this draft can be exported.`,
+      );
+      return;
+    }
+    const defaultName = layoutName.trim() || "WoodTek menu layout";
+    const requestedName = window.prompt("Name for the exported menu layout:", defaultName);
+    if (requestedName === null) return;
+    const file = makeMenuLayoutFile(requestedName.trim() || defaultName, draftConfig);
+    const slug =
+      file.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "woodtek-menu-layout";
+    const blob = new Blob([JSON.stringify(file, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${slug}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setLayoutName(file.name);
+    setStatus(
+      `Layout file "${file.name}" exported. Importing it later changes only a draft until Save changes is pressed.`,
+    );
+  };
+
+  const importLayoutFile = async (file: File | undefined) => {
+    if (!file || busy || libraryBusy) return;
+    try {
+      const parsed = parseMenuLayoutFile(JSON.parse(await file.text()));
+      if (!parsed) {
+        throw new Error("That file is not a WoodTek menu layout JSON file.");
+      }
+      if (
+        dirty &&
+        !window.confirm(
+          `Replace the current unsaved draft with imported layout "${parsed.name}"? Undo can bring the current draft back, and the live sidebar does not change until Save changes.`,
+        )
+      ) {
+        return;
+      }
+      applyDraftConfig(parsed.config, `Imported layout "${parsed.name}"`);
+      setLayoutName(parsed.name);
+    } catch (error: any) {
+      setStatus(
+        "Error: could not import that layout file. " + (error?.message || error),
+      );
+    }
   };
 
   const save = async () => {
     if (busy) return;
-    const invalidLink = rows.find(
-      (row) => row.custom && row.kind === "link" && !isHttpUrl((row.target ?? "").trim()),
-    );
+    const invalidLink = firstInvalidLinkRow();
     if (invalidLink) {
       setStatus(`Error: "${invalidLink.label}" needs a full http:// or https:// website address before saving.`);
       return;
@@ -851,6 +1336,14 @@ export default function MenuDesignerView({
             </button>
             <button
               type="button"
+              onClick={() => addSeparator("top")}
+              disabled={busy}
+              className={`${buttonClass} border-slate-600 bg-slate-800/70 text-slate-200 hover:bg-slate-800`}
+            >
+              <Minus className="h-3.5 w-3.5" /> Add separator
+            </button>
+            <button
+              type="button"
               onClick={undo}
               disabled={busy || !canUndo}
               className={`${buttonClass} border-slate-700 bg-slate-950/60 text-slate-200 hover:bg-slate-800`}
@@ -908,6 +1401,164 @@ export default function MenuDesignerView({
         )}
       </div>
 
+      <section className="rounded-2xl border border-violet-500/30 bg-slate-900/70 p-5">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-500/40 bg-violet-500/15">
+            <LayoutTemplate className="h-5 w-5 text-violet-300" />
+          </div>
+          <div className="min-w-[260px] flex-1">
+            <h3 className="text-base font-extrabold tracking-tight text-white">
+              Layout library & starter templates
+            </h3>
+            <p className="mt-1 max-w-4xl text-xs leading-relaxed text-slate-400">
+              There is still one shared live sidebar layout. Starter templates, named layouts and imported
+              files change only this draft until you press Save changes. They arrange entries; Access Profiles
+              and server permissions still decide who may open each screen.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+          <div>
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Starter templates</h4>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {DESIGNER_STARTER_TEMPLATES.map((template) => (
+                <div
+                  key={template.id}
+                  className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-extrabold text-white">{template.name}</div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                        {template.description}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => applyStarterTemplate(template)}
+                      disabled={busy || libraryBusy}
+                      className={`${buttonClass} shrink-0 border-violet-500/40 bg-violet-500/15 px-2.5 py-1.5 text-[11px] text-violet-200 hover:bg-violet-500/25`}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Applying a template rearranges the built-in screens in the draft. Custom entries, separators and
+              landing-screen choices are preserved; Undo can return to the previous draft.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-300">Named layouts & files</h4>
+            <label className="mt-2 block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Layout name
+              <input
+                value={layoutName}
+                maxLength={MENU_LAYOUT_NAME_MAX}
+                onChange={(event) => setLayoutName(event.target.value)}
+                placeholder="e.g. Manager overview - October"
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-white outline-none focus:border-violet-500/60"
+              />
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={saveNamedLayout}
+                disabled={busy || libraryBusy}
+                className={`${buttonClass} border-violet-500/40 bg-violet-500/15 text-violet-200 hover:bg-violet-500/25`}
+              >
+                <Save className="h-3.5 w-3.5" /> Save named layout
+              </button>
+              <button
+                type="button"
+                onClick={exportLayoutFile}
+                disabled={busy || libraryBusy}
+                className={`${buttonClass} border-slate-700 bg-slate-950/60 text-slate-200 hover:bg-slate-800`}
+              >
+                <Download className="h-3.5 w-3.5" /> Export file
+              </button>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={busy || libraryBusy}
+                className={`${buttonClass} border-slate-700 bg-slate-950/60 text-slate-200 hover:bg-slate-800`}
+              >
+                <Upload className="h-3.5 w-3.5" /> Import file
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(event) => {
+                  void importLayoutFile(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Saving with an existing name updates that named layout. Loading or importing a layout never makes
+              it live by itself; review the role preview and press Save changes.
+            </p>
+
+            <div className="custom-scrollbar mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {!libraryLoaded ? (
+                <p className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 px-3 py-4 text-xs font-semibold text-slate-400">
+                  Loading named layouts...
+                </p>
+              ) : namedLayouts.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 px-3 py-4 text-xs font-semibold text-slate-400">
+                  No named layouts yet. Name the current draft and save it here as a reusable snapshot.
+                </p>
+              ) : (
+                namedLayouts.map((layout) => {
+                  const updated = layout.updatedAt ? new Date(layout.updatedAt) : null;
+                  const updatedLabel =
+                    updated && !Number.isNaN(updated.getTime())
+                      ? updated.toLocaleString()
+                      : "Saved layout";
+                  return (
+                    <div
+                      key={layout.name}
+                      className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-extrabold text-slate-100">{layout.name}</div>
+                        <div className="truncate text-[10px] font-semibold text-slate-500">
+                          {updatedLabel} · {layout.config.items.length} configured entries
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => loadNamedLayout(layout)}
+                        disabled={busy || libraryBusy}
+                        className={`${buttonClass} shrink-0 border-sky-500/40 bg-sky-500/15 px-2.5 py-1.5 text-[11px] text-sky-200 hover:bg-sky-500/25`}
+                      >
+                        Load
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteNamedLayout(layout)}
+                        disabled={busy || libraryBusy}
+                        className={`${smallIconButtonClass} shrink-0 border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+                        aria-label={`Delete named layout ${layout.name}`}
+                        title="Delete this named layout"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className={showPreview ? "grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_350px]" : ""}>
         {showPreview && (
           <aside className="overflow-hidden rounded-2xl border border-sky-500/30 bg-slate-900/70 xl:order-2 xl:sticky xl:top-4">
@@ -932,7 +1583,8 @@ export default function MenuDesignerView({
               </label>
               <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
                 Draft only. The preview applies Access Profiles, custom roles, external-link audiences,
-                and installed optional-module switches. Its buttons and links do not navigate.
+                and installed optional-module switches. It prunes orphan separators and uses configured
+                section colours and default open/collapsed states. Its buttons and links do not navigate.
               </p>
             </div>
             <div className="h-[640px] max-h-[calc(100vh-2rem)] min-h-[500px] bg-slate-950">
@@ -959,7 +1611,7 @@ export default function MenuDesignerView({
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search menu items, screens, sections, badges..."
+                  placeholder="Search menu items, screens, sections, badges, separators..."
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-9 text-sm font-semibold text-white outline-none focus:border-amber-500/60"
                 />
                 {search && (
@@ -996,7 +1648,7 @@ export default function MenuDesignerView({
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-400">
               <span>{searchActive ? `${matchCount} matching item${matchCount === 1 ? "" : "s"}` : `${rows.length} menu items in ${groups.length} placements`}</span>
-              <span>Drag by the handle to reorder or move between placements.</span>
+              <span>Drag by the handle with a mouse or touch to reorder or move between placements.</span>
               {searchActive && <span className="text-amber-300">Drag is paused while searching; arrows still work.</span>}
             </div>
           </div>
@@ -1012,16 +1664,25 @@ export default function MenuDesignerView({
             const isStagedEmpty = group.customSection && fullGroup.rows.length === 0;
             const sectionIndex = group.customSection ? sectionNames.indexOf(group.key) : -1;
             const SectionIcon = iconChoice(sectionIcons[group.key])?.Icon ?? Layers;
+            const settingsForGroup = group.customSection
+              ? sectionSettings[group.key] ?? {}
+              : {};
+            const groupColor = sectionColorChoice(settingsForGroup.color);
             const isGroupDropTarget =
               dropTarget?.group === group.key && dropTarget.rowId === null;
 
             return (
               <section
                 key={group.key}
+                data-menu-designer-group={group.key}
                 onDragOver={(event) => handleGroupDragOver(event, group.key)}
                 onDrop={(event) => dropOnGroup(event, group.key)}
                 className={`overflow-hidden rounded-2xl border bg-slate-900/50 transition ${
-                  isGroupDropTarget ? "border-amber-400 ring-2 ring-amber-500/30" : "border-slate-800"
+                  isGroupDropTarget
+                    ? "border-amber-400 ring-2 ring-amber-500/30"
+                    : group.customSection && settingsForGroup.color
+                      ? groupColor.borderClass
+                      : "border-slate-800"
                 }`}
               >
                 <header className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950/50 px-4 py-3">
@@ -1071,6 +1732,17 @@ export default function MenuDesignerView({
                               Staged
                             </span>
                           )}
+                          {group.customSection && settingsForGroup.color && (
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${groupColor.swatchClass}`}
+                              title={`${groupColor.label} section colour`}
+                            />
+                          )}
+                          {group.customSection && settingsForGroup.collapsed && (
+                            <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                              Starts collapsed
+                            </span>
+                          )}
                         </div>
                         <p className="mt-0.5 text-[11px] text-slate-500">
                           {group.key === "top"
@@ -1091,9 +1763,65 @@ export default function MenuDesignerView({
                             className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 transition hover:bg-slate-800"
                             title="Choose the section header icon"
                           >
-                            <SectionIcon className="h-4 w-4 text-amber-400" />
+                            <SectionIcon className={`h-4 w-4 ${groupColor.iconClass}`} />
                             {iconChoice(sectionIcons[group.key])?.label ?? "Default icon"}
                           </button>
+                          <div
+                            className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5"
+                            role="group"
+                            aria-label={`Header colour for section ${group.label}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setSectionSetting(group.key, { color: "" })}
+                              disabled={busy}
+                              aria-pressed={!settingsForGroup.color}
+                              aria-label={`Use the default colour for section ${group.label}`}
+                              title="Default colour"
+                              className={`rounded-full p-0.5 transition disabled:opacity-40 ${
+                                !settingsForGroup.color
+                                  ? "ring-2 ring-white/80"
+                                  : "opacity-70 hover:opacity-100"
+                              }`}
+                            >
+                              <span className="block h-3.5 w-3.5 rounded-full border border-slate-500 bg-slate-800" />
+                            </button>
+                            {MENU_SECTION_COLOR_CHOICES.map((choice) => {
+                              const selected = settingsForGroup.color === choice.key;
+                              return (
+                                <button
+                                  key={choice.key}
+                                  type="button"
+                                  onClick={() => setSectionSetting(group.key, { color: choice.key })}
+                                  disabled={busy}
+                                  aria-pressed={selected}
+                                  aria-label={`Use ${choice.label} for section ${group.label}`}
+                                  title={choice.label}
+                                  className={`rounded-full p-0.5 transition disabled:opacity-40 ${
+                                    selected
+                                      ? "ring-2 ring-white/80"
+                                      : "opacity-70 hover:opacity-100"
+                                  }`}
+                                >
+                                  <span className={`block h-3.5 w-3.5 rounded-full ${choice.swatchClass}`} />
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-200">
+                            <input
+                              type="checkbox"
+                              checked={!!settingsForGroup.collapsed}
+                              onChange={(event) =>
+                                setSectionSetting(group.key, {
+                                  collapsed: event.target.checked,
+                                })
+                              }
+                              disabled={busy}
+                              className="accent-amber-500"
+                            />
+                            Start collapsed
+                          </label>
                           <button
                             type="button"
                             onClick={() => applyRows(moveDesignerSection(rows, group.key, -1))}
@@ -1143,7 +1871,7 @@ export default function MenuDesignerView({
                 <div className="space-y-2 p-3">
                   {group.rows.length === 0 && (
                     <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 px-4 py-6 text-center text-xs font-semibold text-slate-500">
-                      Drop a menu item here, use its placement dropdown, or add a new item below.
+                      Drop a menu item here, use its placement dropdown, or add a new item or separator below.
                     </div>
                   )}
 
@@ -1160,6 +1888,10 @@ export default function MenuDesignerView({
                     const EffectiveIcon = iconChoice(effectiveIconKey)?.Icon ?? Layers;
                     const selectedIcon = iconChoice(row.icon);
                     const visibleRoles = visibleRolesForDesignerRow(row);
+                    const isSeparator = !!row.custom && row.kind === "separator";
+                    const rowDisplayLabel = isSeparator
+                      ? row.label.trim() || "Separator"
+                      : row.label;
                     const isDragged = draggedId === row.id;
                     const isDropRow = dropTarget?.group === group.key && dropTarget.rowId === row.id;
 
@@ -1167,6 +1899,8 @@ export default function MenuDesignerView({
                       <article
                         key={row.id}
                         data-menu-designer-row="true"
+                        data-menu-designer-row-id={row.id}
+                        data-menu-designer-group={group.key}
                         onDragOver={(event) => handleRowDragOver(event, group.key, row)}
                         onDrop={(event) => dropOnRow(event, group.key, row)}
                         className={`relative rounded-xl border p-3 transition ${
@@ -1188,12 +1922,16 @@ export default function MenuDesignerView({
                             draggable={!busy && !searchActive}
                             onDragStart={(event) => startDrag(event, row)}
                             onDragEnd={finishDrag}
+                            onPointerDown={(event) => startPointerDrag(event, row)}
+                            onPointerMove={(event) => movePointerDrag(event, row)}
+                            onPointerUp={(event) => finishPointerDrag(event, row, true)}
+                            onPointerCancel={(event) => finishPointerDrag(event, row, false)}
                             disabled={busy}
-                            className={`flex h-9 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-400 ${
+                            className={`flex h-9 w-8 shrink-0 touch-none select-none items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-400 ${
                               searchActive ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing"
                             }`}
-                            aria-label={`Drag ${row.label} to reorder`}
-                            title={searchActive ? "Clear the search to drag items" : "Drag to reorder or move to another placement"}
+                            aria-label={`Drag ${rowDisplayLabel} to reorder`}
+                            title={searchActive ? "Clear the search to drag items" : "Drag with a mouse or touch to reorder or move to another placement"}
                           >
                             <GripVertical className="h-4 w-4" />
                           </button>
@@ -1203,7 +1941,7 @@ export default function MenuDesignerView({
                               onClick={() => applyRows(moveDesignerRowWithinGroup(rows, row.id, -1))}
                               disabled={busy || groupIndex <= 0}
                               className="rounded bg-slate-800 p-1 text-slate-300 transition hover:bg-slate-700 disabled:opacity-30"
-                              aria-label={`Move ${row.label} up in ${group.label}`}
+                              aria-label={`Move ${rowDisplayLabel} up in ${group.label}`}
                             >
                               <ArrowUp className="h-3.5 w-3.5" />
                             </button>
@@ -1212,48 +1950,61 @@ export default function MenuDesignerView({
                               onClick={() => applyRows(moveDesignerRowWithinGroup(rows, row.id, 1))}
                               disabled={busy || groupIndex < 0 || groupIndex >= fullGroup.rows.length - 1}
                               className="rounded bg-slate-800 p-1 text-slate-300 transition hover:bg-slate-700 disabled:opacity-30"
-                              aria-label={`Move ${row.label} down in ${group.label}`}
+                              aria-label={`Move ${rowDisplayLabel} down in ${group.label}`}
                             >
                               <ArrowDown className="h-3.5 w-3.5" />
                             </button>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => setIconTarget({ kind: "row", id: row.id, label: row.label })}
-                            disabled={busy}
-                            className="flex min-w-[106px] items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-left text-[11px] font-bold text-slate-200 transition hover:bg-slate-800 disabled:opacity-50"
-                            title="Open the visual icon gallery"
-                          >
-                            <EffectiveIcon className="h-4 w-4 shrink-0 text-amber-400" />
-                            <span className="truncate">{selectedIcon?.label ?? "Auto icon"}</span>
-                          </button>
+                          {isSeparator ? (
+                            <div
+                              className="flex min-w-[106px] items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-left text-[11px] font-bold text-slate-400"
+                              title="Separators do not use an icon"
+                            >
+                              <Minus className="h-4 w-4 shrink-0" />
+                              <span className="truncate">Separator</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setIconTarget({ kind: "row", id: row.id, label: rowDisplayLabel })}
+                              disabled={busy}
+                              className="flex min-w-[106px] items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-left text-[11px] font-bold text-slate-200 transition hover:bg-slate-800 disabled:opacity-50"
+                              title="Open the visual icon gallery"
+                            >
+                              <EffectiveIcon className="h-4 w-4 shrink-0 text-amber-400" />
+                              <span className="truncate">{selectedIcon?.label ?? "Auto icon"}</span>
+                            </button>
+                          )}
 
                           <input
                             value={row.label}
                             maxLength={LABEL_MAX}
+                            placeholder={isSeparator ? "Optional separator caption" : undefined}
                             onChange={(event) =>
                               patchRow(row.id, { label: event.target.value }, `row:${row.id}:label`)
                             }
                             className="min-w-[220px] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-white outline-none focus:border-amber-500/60"
-                            aria-label={`Menu label for ${registryEntry?.label ?? row.id}`}
+                            aria-label={isSeparator ? "Optional caption for separator" : `Menu label for ${registryEntry?.label ?? row.id}`}
                           />
-                          <input
-                            value={row.badge}
-                            maxLength={BADGE_MAX}
-                            placeholder={`badge (${BADGE_MAX})`}
-                            onChange={(event) =>
-                              patchRow(row.id, { badge: event.target.value }, `row:${row.id}:badge`)
-                            }
-                            className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[11px] font-bold uppercase text-amber-400 outline-none focus:border-amber-500/60"
-                            aria-label={`Badge for ${row.label}`}
-                          />
+                          {!isSeparator && (
+                            <input
+                              value={row.badge}
+                              maxLength={BADGE_MAX}
+                              placeholder={`badge (${BADGE_MAX})`}
+                              onChange={(event) =>
+                                patchRow(row.id, { badge: event.target.value }, `row:${row.id}:badge`)
+                              }
+                              className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[11px] font-bold uppercase text-amber-400 outline-none focus:border-amber-500/60"
+                              aria-label={`Badge for ${rowDisplayLabel}`}
+                            />
+                          )}
                           <select
                             value={row.group}
                             onChange={(event) => chooseGroup(row, event.target.value)}
                             disabled={busy}
                             className="max-w-[230px] rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
-                            aria-label={`Placement for ${row.label}`}
+                            aria-label={`Placement for ${rowDisplayLabel}`}
                           >
                             {groups.map((placement) => (
                               <option key={placement.key} value={placement.key}>
@@ -1272,8 +2023,8 @@ export default function MenuDesignerView({
                               onClick={() => removeRow(row)}
                               disabled={busy}
                               className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-2 text-rose-400 transition hover:bg-rose-500/25 disabled:opacity-50"
-                              aria-label={`Remove custom menu item ${row.label}`}
-                              title="Remove this custom menu item"
+                              aria-label={`Remove custom menu item ${rowDisplayLabel}`}
+                              title={isSeparator ? "Remove this separator" : "Remove this custom menu item"}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -1281,13 +2032,25 @@ export default function MenuDesignerView({
                         </div>
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 pl-1 text-[11px] font-semibold text-slate-500 sm:pl-[104px]">
-                          <span title={visibleRoles.length ? visibleRoles.join(", ") : "No role sees this entry"}>
-                            Visible to {visibleRoles.length} of {roles.length} roles
+                          <span
+                            title={
+                              isSeparator
+                                ? "A separator has no screen or audience of its own"
+                                : visibleRoles.length
+                                  ? visibleRoles.join(", ")
+                                  : "No role sees this entry"
+                            }
+                          >
+                            {isSeparator
+                              ? "Layout separator"
+                              : `Visible to ${visibleRoles.length} of ${roles.length} roles`}
                           </span>
                           <span>
-                            {row.custom && row.kind === "link"
-                              ? "Audience controls below apply only to this external website shortcut."
-                              : "Access Profiles decide visibility; optional modules may narrow it in the preview."}
+                            {isSeparator
+                              ? "Shown only when visible menu items remain on both sides for that role."
+                              : row.custom && row.kind === "link"
+                                ? "Audience controls below apply only to this external website shortcut."
+                                : "Access Profiles decide visibility; optional modules may narrow it in the preview."}
                           </span>
                           <span className="text-slate-600">{row.custom ? `Custom ID: ${row.id}` : `Screen: ${row.id}`}</span>
                         </div>
@@ -1295,18 +2058,26 @@ export default function MenuDesignerView({
                         {row.custom && (
                           <div className="mt-2 flex flex-wrap items-center gap-2 pl-1 sm:pl-[104px]">
                             <span className="rounded-full border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300">
-                              Custom
+                              {isSeparator ? "Separator" : "Custom"}
                             </span>
                             <select
-                              value={row.kind === "link" ? "link" : "tab"}
+                              value={row.kind === "link" ? "link" : row.kind === "separator" ? "separator" : "tab"}
                               onChange={(event) =>
-                                changeCustomKind(row, event.target.value === "link" ? "link" : "tab")
+                                changeCustomKind(
+                                  row,
+                                  event.target.value === "link"
+                                    ? "link"
+                                    : event.target.value === "separator"
+                                      ? "separator"
+                                      : "tab",
+                                )
                               }
                               className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
-                              aria-label={`Custom item type for ${row.label}`}
+                              aria-label={`Custom item type for ${rowDisplayLabel}`}
                             >
                               <option value="tab">Opens a screen</option>
                               <option value="link">Opens a website (new tab)</option>
+                              <option value="separator">Separator (divider line)</option>
                             </select>
                             {row.kind === "link" ? (
                               <input
@@ -1317,14 +2088,18 @@ export default function MenuDesignerView({
                                   patchRow(row.id, { target: event.target.value }, `row:${row.id}:target`)
                                 }
                                 className="min-w-[220px] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white outline-none focus:border-sky-500/60"
-                                aria-label={`Website address for ${row.label}`}
+                                aria-label={`Website address for ${rowDisplayLabel}`}
                               />
+                            ) : row.kind === "separator" ? (
+                              <span className="text-[11px] font-semibold leading-relaxed text-slate-500">
+                                No destination. Drag it between items; the sidebar hides it if a role has no visible item on one side.
+                              </span>
                             ) : (
                               <select
                                 value={MENU_REGISTRY.some((entry) => entry.id === row.target) ? row.target : "dashboard"}
                                 onChange={(event) => patchRow(row.id, { target: event.target.value })}
                                 className="max-w-[280px] rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs font-bold text-slate-300 outline-none"
-                                aria-label={`Target screen for ${row.label}`}
+                                aria-label={`Target screen for ${rowDisplayLabel}`}
                               >
                                 {MENU_REGISTRY.map((entry) => (
                                   <option key={entry.id} value={entry.id}>
@@ -1365,14 +2140,24 @@ export default function MenuDesignerView({
                     );
                   })}
 
-                  <button
-                    type="button"
-                    onClick={() => addItem(group.key)}
-                    disabled={busy}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-700 bg-slate-950/30 px-3 py-2.5 text-xs font-bold text-slate-400 transition hover:border-sky-500/50 hover:text-sky-300 disabled:opacity-50"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Add item to {group.label}
-                  </button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={() => addItem(group.key)}
+                      disabled={busy}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-700 bg-slate-950/30 px-3 py-2.5 text-xs font-bold text-slate-400 transition hover:border-sky-500/50 hover:text-sky-300 disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add item to {group.label}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addSeparator(group.key)}
+                      disabled={busy}
+                      className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-700 bg-slate-950/30 px-3 py-2.5 text-xs font-bold text-slate-400 transition hover:border-slate-400 hover:text-slate-200 disabled:opacity-50"
+                    >
+                      <Minus className="h-3.5 w-3.5" /> Add separator
+                    </button>
+                  </div>
                 </div>
               </section>
             );
@@ -1412,12 +2197,15 @@ export default function MenuDesignerView({
           <div className="flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-[11px] leading-relaxed text-slate-400">
             <Globe className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
             <p>
-              <span className="font-bold text-slate-300">How to use it:</span> drag by the handle inside a
-              placement or into another placement. Drop on the top or bottom half of a row to choose the exact
-              side, or drop on empty placement space to append. The arrows remain available for touch and
-              keyboard-friendly fine adjustments. Blue rows are custom entries. An in-app shortcut follows the
-              target screen Access Profile; only an external website shortcut has its own audience. A section
-              header appears only for people who can see at least one item inside it.
+              <span className="font-bold text-slate-300">How to use it:</span> drag by the handle with a mouse
+              or touch inside a placement or into another placement. Drop on the top or bottom half of a row to
+              choose the exact side, or drop on empty placement space to append. The arrows remain available for
+              precise adjustments. Named layouts, imported files and starter templates change only the draft until
+              Save changes. Custom sections can carry a colour and start collapsed; each device may remember its
+              own later open/closed choice, while a section containing the current screen stays open. Separators
+              appear only when visible items remain on both sides for that role. Blue rows are custom entries. An
+              in-app shortcut follows the target screen Access Profile; only an external website shortcut has its
+              own audience. A section header appears only for people who can see at least one item inside it.
             </p>
           </div>
         </div>
