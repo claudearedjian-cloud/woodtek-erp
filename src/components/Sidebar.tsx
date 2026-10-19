@@ -1,9 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   ClipboardList,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   Tablet,
   Users,
@@ -63,7 +65,12 @@ import {
   PenTool,
   Sparkle,
 } from "lucide-react";
-import { resolveMenu, type MenuConfig, type ResolvedMenuItem } from "@/lib/menuConfig";
+import {
+  resolveMenu,
+  type MenuConfig,
+  type ResolvedMenuItem,
+  type ResolvedSection,
+} from "@/lib/menuConfig";
 import { screenAllowedForSubject, type OptionalModulesConfig } from "@/lib/optionalModules";
 import { tt, type Lang } from "@/lib/i18n";
 import BrandMark from "@/components/BrandMark";
@@ -76,6 +83,7 @@ import {
   sidebarDesktopClasses,
   type SidebarMode,
 } from "@/lib/sidebarMode";
+import { sectionColorChoice } from "@/lib/menuIcons";
 
 const ICONS: Record<string, any> = {
   dashboard: LayoutDashboard,
@@ -146,6 +154,56 @@ const ICONS: Record<string, any> = {
   layers: Layers,
 };
 
+const SECTION_COLLAPSE_STORAGE_KEY = "woodtek:sidebar-section-collapsed:v1";
+
+function readSidebarSectionOverrides(): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(SECTION_COLLAPSE_STORAGE_KEY) ?? "{}",
+    ) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, value]) => typeof value === "boolean",
+      ),
+    ) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Separators are layout furniture. Keep one only when visible navigable items
+ * remain on both sides after role and optional-module filtering.
+ */
+function pruneSeparators(items: ResolvedMenuItem[]): ResolvedMenuItem[] {
+  const out: ResolvedMenuItem[] = [];
+  let pendingSeparator: ResolvedMenuItem | null = null;
+  let seenNavigable = false;
+  for (const item of items) {
+    if (item.kind === "separator") {
+      if (seenNavigable && !pendingSeparator) pendingSeparator = item;
+      continue;
+    }
+    if (pendingSeparator) {
+      out.push(pendingSeparator);
+      pendingSeparator = null;
+    }
+    out.push(item);
+    seenNavigable = true;
+  }
+  return out;
+}
+
+function sectionDomId(name: string): string {
+  const encoded = name
+    .split("")
+    .map((char) => char.charCodeAt(0).toString(16).padStart(4, "0"))
+    .join("-");
+  return `sidebar-section-${encoded}`;
+}
+
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
@@ -185,32 +243,88 @@ export default function Sidebar({
   // Factory branding (Settings → Appearance). Read from the module cache the
   // AppearanceProvider fills at start-up — defaults until it loads.
   const brand = currentAppearance();
+  const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    // Production remembers each device's section choices. The designer
+    // preview deliberately ignores them and shows configured defaults.
+    if (!preview) setSectionOverrides(readSidebarSectionOverrides());
+  }, [preview]);
   // Custom roles: menu overrides are keyed by the custom name, and the base
   // role decides module access — resolveMenu handles both.
   const rawMenu = resolveMenu(currentUser?.displayRole || currentUser?.role, menuConfig);
-  const visible = (item: ResolvedMenuItem) => screenAllowedForSubject(
-    item.kind === "link" ? item.id : (item.target || item.id), currentUser, optionalModulesConfig,
-  );
+  const visible = (item: ResolvedMenuItem) =>
+    item.kind === "separator" ||
+    screenAllowedForSubject(
+      item.kind === "link" ? item.id : item.target || item.id,
+      currentUser,
+      optionalModulesConfig,
+    );
   const resolved = {
-    top: rawMenu.top.filter(visible),
-    settings: rawMenu.settings.filter(visible),
-    sections: rawMenu.sections.map((s) => ({ ...s, items: s.items.filter(visible) })),
+    top: pruneSeparators(rawMenu.top.filter(visible)),
+    settings: pruneSeparators(rawMenu.settings.filter(visible)),
+    sections: rawMenu.sections.map((s) => ({
+      ...s,
+      items: pruneSeparators(s.items.filter(visible)),
+    })),
+  };
+  const isItemActive = (item: ResolvedMenuItem) =>
+    item.kind !== "separator" &&
+    (activeTab === item.id ||
+      (item.kind !== "link" &&
+        !!item.target &&
+        item.target !== item.id &&
+        activeTab === item.target) ||
+      (activeTab.startsWith("order-") &&
+        (item.id === "orders" || item.target === "orders")) ||
+      (item.id === "settings" && resolved.settings.some((s) => s.id === activeTab)));
+  const toggleSection = (sec: ResolvedSection, currentlyCollapsed: boolean) => {
+    if (preview) return;
+    const nextCollapsed = !currentlyCollapsed;
+    const next = { ...sectionOverrides };
+    // Returning to the configured default clears the device override, so a
+    // future designer default can take effect on this device again.
+    if (nextCollapsed === !!sec.defaultCollapsed) delete next[sec.name];
+    else next[sec.name] = nextCollapsed;
+    setSectionOverrides(next);
+    try {
+      window.localStorage.setItem(SECTION_COLLAPSE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private browsing / storage denial: the in-memory toggle still works.
+    }
   };
 
   const renderItem = (
     item: ResolvedMenuItem,
     sub: boolean,
   ) => {
+    if (item.kind === "separator") {
+      const separatorLabel = item.label.trim() ? tt(lang, item.label) : "";
+      return (
+        <div
+          key={item.id}
+          role="separator"
+          aria-label={separatorLabel || undefined}
+          data-menu-separator="true"
+          className={`flex items-center gap-2 ${sub ? "px-2.5 py-1.5" : "px-3 py-2"}`}
+        >
+          <span className="h-px flex-1 bg-slate-700/70" />
+          {separatorLabel && (
+            <>
+              <span className="max-w-[65%] truncate text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
+                {separatorLabel}
+              </span>
+              <span className="h-px flex-1 bg-slate-700/70" />
+            </>
+          )}
+        </div>
+      );
+    }
     const isLink = item.kind === "link";
     const navId = isLink ? "" : item.target || item.id; // custom entries navigate to their target tab
     const Icon = isLink
       ? ICONS[item.icon ?? ""] ?? ExternalLink
       : ICONS[item.icon ?? ""] ?? ICONS[navId] ?? ICONS[item.id] ?? Layers;
-    const isActive =
-      activeTab === item.id ||
-      (!isLink && !!item.target && item.target !== item.id && activeTab === item.target) ||
-      (activeTab.startsWith("order-") && (item.id === "orders" || item.target === "orders")) ||
-      (item.id === "settings" && resolved.settings.some((s) => s.id === activeTab));
+    const isActive = isItemActive(item);
     const cls = sub
       ? `relative w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] transition-all duration-150 ${
           isActive
@@ -303,10 +417,12 @@ export default function Sidebar({
     );
   };
 
+  const hasNavigableItems = (items: ResolvedMenuItem[]) =>
+    items.some((item) => item.kind !== "separator");
   const empty =
-    resolved.top.length === 0 &&
-    resolved.settings.length === 0 &&
-    resolved.sections.every((s) => s.items.length === 0);
+    !hasNavigableItems(resolved.top) &&
+    !hasNavigableItems(resolved.settings) &&
+    resolved.sections.every((s) => !hasNavigableItems(s.items));
 
   return (
     <>
@@ -390,21 +506,67 @@ export default function Sidebar({
         )}
 
         {/* Menu Designer custom sections */}
-        {resolved.sections.map((sec) =>
-          sec.items.length > 0 ? (
+        {resolved.sections.map((sec) => {
+          if (!hasNavigableItems(sec.items)) return null;
+          const color = sectionColorChoice(sec.color);
+          const SecIcon = ICONS[sec.icon ?? ""] ?? Layers;
+          const containsActiveItem = sec.items.some(isItemActive);
+          const collapsed =
+            !containsActiveItem &&
+            (preview
+              ? !!sec.defaultCollapsed
+              : sectionOverrides[sec.name] ?? !!sec.defaultCollapsed);
+          const ToggleIcon = collapsed ? ChevronRight : ChevronDown;
+          const sectionId = sectionDomId(sec.name);
+          const headerContent = (
+            <>
+              <SecIcon className={`h-3.5 w-3.5 shrink-0 ${color.iconClass}`} />
+              <span className="min-w-0 flex-1 truncate text-left">{sec.name}</span>
+              <ToggleIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+            </>
+          );
+          const headerClass = `flex w-full items-center gap-1.5 px-3 pb-2 text-[11px] font-bold uppercase tracking-wider ${color.headerClass}`;
+          return (
             <React.Fragment key={`sec-${sec.name}`}>
-              <div className="mx-1 mt-4 border-t border-slate-800/60 pt-3" />
-              <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-amber-500/80 truncate flex items-center gap-1.5">
-                {(() => {
-                  const SecIcon = ICONS[sec.icon ?? ""] ?? Layers;
-                  return <SecIcon className="h-3.5 w-3.5 shrink-0 text-amber-500/80" />;
-                })()}
-                <span className="truncate">{sec.name}</span>
-              </div>
-              {sec.items.map((item) => renderItem(item, false))}
+              <div className={`mx-1 mt-4 border-t pt-3 ${color.borderClass}`} />
+              {preview ? (
+                <div
+                  className={headerClass}
+                  data-sidebar-section={sec.name}
+                  data-section-collapsed={collapsed ? "true" : undefined}
+                  aria-expanded={!collapsed}
+                >
+                  {headerContent}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggleSection(sec, collapsed)}
+                  disabled={containsActiveItem}
+                  className={`${headerClass} rounded-lg text-left transition enabled:hover:bg-slate-800/60 disabled:cursor-default`}
+                  data-sidebar-section={sec.name}
+                  data-section-collapsed={collapsed ? "true" : undefined}
+                  aria-expanded={!collapsed}
+                  aria-controls={sectionId}
+                  title={
+                    containsActiveItem
+                      ? "This section stays open while its current screen is inside it"
+                      : collapsed
+                        ? `Expand ${sec.name}`
+                        : `Collapse ${sec.name}`
+                  }
+                >
+                  {headerContent}
+                </button>
+              )}
+              {!collapsed && (
+                <div id={sectionId} className="space-y-1.5">
+                  {sec.items.map((item) => renderItem(item, false))}
+                </div>
+              )}
             </React.Fragment>
-          ) : null,
-        )}
+          );
+        })}
 
         <div className="mx-3 mt-5 border-t border-slate-800/80 pt-4" />
         <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">

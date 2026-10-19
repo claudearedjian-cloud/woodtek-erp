@@ -631,6 +631,176 @@ check(ssrNav.includes("Board"), "icons SSR: sidebar renders with pinned icons (n
   const designerViewSource = fs.readFileSync("src/components/MenuDesignerView.tsx", "utf8");
   check(designerViewSource.includes("baseRoleOf(previewRole)") && designerViewSource.includes("displayRole: previewRole") && designerViewSource.includes("optionalModulesConfig={optionalModulesConfig}") && designerViewSource.includes("preview"), "menu designer source: live preview uses the custom-role subject shape and the same optional-module config as the real sidebar");
   check(pageSource.includes("<MenuDesignerView currentUser={currentUser} menuConfig={menuConfig} optionalModulesConfig={optionalConfig} onSaved={setMenuConfig} />"), "menu designer source: page passes the live optional-module config into the designer preview");
+  // ---- Follow-up: section presentation, separators, templates and layouts ----
+  const sectionColorChoiceKeys = new Set(iconsMod.MENU_SECTION_COLOR_CHOICES.map((c) => c.key));
+  check(
+    menuCfg.MENU_SECTION_COLOR_KEYS.length === sectionColorChoiceKeys.size &&
+      menuCfg.MENU_SECTION_COLOR_KEYS.every((key) => sectionColorChoiceKeys.has(key)),
+    "menu section colours: server allowlist and visual colour choices are in sync",
+  );
+  check(iconsMod.sectionColorChoice("sky").swatchClass === "bg-sky-400" && iconsMod.sectionColorChoice("bogus").key === "amber", "menu section colours: unknown stored key falls back to the default bundle");
+
+  const layoutProbeConfig = {
+    version: 1,
+    items: [
+      { id: "orders", label: "Order Board", group: "Production", roles: { Manager: false, "Machine Operator": true } },
+      { id: "custom-sep-probe", label: "  Divider Probe  ", badge: "NO", icon: "hammer", group: "Production", custom: true, kind: "separator", target: "https://bad.example", roles: { Manager: false } },
+      { id: "schedule", label: "Schedule Probe", group: "Production" },
+      { id: "custom-link-probe", label: "Portal Probe", custom: true, kind: "link", target: "https://example.com", roles: { Manager: true, "Machine Operator": false, "Ghost Role": true } },
+    ],
+    landing: { Manager: "orders", "Machine Operator": "orders" },
+    sectionSettings: {
+      Production: { color: "sky", collapsed: true },
+      top: { color: "rose", collapsed: true },
+      settings: { color: "emerald", collapsed: true },
+      Invalid: { color: "pink", collapsed: "yes" },
+      Empty: {},
+    },
+  };
+  const sanitizedLayoutProbe = menuCfg.sanitizeMenuConfig(layoutProbeConfig);
+  const sanitizedSeparator = sanitizedLayoutProbe.items.find((i) => i.id === "custom-sep-probe");
+  const sanitizedOrders = sanitizedLayoutProbe.items.find((i) => i.id === "orders");
+  const sanitizedPortal = sanitizedLayoutProbe.items.find((i) => i.id === "custom-link-probe");
+  check(!!sanitizedSeparator && sanitizedSeparator.kind === "separator" && sanitizedSeparator.label === "Divider Probe" && !Object.prototype.hasOwnProperty.call(sanitizedSeparator, "badge") && !Object.prototype.hasOwnProperty.call(sanitizedSeparator, "icon") && !Object.prototype.hasOwnProperty.call(sanitizedSeparator, "target") && !Object.prototype.hasOwnProperty.call(sanitizedSeparator, "roles"), "menu separators sanitize: caption is kept but badge, icon, target and audience are stripped");
+  check(!!sanitizedOrders && !Object.prototype.hasOwnProperty.call(sanitizedOrders, "roles") && !!sanitizedPortal && sanitizedPortal.roles.Manager === true && !Object.prototype.hasOwnProperty.call(sanitizedPortal.roles, "Ghost Role"), "menu layout sanitize: built-in menu roles cannot grant access and link audiences keep known roles only");
+  check(!!sanitizedLayoutProbe.sectionSettings && Object.keys(sanitizedLayoutProbe.sectionSettings).join("|") === "Production" && sanitizedLayoutProbe.sectionSettings.Production.color === "sky" && sanitizedLayoutProbe.sectionSettings.Production.collapsed === true, "menu section settings sanitize: only allowlisted custom-section colour/default pairs survive");
+  const layoutProbeResolved = menuCfg.resolveMenu("Manager", sanitizedLayoutProbe);
+  const productionProbeSection = layoutProbeResolved.sections.find((section) => section.name === "Production");
+  check(!!productionProbeSection && productionProbeSection.color === "sky" && productionProbeSection.defaultCollapsed === true && productionProbeSection.items.some((i) => i.id === "custom-sep-probe" && i.kind === "separator" && i.label === "Divider Probe" && i.badge === "" && !i.target), "menu layout resolve: section colour/default and separator furniture reach the Sidebar model");
+  const allLayoutItems = (resolved) => resolved.top.concat(resolved.settings, ...resolved.sections.map((section) => section.items));
+  check(menuCfg.defaultVisibleFor("Machine Operator", "custom-sep-probe", sanitizedSeparator) === true && !allLayoutItems(menuCfg.resolveMenu("Machine Operator", sanitizedLayoutProbe)).some((i) => i.id === "orders"), "menu layout resolve: separators are neutral furniture but a stored layout cannot grant Orders to an operator");
+  const legacySanitized = menuCfg.sanitizeMenuConfig({ version: 1, items: [{ id: "orders", group: "Legacy" }] });
+  const legacySection = menuCfg.resolveMenu("Manager", legacySanitized).sections.find((section) => section.name === "Legacy");
+  check(!Object.prototype.hasOwnProperty.call(legacySanitized, "sectionSettings") && !!legacySection && legacySection.color === undefined && legacySection.defaultCollapsed === undefined, "menu layout compatibility: old configs without sectionSettings keep resolving with presentation defaults");
+
+  const pickedSectionSettings = designerHelpers.pickDesignerSectionSettings({
+    version: 1,
+    items: [],
+    sectionSettings: {
+      " Planning ": { color: "violet", collapsed: false },
+      top: { color: "rose", collapsed: true },
+      Invalid: { color: "pink", collapsed: "yes" },
+    },
+  });
+  check(Object.keys(pickedSectionSettings).join("|") === "Planning" && pickedSectionSettings.Planning.color === "violet" && pickedSectionSettings.Planning.collapsed === false, "menu designer helpers: section settings picker trims names and drops reserved/invalid entries");
+  const draftWithSectionSettings = designerHelpers.designerDraftConfig(builtDesignerRows, { Manager: "orders" }, { Production: "target" }, { Production: { color: "rose", collapsed: true } });
+  check(draftWithSectionSettings.sectionSettings.Production.color === "rose" && draftWithSectionSettings.sectionSettings.Production.collapsed === true, "menu designer helpers: draft save payload carries section settings");
+
+  const separatorDesignerRows = designerHelpers.buildDesignerRows({
+    version: 1,
+    items: [
+      { id: "custom-sep-blank", custom: true, kind: "separator", group: "Production", badge: "NO", icon: "hammer", target: "orders", roles: { Manager: false } },
+    ],
+  });
+  const separatorRow = separatorDesignerRows.find((row) => row.id === "custom-sep-blank");
+  check(!!separatorRow && separatorRow.kind === "separator" && separatorRow.label === "" && separatorRow.badge === "" && separatorRow.icon === "" && separatorRow.target === "" && Object.keys(separatorRow.roles).length === 0, "menu designer helpers: stored separators build as blank divider rows without navigation fields");
+  check(designerHelpers.designerRowMatches(separatorRow, "separator"), "menu designer helpers: search finds a blank separator by kind");
+  const separatorItem = designerHelpers.designerRowToMenuItem({ ...separatorRow, label: "  Break  ", badge: "NO", icon: "hammer", target: "https://bad.example", roles: { Manager: false } });
+  check(separatorItem.kind === "separator" && separatorItem.label === "Break" && separatorItem.badge === "" && !Object.prototype.hasOwnProperty.call(separatorItem, "icon") && !Object.prototype.hasOwnProperty.call(separatorItem, "target") && !Object.prototype.hasOwnProperty.call(separatorItem, "roles"), "menu designer helpers: separator save payload trims its caption and drops icon/target/audience");
+  check(!Object.prototype.hasOwnProperty.call(designerHelpers.designerRowToMenuItem(separatorRow), "label"), "menu designer helpers: a blank separator stays a plain divider line");
+
+  const templateRegistryIds = menuCfg.MENU_REGISTRY.map((entry) => entry.id).filter((id) => id !== "designer");
+  const templateRegistrySignature = [...templateRegistryIds].sort().join("|");
+  check(designerHelpers.DESIGNER_STARTER_TEMPLATES.length >= 5 && new Set(designerHelpers.DESIGNER_STARTER_TEMPLATES.map((template) => template.id)).size === designerHelpers.DESIGNER_STARTER_TEMPLATES.length, "menu starter templates: the built-in template set has unique ids");
+  check(designerHelpers.DESIGNER_STARTER_TEMPLATES.slice(1).every((template) => {
+    const ids = template.config.items.map((item) => item.id);
+    return ids.length === templateRegistryIds.length && new Set(ids).size === ids.length && [...ids].sort().join("|") === templateRegistrySignature;
+  }), "menu starter templates: every non-default template arranges every screen except the designer exactly once");
+  check(designerHelpers.DESIGNER_STARTER_TEMPLATES.every((template) => Object.values(template.config.sectionIcons || {}).every((icon) => menuCfg.MENU_ICON_KEYS.includes(icon)) && Object.values(template.config.sectionSettings || {}).every((settings) => !settings.color || menuCfg.MENU_SECTION_COLOR_KEYS.includes(settings.color))), "menu starter templates: template icons and colours use the shared allowlists");
+  const managerTemplate = designerHelpers.DESIGNER_STARTER_TEMPLATES.find((template) => template.id === "manager-overview");
+  const currentRowsForTemplate = designerHelpers.buildDesignerRows({
+    version: 1,
+    items: [
+      { id: "custom-template-portal", label: "Keep Portal", group: "Keep Me", custom: true, kind: "link", target: "https://example.com", roles: { Manager: true } },
+      { id: "custom-template-sep", label: "Keep Divider", group: "Keep Me", custom: true, kind: "separator" },
+    ],
+  });
+  const templatedRows = designerHelpers.buildStarterTemplateRows(currentRowsForTemplate, managerTemplate);
+  check(templatedRows.find((row) => row.id === "orders").group === "Operations" && templatedRows.find((row) => row.id === "custom-template-portal").group === "Keep Me" && templatedRows.find((row) => row.id === "custom-template-sep").kind === "separator" && !templatedRows.some((row) => row.id === "designer"), "menu starter templates: applying a template rearranges built-ins while preserving custom entries and separators");
+  check([...templatedRows.filter((row) => !row.custom).map((row) => row.id)].sort().join("|") === templateRegistrySignature, "menu starter templates: generated rows still contain each built-in screen exactly once");
+  const factoryTemplateRows = designerHelpers.buildStarterTemplateRows(currentRowsForTemplate, designerHelpers.DESIGNER_STARTER_TEMPLATES[0]);
+  check(factoryTemplateRows.find((row) => row.id === "orders").group === "top" && factoryTemplateRows.find((row) => row.id === "recipes").group === "settings", "menu starter templates: Factory Default restores registry placements in the draft");
+
+  const layoutFile = menuCfg.makeMenuLayoutFile("  October Layout  ", layoutProbeConfig, "2026-10-19T00:00:00.000Z");
+  check(layoutFile.kind === "woodtek-menu-layout" && layoutFile.version === 1 && layoutFile.name === "October Layout" && layoutFile.exportedAt === "2026-10-19T00:00:00.000Z" && layoutFile.config.sectionSettings.Production.color === "sky", "menu layout file: export wrapper carries a clean name, timestamp and sanitized config");
+  const parsedLayoutFile = menuCfg.parseMenuLayoutFile(layoutFile);
+  check(!!parsedLayoutFile && parsedLayoutFile.name === "October Layout" && parsedLayoutFile.config.items.some((i) => i.id === "custom-sep-probe" && i.kind === "separator") && !parsedLayoutFile.config.items.find((i) => i.id === "orders").roles, "menu layout file: wrapped import round-trips through the sanitizer");
+  const parsedBareLayout = menuCfg.parseMenuLayoutFile({ version: 1, items: [{ id: "dashboard" }] });
+  check(!!parsedBareLayout && parsedBareLayout.name === "Imported menu layout" && parsedBareLayout.config.items[0].id === "dashboard", "menu layout file: a bare sanitized MenuConfig can be imported as a draft");
+  check(menuCfg.parseMenuLayoutFile("not a layout") === null && menuCfg.parseMenuLayoutFile({ kind: "woodtek-menu-layout", config: { noItems: true } }) === null && menuCfg.parseMenuLayoutFile([]) === null, "menu layout file: malformed files are refused instead of becoming an empty live menu");
+
+  const sanitizedLayoutLibrary = menuCfg.sanitizeMenuLayoutLibrary({
+    layouts: [
+      { name: " Alpha ", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z", config: layoutProbeConfig },
+      { name: "alpha", config: { version: 1, items: [{ id: "dashboard" }] } },
+      { name: "Broken", config: { noItems: true } },
+      { name: "Beta", config: { version: 1, items: [{ id: "reports" }] } },
+    ],
+  });
+  check(sanitizedLayoutLibrary.layouts.map((layout) => layout.name).join("|") === "alpha|Beta" && sanitizedLayoutLibrary.layouts[0].config.items[0].id === "dashboard", "menu layout library sanitize: names dedupe case-insensitively and broken snapshots drop out");
+  let layoutLibrary = { version: 1, layouts: [] };
+  layoutLibrary = menuCfg.upsertMenuLayout(layoutLibrary, " Alpha ", layoutProbeConfig, "2026-02-01T00:00:00.000Z");
+  check(layoutLibrary.layouts.length === 1 && layoutLibrary.layouts[0].name === "Alpha" && layoutLibrary.layouts[0].createdAt === "2026-02-01T00:00:00.000Z" && layoutLibrary.layouts[0].updatedAt === "2026-02-01T00:00:00.000Z", "menu layout library: first named snapshot is timestamped");
+  layoutLibrary = menuCfg.upsertMenuLayout(layoutLibrary, "alpha", { version: 1, items: [{ id: "dashboard" }] }, "2026-02-03T00:00:00.000Z");
+  check(layoutLibrary.layouts.length === 1 && layoutLibrary.layouts[0].name === "alpha" && layoutLibrary.layouts[0].createdAt === "2026-02-01T00:00:00.000Z" && layoutLibrary.layouts[0].updatedAt === "2026-02-03T00:00:00.000Z" && layoutLibrary.layouts[0].config.items[0].id === "dashboard", "menu layout library: saving the same name updates it and preserves creation time");
+  layoutLibrary = menuCfg.upsertMenuLayout(layoutLibrary, "Beta", { version: 1, items: [{ id: "reports" }] }, "2026-02-04T00:00:00.000Z");
+  check(menuCfg.deleteMenuLayout(layoutLibrary, "ALPHA").layouts.map((layout) => layout.name).join("|") === "Beta", "menu layout library: delete removes only the named snapshot, case-insensitively");
+  const fullLayoutLibrary = menuCfg.sanitizeMenuLayoutLibrary({
+    layouts: Array.from({ length: 35 }, (_, index) => ({ name: `Layout ${index + 1}`, config: { version: 1, items: [{ id: "dashboard" }] } })),
+  });
+  check(fullLayoutLibrary.layouts.length === menuCfg.MENU_LAYOUT_LIMIT && !menuCfg.upsertMenuLayout(fullLayoutLibrary, "Overflow", { version: 1, items: [{ id: "reports" }] }, "2026-02-05T00:00:00.000Z").layouts.some((layout) => layout.name === "Overflow") && menuCfg.upsertMenuLayout(fullLayoutLibrary, fullLayoutLibrary.layouts[0].name, { version: 1, items: [{ id: "reports" }] }, "2026-02-05T00:00:00.000Z").layouts.length === menuCfg.MENU_LAYOUT_LIMIT, "menu layout library: the snapshot cap blocks new names but still allows updates");
+
+  const sidebarLayoutConfig = menuCfg.sanitizeMenuConfig({
+    version: 1,
+    items: [
+      { id: "custom-sep-lead", label: "Leading Divider", group: "top", custom: true, kind: "separator" },
+      { id: "dashboard", label: "Dashboard Probe", group: "top" },
+      { id: "custom-sep-first", label: "Main Divider", group: "top", custom: true, kind: "separator" },
+      { id: "custom-sep-second", label: "Duplicate Divider", group: "top", custom: true, kind: "separator" },
+      { id: "reports", label: "Reports Probe", group: "top" },
+      { id: "orders", label: "Closed Orders Probe", group: "Closed Probe" },
+      { id: "schedule", label: "Closed Schedule Probe", group: "Closed Probe" },
+      { id: "customers", label: "Open Customers Probe", group: "Open Probe" },
+      { id: "station", label: "Active Station Probe", group: "Active Probe" },
+      { id: "custom-sep-only", label: "Lonely Divider", group: "Separator Only Probe", custom: true, kind: "separator" },
+    ],
+    sectionSettings: {
+      "Closed Probe": { color: "sky", collapsed: true },
+      "Open Probe": { color: "emerald", collapsed: false },
+      "Active Probe": { color: "rose", collapsed: true },
+    },
+  });
+  const sidebarLayoutHtml = renderToString(React.createElement(Sidebar, props("Manager", sidebarLayoutConfig)));
+  check((sidebarLayoutHtml.match(/data-menu-separator="true"/g) || []).length === 1 && sidebarLayoutHtml.includes("Main Divider") && !sidebarLayoutHtml.includes("Leading Divider") && !sidebarLayoutHtml.includes("Duplicate Divider"), "menu sidebar SSR: separators render at most once between visible navigable items");
+  check(sidebarLayoutHtml.includes('data-sidebar-section="Closed Probe"') && sidebarLayoutHtml.includes('data-section-collapsed="true"') && sidebarLayoutHtml.includes("text-sky-300") && sidebarLayoutHtml.includes('title="Expand Closed Probe"') && !sidebarLayoutHtml.includes("Closed Orders Probe") && !sidebarLayoutHtml.includes("Closed Schedule Probe"), "menu sidebar SSR: a coloured section can start collapsed without rendering its items");
+  check(sidebarLayoutHtml.includes("Open Customers Probe") && sidebarLayoutHtml.includes("text-emerald-300") && sidebarLayoutHtml.includes("Active Station Probe") && sidebarLayoutHtml.includes("text-rose-300"), "menu sidebar SSR: open coloured sections render and the active screen forces its section open");
+  check(!sidebarLayoutHtml.includes("Separator Only Probe") && !sidebarLayoutHtml.includes("Lonely Divider"), "menu sidebar SSR: a section containing only separators does not render a header");
+  const sidebarLayoutPreviewHtml = renderToString(React.createElement(Sidebar, {
+    ...props("Manager", sidebarLayoutConfig),
+    preview: true,
+    activeTab: "dashboard",
+  }));
+  check(sidebarLayoutPreviewHtml.includes('data-section-collapsed="true"') && !sidebarLayoutPreviewHtml.includes("Active Station Probe") && !sidebarLayoutPreviewHtml.includes('title="Expand Closed Probe"'), "menu sidebar preview SSR: configured collapsed defaults apply and section headers stay inert");
+
+  const roleSeparatorConfig = menuCfg.sanitizeMenuConfig({
+    version: 1,
+    items: [
+      { id: "orders", label: "Hidden Orders Probe", group: "Role Probe" },
+      { id: "custom-sep-role", label: "Role Divider", group: "Role Probe", custom: true, kind: "separator" },
+      { id: "station", label: "Operator Station Probe", group: "Role Probe" },
+    ],
+  });
+  const managerRoleSeparatorHtml = renderToString(React.createElement(Sidebar, props("Manager", roleSeparatorConfig)));
+  const operatorRoleSeparatorHtml = renderToString(React.createElement(Sidebar, props("Machine Operator", roleSeparatorConfig)));
+  check(managerRoleSeparatorHtml.includes("Hidden Orders Probe") && managerRoleSeparatorHtml.includes("Role Divider") && managerRoleSeparatorHtml.includes("Operator Station Probe") && operatorRoleSeparatorHtml.includes("Operator Station Probe") && !operatorRoleSeparatorHtml.includes("Hidden Orders Probe") && !operatorRoleSeparatorHtml.includes("Role Divider"), "menu sidebar SSR: orphan separators are pruned after per-role filtering");
+
+  const layoutApiSource = fs.readFileSync("src/app/api/menu-config/layouts/route.ts", "utf8");
+  check((layoutApiSource.match(/authorize\("users:manage"\)/g) || []).length === 3 && layoutApiSource.includes("menu-layouts.json") && layoutApiSource.includes("WOODTEK_DATA_DIR") && layoutApiSource.includes("writeJsonAtomic(fileLocation(), library)") && layoutApiSource.includes("ensureRolesRegistered()") && layoutApiSource.includes("sanitizeMenuLayoutLibrary") && layoutApiSource.includes("upsertMenuLayout") && layoutApiSource.includes("deleteMenuLayout") && layoutApiSource.includes("menu.layout.save") && layoutApiSource.includes("menu.layout.delete"), "menu layout API source: every operation is Manager-gated, role-aware, sanitized, atomic and audited");
+  const sidebarSourceForDesigner = fs.readFileSync("src/components/Sidebar.tsx", "utf8");
+  check(sidebarSourceForDesigner.includes('const SECTION_COLLAPSE_STORAGE_KEY = "woodtek:sidebar-section-collapsed:v1"') && sidebarSourceForDesigner.includes("if (!preview) setSectionOverrides(readSidebarSectionOverrides())") && sidebarSourceForDesigner.includes("sectionOverrides[sec.name] ?? !!sec.defaultCollapsed") && sidebarSourceForDesigner.includes("window.localStorage.setItem(SECTION_COLLAPSE_STORAGE_KEY") && sidebarSourceForDesigner.includes("!containsActiveItem") && sidebarSourceForDesigner.includes("hasNavigableItems(sec.items)") && sidebarSourceForDesigner.includes('data-menu-separator="true"') && sidebarSourceForDesigner.includes("sectionColorChoice(sec.color)"), "menu sidebar source: per-device collapse overrides, active-section forcing, separator pruning and colours stay wired");
+  check(designerViewSource.includes("sectionSettings: pickDesignerSectionSettings(cfg)") && designerViewSource.includes("designerDraftConfig(rows, landing, sectionIcons, sectionSettings)") && designerViewSource.includes("Layout library & starter templates") && designerViewSource.includes("DESIGNER_STARTER_TEMPLATES.map") && designerViewSource.includes('fetch("/api/menu-config/layouts", { cache: "no-store" })') && designerViewSource.includes("loaded into the draft") && designerViewSource.includes("makeMenuLayoutFile") && designerViewSource.includes("parseMenuLayoutFile") && designerViewSource.includes("MENU_SECTION_COLOR_CHOICES.map") && designerViewSource.includes("Start collapsed") && designerViewSource.includes("Separator (divider line)"), "menu designer source: templates, named layouts, file transfer, section settings and separators stay wired to the draft");
+  check(designerViewSource.includes("document.elementFromPoint") && designerViewSource.includes("setPointerCapture") && designerViewSource.includes("releasePointerCapture") && designerViewSource.includes("data-menu-designer-row-id={row.id}") && designerViewSource.includes("onPointerDown={(event) => startPointerDrag(event, row)}") && designerViewSource.includes("onPointerMove={(event) => movePointerDrag(event, row)}") && designerViewSource.includes("onPointerUp={(event) => finishPointerDrag(event, row, true)}") && designerViewSource.includes("requestAnimationFrame(runPointerAutoScroll)") && designerViewSource.includes("touch-none"), "menu designer source: touch drag uses Pointer Events, element hit-testing, capture and edge auto-scroll");
+
 }
 
 // ---- partial BOM delivery helpers ----
