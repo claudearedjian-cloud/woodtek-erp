@@ -160,6 +160,12 @@ interface SidebarProps {
   onModeChange?: (mode: SidebarMode) => void;
   /** Opens the menu (auto-hide edge trigger). */
   onOpen?: () => void;
+  /**
+   * Menu Designer live preview: render this same sidebar inside the designer
+   * instead of as the app's fixed navigation. Clicks never navigate away and
+   * no drawer behaviour applies.
+   */
+  preview?: boolean;
 }
 
 export default function Sidebar({
@@ -174,6 +180,7 @@ export default function Sidebar({
   mode = "keep",
   onModeChange,
   onOpen,
+  preview = false,
 }: SidebarProps) {
   // Factory branding (Settings → Appearance). Read from the module cache the
   // AppearanceProvider fills at start-up — defaults until it loads.
@@ -218,10 +225,15 @@ export default function Sidebar({
     return isLink ? (
       <a
         key={item.id}
-        href={item.target || "#"}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={onClose}
+        href={preview ? "#" : item.target || "#"}
+        target={preview ? undefined : "_blank"}
+        rel={preview ? undefined : "noopener noreferrer"}
+        onClick={(event) => {
+          if (preview) event.preventDefault();
+          else onClose();
+        }}
+        aria-disabled={preview || undefined}
+        tabIndex={preview ? -1 : undefined}
         className={cls}
       >
         {!sub && isActive && (
@@ -250,7 +262,19 @@ export default function Sidebar({
         )}
       </a>
     ) : (
-      <button key={item.id} onClick={() => { setActiveTab(navId); onClose(); }} className={cls}>
+      <button
+        key={item.id}
+        type="button"
+        disabled={preview}
+        aria-disabled={preview || undefined}
+        tabIndex={preview ? -1 : undefined}
+        onClick={() => {
+          if (preview) return;
+          setActiveTab(navId);
+          onClose();
+        }}
+        className={cls}
+      >
         {!sub && isActive && (
           <span className="absolute -left-3 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-amber-400" />
         )}
@@ -287,7 +311,7 @@ export default function Sidebar({
   return (
     <>
     {/* Auto-hide: a thin strip at the left edge opens the menu when the mouse reaches it. */}
-    {mode === "autohide" && !isOpen && onOpen && (
+    {!preview && mode === "autohide" && !isOpen && onOpen && (
       <div
         aria-hidden="true"
         onMouseEnter={onOpen}
@@ -295,8 +319,12 @@ export default function Sidebar({
       />
     )}
     <aside
-      onMouseLeave={() => { if (mode === "autohide" && isOpen) onClose(); }}
-      className={`fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"} ${sidebarDesktopClasses(mode, isOpen)}`}
+      data-sidebar-preview={preview ? "true" : undefined}
+      aria-label={preview ? "Menu preview" : undefined}
+      onMouseLeave={() => { if (!preview && mode === "autohide" && isOpen) onClose(); }}
+      className={preview
+        ? "relative flex h-full min-h-0 w-full flex-col border-r border-slate-800 bg-slate-900 text-slate-200 shadow-2xl flex-shrink-0 select-none"
+        : `fixed inset-y-0 left-0 w-72 bg-slate-900 text-slate-200 flex flex-col h-screen border-r border-slate-800 shadow-2xl flex-shrink-0 z-50 select-none transition-transform duration-200 md:shadow-xl ${isOpen ? "translate-x-0" : "-translate-x-full"} ${sidebarDesktopClasses(mode, isOpen)}`}
     >
       {/* Brand & Factory Header */}
       <div className="relative border-b border-slate-800 p-5">
@@ -314,7 +342,7 @@ export default function Sidebar({
             </p>
           </div>
         </div>
-        {onModeChange && (
+        {!preview && onModeChange && (
           <div className="mt-4 hidden items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/60 p-1 md:flex" role="group" aria-label="Menu behaviour">
             {SIDEBAR_MODES.map((m) => (
               <button
