@@ -10,10 +10,12 @@
 import {
   GROUP_MAX,
   MENU_REGISTRY,
+  MENU_SECTION_COLOR_KEYS,
   defaultVisibleFor,
   isCustomId,
   type MenuConfig,
   type MenuConfigItem,
+  type MenuSectionSettings,
 } from "@/lib/menuConfig";
 import { allRoles } from "@/lib/permissions";
 
@@ -26,7 +28,7 @@ export interface DesignerRow {
   /** Audience is configurable only for external website links. */
   roles: Record<string, boolean>;
   custom?: boolean;
-  kind?: "tab" | "link";
+  kind?: "tab" | "link" | "separator";
   target?: string;
 }
 
@@ -54,6 +56,25 @@ export function pickDesignerSectionIcons(cfg: MenuConfig | null): Record<string,
   return out;
 }
 
+export function pickDesignerSectionSettings(
+  cfg: MenuConfig | null,
+): Record<string, MenuSectionSettings> {
+  const out: Record<string, MenuSectionSettings> = {};
+  for (const [rawName, value] of Object.entries(cfg?.sectionSettings ?? {})) {
+    const name = rawName.trim().slice(0, GROUP_MAX);
+    if (!name || name === "top" || name === "settings" || !value || typeof value !== "object") {
+      continue;
+    }
+    const settings: MenuSectionSettings = {};
+    if ((MENU_SECTION_COLOR_KEYS as readonly string[]).includes(value.color ?? "")) {
+      settings.color = value.color;
+    }
+    if (typeof value.collapsed === "boolean") settings.collapsed = value.collapsed;
+    if (Object.keys(settings).length) out[name] = settings;
+  }
+  return out;
+}
+
 export function buildDesignerRows(cfg: MenuConfig | null): DesignerRow[] {
   const byId = new Map((cfg?.items ?? []).map((i) => [i.id, i]));
   const known = (id: string) =>
@@ -74,21 +95,33 @@ export function buildDesignerRows(cfg: MenuConfig | null): DesignerRow[] {
           roles[r] = typeof c.roles?.[r] === "boolean" ? c.roles[r]! : defaultVisibleFor(r, id, c);
         }
       }
+      const separator = custom && c?.kind === "separator";
       return {
         id,
-        label: c?.label ?? reg?.label ?? "New menu item",
-        badge: c?.badge ?? reg?.badge ?? "",
+        label: separator ? c?.label ?? "" : c?.label ?? reg?.label ?? "New menu item",
+        badge: separator ? "" : c?.badge ?? reg?.badge ?? "",
         group: c?.group ?? reg?.group ?? "top",
-        icon: typeof c?.icon === "string" ? c.icon : "",
+        icon: separator ? "" : typeof c?.icon === "string" ? c.icon : "",
         roles,
         custom,
-        kind: c?.kind === "link" ? "link" : "tab",
-        target: c?.target ?? "dashboard",
+        kind: c?.kind === "link" ? "link" : separator ? "separator" : "tab",
+        target: separator ? "" : c?.target ?? "dashboard",
       };
     });
 }
 
 export function designerRowToMenuItem(row: DesignerRow): MenuConfigItem {
+  if (row.custom && row.kind === "separator") {
+    const label = row.label.trim();
+    return {
+      id: row.id,
+      ...(label ? { label } : {}),
+      badge: "",
+      group: row.group,
+      custom: true,
+      kind: "separator",
+    };
+  }
   return {
     id: row.id,
     label: row.custom ? row.label.trim() || "New menu item" : row.label,
@@ -114,13 +147,157 @@ export function designerDraftConfig(
   rows: DesignerRow[],
   landing: Record<string, string>,
   sectionIcons: Record<string, string>,
+  sectionSettings: Record<string, MenuSectionSettings> = {},
 ): MenuConfig {
   return {
     version: 1,
     items: designerRowsToItems(rows),
     landing,
     sectionIcons,
+    ...(Object.keys(sectionSettings).length ? { sectionSettings } : {}),
   };
+}
+
+// ============================================================================
+// Starter templates. These are arrangement suggestions for the one shared
+// layout; applying one changes the designer draft only, preserves custom
+// entries, and never changes who may open a screen.
+// ============================================================================
+
+export interface DesignerStarterTemplate {
+  id: string;
+  name: string;
+  description: string;
+  config: MenuConfig;
+}
+
+function starterConfig(
+  entries: Array<[string, string]>,
+  sectionIcons: Record<string, string> = {},
+  sectionSettings: Record<string, MenuSectionSettings> = {},
+): MenuConfig {
+  return {
+    version: 1,
+    items: entries.map(([id, group]) => ({ id, group })),
+    sectionIcons,
+    sectionSettings,
+  };
+}
+
+export const DESIGNER_STARTER_TEMPLATES: DesignerStarterTemplate[] = [
+  {
+    id: "factory-default",
+    name: "Factory Default",
+    description: "The original WoodTek order and placements.",
+    config: { version: 1, items: [] },
+  },
+  {
+    id: "manager-overview",
+    name: "Manager Overview",
+    description: "Dashboards first, then operations, materials, money, and people.",
+    config: starterConfig(
+      [
+        ["dashboard", "top"], ["wip", "top"], ["plant", "top"], ["reports", "top"],
+        ["orders", "Operations"], ["schedule", "Operations"], ["gantt", "Operations"], ["production", "Operations"], ["station", "Operations"],
+        ["machines", "Shop Floor"], ["assembly", "Shop Floor"], ["quality", "Shop Floor"], ["cmms", "Shop Floor"], ["downtime", "Shop Floor"],
+        ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
+        ["customers", "Office & Money"], ["invoicing", "Office & Money"], ["jobcosting", "Office & Money"],
+        ["workforce", "People"], ["hr", "People"],
+        ["recipes", "settings"], ["pims", "settings"], ["settings", "top"],
+      ],
+      { Operations: "factory", "Shop Floor": "machines", Materials: "warehouse", "Office & Money": "banknote", People: "workforce" },
+      {
+        Operations: { color: "sky" },
+        "Shop Floor": { color: "violet" },
+        Materials: { color: "emerald" },
+        "Office & Money": { color: "rose" },
+        People: { color: "slate", collapsed: true },
+      },
+    ),
+  },
+  {
+    id: "production-focus",
+    name: "Production Focus",
+    description: "Live work, planning, shop-floor control, and maintenance up front.",
+    config: starterConfig(
+      [
+        ["wip", "top"], ["orders", "top"], ["schedule", "top"], ["station", "top"],
+        ["gantt", "Planning"], ["recipes", "Planning"], ["production", "Planning"], ["plant", "Planning"],
+        ["machines", "Shop Floor"], ["assembly", "Shop Floor"], ["quality", "Shop Floor"],
+        ["cmms", "Maintenance"], ["downtime", "Maintenance"],
+        ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
+        ["dashboard", "Office & Money"], ["customers", "Office & Money"], ["invoicing", "Office & Money"], ["jobcosting", "Office & Money"], ["reports", "Office & Money"],
+        ["workforce", "People"], ["hr", "People"],
+        ["pims", "settings"], ["settings", "top"],
+      ],
+      { Planning: "gantt", "Shop Floor": "factory", Maintenance: "cmms", Materials: "warehouse", "Office & Money": "banknote", People: "workforce" },
+      {
+        Planning: { color: "sky" },
+        "Shop Floor": { color: "violet" },
+        Maintenance: { color: "rose", collapsed: true },
+        Materials: { color: "emerald" },
+        "Office & Money": { color: "amber", collapsed: true },
+        People: { color: "slate", collapsed: true },
+      },
+    ),
+  },
+  {
+    id: "office-sales",
+    name: "Office & Sales",
+    description: "Orders, clients, money, and reports first, with factory views grouped below.",
+    config: starterConfig(
+      [
+        ["dashboard", "top"], ["orders", "top"], ["customers", "top"], ["reports", "top"],
+        ["invoicing", "Sales & Money"], ["jobcosting", "Sales & Money"],
+        ["schedule", "Planning"], ["gantt", "Planning"],
+        ["wip", "Factory View"], ["plant", "Factory View"], ["production", "Factory View"], ["station", "Factory View"], ["assembly", "Factory View"], ["quality", "Factory View"],
+        ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
+        ["workforce", "People"], ["hr", "People"],
+        ["recipes", "settings"], ["machines", "settings"], ["cmms", "settings"], ["downtime", "settings"], ["pims", "settings"], ["settings", "top"],
+      ],
+      { "Sales & Money": "banknote", Planning: "schedule", "Factory View": "factory", Materials: "warehouse", People: "workforce" },
+      {
+        "Sales & Money": { color: "emerald" },
+        Planning: { color: "sky" },
+        "Factory View": { color: "violet" },
+        Materials: { color: "amber" },
+        People: { color: "slate", collapsed: true },
+      },
+    ),
+  },
+  {
+    id: "warehouse-materials",
+    name: "Warehouse & Materials",
+    description: "Stock, reception, purchasing, and dispatch work at the top.",
+    config: starterConfig(
+      [
+        ["warehouse", "top"], ["reception", "top"], ["inventory", "top"], ["purchasing", "top"],
+        ["orders", "Orders & Dispatch"], ["schedule", "Orders & Dispatch"], ["gantt", "Orders & Dispatch"], ["customers", "Orders & Dispatch"],
+        ["wip", "Production View"], ["station", "Production View"], ["assembly", "Production View"], ["quality", "Production View"], ["production", "Production View"],
+        ["dashboard", "Management"], ["plant", "Management"], ["reports", "Management"],
+        ["invoicing", "Office & Money"], ["jobcosting", "Office & Money"],
+        ["recipes", "settings"], ["machines", "settings"], ["cmms", "settings"], ["downtime", "settings"], ["workforce", "settings"], ["hr", "settings"], ["pims", "settings"], ["settings", "top"],
+      ],
+      { "Orders & Dispatch": "orders", "Production View": "factory", Management: "dashboard", "Office & Money": "banknote" },
+      {
+        "Orders & Dispatch": { color: "sky" },
+        "Production View": { color: "violet" },
+        Management: { color: "amber" },
+        "Office & Money": { color: "rose", collapsed: true },
+      },
+    ),
+  },
+];
+
+export function buildStarterTemplateRows(
+  currentRows: DesignerRow[],
+  template: DesignerStarterTemplate,
+): DesignerRow[] {
+  const templateRows = buildDesignerRows(template.config);
+  const customRows = currentRows
+    .filter((row) => row.custom)
+    .map((row) => ({ ...row, roles: { ...row.roles } }));
+  return [...templateRows, ...customRows];
 }
 
 /** Custom section names, in the order the sidebar will show them. */
@@ -137,7 +314,7 @@ export function designerSectionNames(rows: DesignerRow[]): string[] {
 /**
  * The editor displays rows bucketed by placement so dragging inside a bucket
  * means exactly what the sidebar will show for that bucket. Top and General
- * Settings are always present ( they are useful drop targets even when
+ * Settings are always present (they are useful drop targets even when
  * empty); custom sections appear in first-use order, followed by any empty
  * staged sections the designer created during this editing session.
  */
@@ -275,7 +452,7 @@ export function clearDesignerSection(rows: DesignerRow[], sectionName: string): 
 export function designerRowMatches(row: DesignerRow, rawQuery: string): boolean {
   const q = rawQuery.trim().toLowerCase();
   if (!q) return true;
-  return [row.label, row.id, row.group, row.target ?? "", row.badge]
+  return [row.label, row.id, row.group, row.target ?? "", row.badge, row.kind ?? ""]
     .join(" ")
     .toLowerCase()
     .includes(q);

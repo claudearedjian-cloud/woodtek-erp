@@ -67,6 +67,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
+import type { MenuSectionColor } from "@/lib/menuConfig";
 
 export interface MenuIconChoice {
   key: string;
@@ -148,4 +149,35 @@ const BY_KEY = new Map(MENU_ICON_CHOICES.map((c) => [c.key, c]));
 
 export function iconChoice(key: string | undefined | null): MenuIconChoice | null {
   return (key && BY_KEY.get(key)) || null;
+}
+
+// Section-header colour bundles. Keys must stay in sync with
+// MENU_SECTION_COLOR_KEYS in menuConfig.ts (render-test checks this). Every
+// Tailwind class is a complete literal so production CSS keeps it.
+export interface MenuSectionColorChoice {
+  key: MenuSectionColor;
+  label: string;
+  headerClass: string;
+  iconClass: string;
+  swatchClass: string;
+  borderClass: string;
+}
+
+export const MENU_SECTION_COLOR_CHOICES: MenuSectionColorChoice[] = [
+  { key: "amber", label: "Amber", headerClass: "text-amber-400", iconClass: "text-amber-400", swatchClass: "bg-amber-400", borderClass: "border-amber-500/40" },
+  { key: "sky", label: "Sky", headerClass: "text-sky-300", iconClass: "text-sky-300", swatchClass: "bg-sky-400", borderClass: "border-sky-500/40" },
+  { key: "emerald", label: "Emerald", headerClass: "text-emerald-300", iconClass: "text-emerald-300", swatchClass: "bg-emerald-400", borderClass: "border-emerald-500/40" },
+  { key: "rose", label: "Rose", headerClass: "text-rose-300", iconClass: "text-rose-300", swatchClass: "bg-rose-400", borderClass: "border-rose-500/40" },
+  { key: "violet", label: "Violet", headerClass: "text-violet-300", iconClass: "text-violet-300", swatchClass: "bg-violet-400", borderClass: "border-violet-500/40" },
+  { key: "slate", label: "Slate", headerClass: "text-slate-300", iconClass: "text-slate-300", swatchClass: "bg-slate-400", borderClass: "border-slate-600" },
+];
+
+const SECTION_COLOR_BY_KEY = new Map(
+  MENU_SECTION_COLOR_CHOICES.map((choice) => [choice.key, choice]),
+);
+
+export function sectionColorChoice(
+  key: string | undefined | null,
+): MenuSectionColorChoice {
+  return (key && SECTION_COLOR_BY_KEY.get(key as MenuSectionColor)) || MENU_SECTION_COLOR_CHOICES[0];
 }
