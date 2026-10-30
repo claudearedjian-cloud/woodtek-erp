@@ -34,6 +34,7 @@ export type ModuleId =
   | "recipes"
   | "pims"
   | "designer"
+  | "design"
   | "warehouse"
   | "plant"
   | "assembly"
@@ -68,6 +69,7 @@ export const MODULES_BY_ROLE: Record<Role, ModuleId[]> = {
     "recipes",
     "pims",
     "designer",
+    "design",
     "warehouse",
     "plant",
     "assembly",
@@ -165,6 +167,7 @@ export const MODULE_LABELS: Record<ModuleId, string> = {
   pims: "PIMS Import",
   warehouse: "Warehouse",
   designer: "Menu Designer",
+  design: "Design Department",
   plant: "Plant Performance",
   reception: "Material Reception",
   assembly: "Cabinet Assembly",
@@ -194,7 +197,7 @@ export function canAccessModule(role: Role | string | null | undefined, module: 
   // Optional modules are granted separately from the built-in screen defaults.
   // If a profile has no explicit screen allowlist, a role/module grant can add
   // its screen; the required module grant remains an independent gate.
-  if (module === "purchasing" || module === "invoicing" || module === "jobcosting" || module === "hr") {
+  if (module === "purchasing" || module === "invoicing" || module === "jobcosting" || module === "hr" || module === "design") {
     return Boolean(custom || Object.hasOwn(MODULES_BY_ROLE, role));
   }
   return ((MODULES_BY_ROLE as Record<string, ModuleId[]>)[key] ?? []).includes(module);

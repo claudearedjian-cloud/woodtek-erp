@@ -63,6 +63,7 @@ const AR: Record<string, string> = {
   "System Reports": "تقارير النظام",
   "General Settings": "الإعدادات العامة",
   "Menu Designer": "مصمم القائمة",
+  "Design Department": "قسم التصميم",
   // --- sidebar chrome ---
   "Operations & Control": "العمليات والتحكم",
   "Factory Automation": "أتمتة المصنع",
@@ -215,6 +216,7 @@ const FR: Record<string, string> = {
   "System Reports": "Rapports système",
   "General Settings": "Paramètres généraux",
   "Menu Designer": "Concepteur de menu",
+  "Design Department": "Bureau d'études",
   // --- sidebar chrome ---
   "Operations & Control": "Opérations & contrôle",
   "Factory Automation": "Automatisation usine",
