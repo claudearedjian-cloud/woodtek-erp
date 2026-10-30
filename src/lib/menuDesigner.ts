@@ -198,7 +198,7 @@ export const DESIGNER_STARTER_TEMPLATES: DesignerStarterTemplate[] = [
     config: starterConfig(
       [
         ["dashboard", "top"], ["wip", "top"], ["plant", "top"], ["reports", "top"],
-        ["orders", "Operations"], ["schedule", "Operations"], ["gantt", "Operations"], ["production", "Operations"], ["station", "Operations"],
+        ["orders", "Operations"], ["design", "Operations"], ["schedule", "Operations"], ["gantt", "Operations"], ["production", "Operations"], ["station", "Operations"],
         ["machines", "Shop Floor"], ["assembly", "Shop Floor"], ["quality", "Shop Floor"], ["cmms", "Shop Floor"], ["downtime", "Shop Floor"],
         ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
         ["customers", "Office & Money"], ["invoicing", "Office & Money"], ["jobcosting", "Office & Money"],
@@ -222,7 +222,7 @@ export const DESIGNER_STARTER_TEMPLATES: DesignerStarterTemplate[] = [
     config: starterConfig(
       [
         ["wip", "top"], ["orders", "top"], ["schedule", "top"], ["station", "top"],
-        ["gantt", "Planning"], ["recipes", "Planning"], ["production", "Planning"], ["plant", "Planning"],
+        ["gantt", "Planning"], ["design", "Planning"], ["recipes", "Planning"], ["production", "Planning"], ["plant", "Planning"],
         ["machines", "Shop Floor"], ["assembly", "Shop Floor"], ["quality", "Shop Floor"],
         ["cmms", "Maintenance"], ["downtime", "Maintenance"],
         ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
@@ -249,7 +249,7 @@ export const DESIGNER_STARTER_TEMPLATES: DesignerStarterTemplate[] = [
       [
         ["dashboard", "top"], ["orders", "top"], ["customers", "top"], ["reports", "top"],
         ["invoicing", "Sales & Money"], ["jobcosting", "Sales & Money"],
-        ["schedule", "Planning"], ["gantt", "Planning"],
+        ["schedule", "Planning"], ["gantt", "Planning"], ["design", "Planning"],
         ["wip", "Factory View"], ["plant", "Factory View"], ["production", "Factory View"], ["station", "Factory View"], ["assembly", "Factory View"], ["quality", "Factory View"],
         ["warehouse", "Materials"], ["reception", "Materials"], ["inventory", "Materials"], ["purchasing", "Materials"],
         ["workforce", "People"], ["hr", "People"],
@@ -276,7 +276,7 @@ export const DESIGNER_STARTER_TEMPLATES: DesignerStarterTemplate[] = [
         ["wip", "Production View"], ["station", "Production View"], ["assembly", "Production View"], ["quality", "Production View"], ["production", "Production View"],
         ["dashboard", "Management"], ["plant", "Management"], ["reports", "Management"],
         ["invoicing", "Office & Money"], ["jobcosting", "Office & Money"],
-        ["recipes", "settings"], ["machines", "settings"], ["cmms", "settings"], ["downtime", "settings"], ["workforce", "settings"], ["hr", "settings"], ["pims", "settings"], ["settings", "top"],
+        ["recipes", "settings"], ["machines", "settings"], ["cmms", "settings"], ["downtime", "settings"], ["workforce", "settings"], ["hr", "settings"], ["pims", "settings"], ["design", "settings"], ["settings", "top"],
       ],
       { "Orders & Dispatch": "orders", "Production View": "factory", Management: "dashboard", "Office & Money": "banknote" },
       {

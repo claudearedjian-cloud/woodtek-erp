@@ -348,7 +348,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
     }
   };
 
-  // ---- optional modules (money + HR/payroll) ------------------------------
+  // ---- optional modules ---------------------------------------------------
   // A module is OFF for everybody until a Manager switches it on and grants it
   // to a role and/or to one person. Manager always keeps access, so a Manager
   // can never lock themselves out of the factory's own books.
@@ -479,6 +479,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
       "purchasing",
       "jobcosting",
       "hr",
+      "design",
     ]);
     return [...candidates].filter((module) =>
       canAccessModule(role, module) &&

@@ -53,6 +53,7 @@ const RecipeManagerView = dynamic(() => import("@/components/RecipeManagerView")
 const AssemblyView = dynamic(() => import("@/components/AssemblyView"), { loading: ScreenLoading });
 const PimsImportView = dynamic(() => import("@/components/PimsImportView"), { loading: ScreenLoading });
 const MenuDesignerView = dynamic(() => import("@/components/MenuDesignerView"), { loading: ScreenLoading });
+const DesignDepartmentView = dynamic(() => import("@/components/DesignDepartmentView"), { loading: ScreenLoading });
 const MachineDowntimeLoginAlert = dynamic(() => import("@/components/MachineDowntimeLoginAlert"));
 
 export default function WoodTekERP() {
@@ -109,6 +110,7 @@ export default function WoodTekERP() {
   const [purchaseReorderItemId, setPurchaseReorderItemId] = useState<number | null>(null);
   const canPurchase = subjectHasModule("purchasing", currentUser, optionalConfig);
   const canInvoice = subjectHasModule("invoicing", currentUser, optionalConfig);
+  const canDesign = subjectHasModule("design", currentUser, optionalConfig);
   const canCmms = screenAllowedForSubject("cmms", currentUser, optionalConfig);
   const canWorkforce = screenAllowedForSubject("workforce", currentUser, optionalConfig);
   const startPurchaseForItem = (itemId: number) => {
@@ -640,7 +642,7 @@ export default function WoodTekERP() {
   const tabToModule = (tab: string): ModuleId | null => {
     if (tab === "station") return "operator";
     if (tab.startsWith("order-")) return "orders";
-    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "hr", "wip", "quality", "downtime", "recipes", "assembly", "pims", "designer", "warehouse", "plant", "reception"];
+    const allowed: ModuleId[] = ["dashboard", "orders", "machines", "operator", "customers", "inventory", "purchasing", "invoicing", "jobcosting", "schedule", "gantt", "production", "cmms", "reports", "settings", "workforce", "hr", "wip", "quality", "downtime", "recipes", "assembly", "pims", "designer", "design", "warehouse", "plant", "reception"];
     return (allowed as string[]).includes(tab) ? (tab as ModuleId) : null;
   };
 
@@ -785,6 +787,7 @@ export default function WoodTekERP() {
           {activeTab === "reports" && <ReportView currentUser={currentUser} searchQuery={searchQuery} />}
           {activeTab === "workforce" && canWorkforce && <WorkforceView currentUser={currentUser} machines={machines} />}
           {activeTab === "hr" && screenAllowedForSubject("hr", currentUser, optionalConfig) && <HrPayrollView currentUser={currentUser} />}
+          {activeTab === "design" && canDesign && <DesignDepartmentView key={currentUser.id} currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "wip" && <WipBoardView onSelectOrder={handleSelectOrder} onNavigate={setActiveTab} />}
           {activeTab === "quality" && <QualityView currentUser={currentUser} onSelectOrder={handleSelectOrder} />}
           {activeTab === "downtime" && <DowntimeView currentUser={currentUser} />}

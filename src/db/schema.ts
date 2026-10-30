@@ -916,3 +916,87 @@ export const pimsImportsRelations = relations(pimsImports, ({ one }) => ({
     references: [orders.id],
   }),
 }));
+
+// ----------------------------------------------------------------------------
+// Design Department (optional module): one row per drawing revision. The
+// workflow is Draft -> Submitted -> Returned (Code A/B/C/D) -> Issued to
+// Production. A later revision points back through supersedes_id; uploaded
+// files are stored under <data dir>/uploads/design with metadata here.
+// ----------------------------------------------------------------------------
+export const designDrawings = pgTable("design_drawings", {
+  id: serial("id").primaryKey(),
+  drawingNo: text("drawing_no").notNull(),
+  revision: text("revision").notNull(),
+  title: text("title").notNull(),
+  projectName: text("project_name").notNull().default(""),
+  clientName: text("client_name").notNull().default(""),
+  architectName: text("architect_name").notNull().default(""),
+  orderId: integer("order_id").references(() => orders.id, { onDelete: "set null" }),
+  orderSnapshot: text("order_snapshot").notNull().default(""),
+  discipline: text("discipline").notNull().default("General Joinery"),
+  area: text("area").notNull().default(""),
+  sheetCount: integer("sheet_count").notNull().default(1),
+  status: text("status").notNull().default("Draft"),
+  priority: text("priority").notNull().default("Normal"),
+  requiredDate: date("required_date", { mode: "string" }),
+  externalLink: text("external_link").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  submittedTo: text("submitted_to").notNull().default(""),
+  submittedById: integer("submitted_by_id").references(() => users.id, { onDelete: "set null" }),
+  submittedDate: date("submitted_date", { mode: "string" }),
+  transmittalNo: text("transmittal_no").notNull().default(""),
+  responseDueDate: date("response_due_date", { mode: "string" }),
+  approvalCode: text("approval_code").notNull().default(""),
+  approvalBy: text("approval_by").notNull().default(""),
+  approvalDate: date("approval_date", { mode: "string" }),
+  approvalComments: text("approval_comments").notNull().default(""),
+  commentsIncorporated: boolean("comments_incorporated").notNull().default(false),
+  commentsIncorporatedById: integer("comments_incorporated_by_id").references(() => users.id, { onDelete: "set null" }),
+  commentsIncorporatedAt: timestamp("comments_incorporated_at"),
+  issuedTo: text("issued_to").notNull().default(""),
+  issuedById: integer("issued_by_id").references(() => users.id, { onDelete: "set null" }),
+  issuedAt: timestamp("issued_at"),
+  issueNote: text("issue_note").notNull().default(""),
+  supersedesId: integer("supersedes_id").references((): AnyPgColumn => designDrawings.id, { onDelete: "set null" }),
+  createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedById: integer("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("design_drawings_status_idx").on(t.status),
+  index("design_drawings_approval_code_idx").on(t.approvalCode),
+  index("design_drawings_order_idx").on(t.orderId),
+  index("design_drawings_drawing_no_idx").on(t.drawingNo),
+  index("design_drawings_updated_at_idx").on(t.updatedAt),
+]);
+
+export const designDrawingEvents = pgTable("design_drawing_events", {
+  id: serial("id").primaryKey(),
+  drawingId: integer("drawing_id").notNull().references(() => designDrawings.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  summary: text("summary").notNull(),
+  details: text("details").notNull().default(""),
+  revisionSnapshot: text("revision_snapshot").notNull().default(""),
+  statusSnapshot: text("status_snapshot").notNull().default(""),
+  approvalCode: text("approval_code").notNull().default(""),
+  actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+  actorName: text("actor_name").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("design_drawing_events_drawing_idx").on(t.drawingId),
+  index("design_drawing_events_created_at_idx").on(t.createdAt),
+]);
+
+export const designDrawingFiles = pgTable("design_drawing_files", {
+  id: serial("id").primaryKey(),
+  drawingId: integer("drawing_id").notNull().references(() => designDrawings.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull().default("Drawing PDF/CAD"),
+  fileName: text("file_name").notNull(),
+  originalName: text("original_name").notNull().default(""),
+  mime: text("mime").notNull().default(""),
+  size: integer("size").notNull().default(0),
+  uploadedById: integer("uploaded_by_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("design_drawing_files_drawing_idx").on(t.drawingId),
+]);

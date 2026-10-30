@@ -1,5 +1,5 @@
 // ============================================================================
-// Optional modules — money and HR/payroll as grants to a role or person
+// Optional modules — workspace grants switched on for a role or person
 // ============================================================================
 //
 // The owner's rule: money and HR must work like OPTIONAL MODULES. Switched off
@@ -22,12 +22,13 @@ import {
   type InstallerAddonId,
 } from "@/lib/installedEdition";
 
-export type OptionalModuleId = "invoicing" | "purchasing" | "payroll";
+export type OptionalModuleId = "invoicing" | "purchasing" | "payroll" | "design";
 
 export const OPTIONAL_MODULE_IDS: readonly OptionalModuleId[] = [
   "invoicing",
   "purchasing",
   "payroll",
+  "design",
 ] as const;
 
 export interface OptionalModuleDef {
@@ -60,6 +61,13 @@ export const OPTIONAL_MODULES: readonly OptionalModuleDef[] = [
       "Employee pay profiles, leave and absence tracking, monthly payroll drafts, manual earnings/deductions and printable payslips.",
     ready: true,
   },
+  {
+    id: "design",
+    label: "Design Department",
+    description:
+      "Drawing register and revisions, drawing-file uploads, submittals, Code A/B/C/D approvals, resubmittals and guarded issue to production.",
+    ready: true,
+  },
 ] as const;
 
 /**
@@ -70,6 +78,7 @@ export const OPTIONAL_MODULE_SCREENS: Record<OptionalModuleId, readonly string[]
   invoicing: ["invoicing", "jobcosting"],
   purchasing: ["purchasing"],
   payroll: ["hr"],
+  design: ["design"],
 };
 
 /** The module that governs money visibility everywhere in the app. */

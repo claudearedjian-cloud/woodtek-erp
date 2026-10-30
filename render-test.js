@@ -75,6 +75,8 @@ compile("src/lib/payables.ts", "lib/payables.js");
 compile("src/lib/invoicing.ts", "lib/invoicing.js");
 compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
 compile("src/lib/hrPayroll.ts", "lib/hrPayroll.js");
+compile("src/lib/designDepartment.ts", "lib/designDepartment.js");
+compile("src/lib/designAttachments.ts", "lib/designAttachments.js");
 compile("src/lib/hrCalendar.ts", "lib/hrCalendar.js");
 compile("src/lib/hrCalendar.server.ts", "lib/hrCalendar.server.js");
 compile("src/lib/leaveAvailability.ts", "lib/leaveAvailability.js");
@@ -1113,10 +1115,10 @@ check(
 );
 const dbxSchemaSource = fs.readFileSync("src/db/schema.ts", "utf8");
 const schemaIndexCount = (dbxSchemaSource.match(/index\("/g) || []).length;
-const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_|hr_salary_history_|hr_overtime_entries_)/g) || []).length;
+const moduleExtraIndexCount = (dbxSchemaSource.match(/index\("(?:purchase_orders_|purchase_order_lines_|goods_receipts_|goods_receipt_lines_|supplier_bills_|supplier_bill_payments_|invoices_|invoice_lines_|payments_|hr_employee_documents_|hr_leave_requests_|hr_payroll_items_|hr_salary_history_|hr_overtime_entries_|design_drawings_|design_drawing_events_|design_drawing_files_)/g) || []).length;
 check(
   schemaIndexCount === dbx.DB_INDEX_PLAN.length + moduleExtraIndexCount && planNames.every((n) => dbxSchemaSource.includes('"' + n + '"')),
-  "dbx: schema.ts keeps every planned index, plus purchasing, payables and invoicing-only indexes",
+  "dbx: schema.ts keeps every planned index, plus optional-module-only indexes",
 );
 const dbxViewSource = fs.readFileSync("src/components/InventoryView.tsx", "utf8");
 check(
@@ -2611,10 +2613,10 @@ check(hrPay.parsePayrollPeriod("2026", "10").year === 2026 && hrPay.parsePayroll
 let hrBadPeriod = false;
 try { hrPay.parsePayrollPeriod(2026, 13); } catch (error) { hrBadPeriod = error instanceof hrPay.HRPayrollError; }
 check(hrBadPeriod, "HR: payroll period parser rejects out-of-range months");
-check(optMod.OPTIONAL_MODULE_IDS.includes("invoicing") && optMod.OPTIONAL_MODULE_IDS.includes("purchasing") && optMod.OPTIONAL_MODULE_IDS.includes("payroll"), "optional modules: registry has invoicing, purchasing, payroll");
-check(optMod.OPTIONAL_MODULES.length === 3 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true, "optional modules: invoicing remains ready");
+check(optMod.OPTIONAL_MODULE_IDS.includes("invoicing") && optMod.OPTIONAL_MODULE_IDS.includes("purchasing") && optMod.OPTIONAL_MODULE_IDS.includes("payroll") && optMod.OPTIONAL_MODULE_IDS.includes("design"), "optional modules: registry has invoicing, purchasing, payroll and design");
+check(optMod.OPTIONAL_MODULES.length === 4 && optMod.OPTIONAL_MODULES.find(m => m.id === "invoicing")?.ready === true && optMod.OPTIONAL_MODULES.find(m => m.id === "design")?.ready === true, "optional modules: invoicing and Design Department are ready");
 check(optMod.OPTIONAL_MODULES.find(m => m.id === "purchasing")?.ready === true && optMod.OPTIONAL_MODULES.find(m => m.id === "payroll")?.ready === true, "optional modules: purchasing and HR/payroll are ready");
-check(optMod.OPTIONAL_MODULE_SCREENS.purchasing.includes("purchasing") && optMod.OPTIONAL_MODULE_SCREENS.payroll.includes("hr"), "optional modules: Purchasing and HR screens are registered with their grants");
+check(optMod.OPTIONAL_MODULE_SCREENS.purchasing.includes("purchasing") && optMod.OPTIONAL_MODULE_SCREENS.payroll.includes("hr") && optMod.OPTIONAL_MODULE_SCREENS.design.includes("design"), "optional modules: Purchasing, HR and Design screens are registered with their grants");
 check(optMod.MONEY_MODULE === "invoicing", "optional modules: MONEY_MODULE is invoicing");
 check(optMod.MANAGER_ROLE === "Manager", "optional modules: MANAGER_ROLE is Manager");
 check(optMod.isOptionalModuleId("invoicing") && !optMod.isOptionalModuleId("unknown"), "optional modules: isOptionalModuleId validates IDs");
@@ -5719,6 +5721,96 @@ async function checkAssemblyProjectApi() {
   check(routeSrc.includes('"reject"') && routeSrc.includes('"clear-reject"') && routeSrc.includes("status: 409"), "assembly scan API: reject, clear-reject and 409 on a rejected toggle");
   const viewSrc = fs.readFileSync("src/components/AssemblyView.tsx", "utf8");
   check(viewSrc.includes("Rejected parts (") && viewSrc.includes("Fixed / remade") && viewSrc.includes("buildRejectedPartsHtml"), "assembly view: rejected button, fixed / remade action and print list are wired");
+}
+
+// ---- Design Department optional module ----
+{
+  const design = require("./compiled/lib/designDepartment.js");
+  const designFiles = require("./compiled/lib/designAttachments.js");
+  const designInstalled = require("./compiled/lib/installedEdition.js");
+  const designOptional = require("./compiled/lib/optionalModules.js");
+  const designAccess = require("./compiled/lib/moduleAccess.js");
+  const designMenu = require("./compiled/lib/menuConfig.js");
+  const throwsDesign = (fn) => {
+    try { fn(); return false; } catch (error) { return error instanceof design.DesignDepartmentError; }
+  };
+
+  check(design.DESIGN_APPROVAL_CODES.join("") === "ABCD" && design.DESIGN_APPROVAL_CODE_DEFS.map((d) => d.code).join("") === "ABCD", "design: standard approval codes are A, B, C and D in order");
+  check(design.designApprovalCodeDef("A")?.canIssue === true && design.designApprovalCodeDef("B")?.requiresCommentsIncorporated === true, "design: Code A may issue and Code B requires incorporated comments");
+  check(design.designApprovalCodeDef("C")?.canIssue === false && design.designApprovalCodeDef("D")?.productionRule === "Not for production.", "design: Code C and D are never production releases");
+  const parsedDrawing = design.parseDesignDrawing({
+    drawingNo: " WD-101 ",
+    revision: " R0 ",
+    title: " Kitchen elevations ",
+    projectName: " Villa A ",
+    orderId: "42",
+    sheetCount: "3",
+    externalLink: "\\\\server\\share\\drawings\\WD-101.dwg",
+  });
+  check(parsedDrawing.drawingNo === "WD-101" && parsedDrawing.revision === "R0" && parsedDrawing.orderId === 42 && parsedDrawing.sheetCount === 3 && parsedDrawing.discipline === "General Joinery", "design: drawing parser trims identity fields and keeps the optional order link numeric");
+  check(parsedDrawing.externalLink.startsWith("\\\\server\\share") && design.isWebDesignLink(parsedDrawing.externalLink) === false && design.isWebDesignLink("https://example.com/drawing.pdf"), "design: UNC server paths and web drawing links are distinguished safely");
+  check(throwsDesign(() => design.parseDesignDrawing({ drawingNo: "WD-1", revision: "R0", title: "x", requiredDate: "2026-02-30" })), "design: drawing parser rejects impossible calendar dates");
+  check(throwsDesign(() => design.parseDesignDrawing({ drawingNo: "WD-1", revision: "R0", title: "x", discipline: "Unknown" })), "design: drawing parser rejects disciplines outside the register list");
+  check(throwsDesign(() => design.parseDesignDrawing({ drawingNo: "WD-1", revision: "R0", title: "x", externalLink: "javascript:alert(1)" })), "design: external locations cannot smuggle script URLs into the register");
+  check(throwsDesign(() => design.parseDesignSubmit({ submittedTo: "Architect", submittedDate: "2026-10-10", responseDueDate: "2026-10-09" })), "design: response due date cannot precede the submittal date");
+  check(throwsDesign(() => design.parseDesignApproval({ approvalCode: "B", approvalBy: "Architect", approvalDate: "2026-10-12", approvalComments: "" })), "design: Code B cannot be recorded without its approval comments");
+  const codeC = design.parseDesignApproval({ approvalCode: "c", approvalBy: "Architect", approvalDate: "2026-10-12", approvalComments: "Revise dimensions", commentsIncorporated: true });
+  check(codeC.approvalCode === "C" && codeC.commentsIncorporated === false, "design: approval parser normalizes code case and only Code B can carry comment incorporation");
+  check(design.canIssueToProduction({ status: "Returned", approvalCode: "A", commentsIncorporated: false }).ok === true, "design production gate: Returned Code A may issue");
+  check(design.canIssueToProduction({ status: "Returned", approvalCode: "B", commentsIncorporated: false }).ok === false && design.canIssueToProduction({ status: "Returned", approvalCode: "B", commentsIncorporated: true }).ok === true, "design production gate: Code B is blocked until comments are incorporated");
+  check(["C", "D"].every((code) => design.canIssueToProduction({ status: "Returned", approvalCode: code, commentsIncorporated: true }).ok === false), "design production gate: Code C/D stay blocked even if a client sends an incorporated flag");
+  check(design.canIssueToProduction({ status: "On Hold", approvalCode: "A" }).ok === false && design.canIssueToProduction({ status: "Issued to Production", approvalCode: "A" }).ok === false, "design production gate: on-hold and already-issued revisions cannot issue again");
+  const designSummary = design.summarizeDesignDrawings([
+    { status: "Draft", approvalCode: "" },
+    { status: "Submitted", approvalCode: "", responseDueDate: "2026-01-01" },
+    { status: "Returned", approvalCode: "A" },
+    { status: "Returned", approvalCode: "B", commentsIncorporated: false },
+    { status: "Returned", approvalCode: "B", commentsIncorporated: true },
+    { status: "Returned", approvalCode: "C" },
+    { status: "Issued to Production", approvalCode: "A" },
+  ], "2026-01-02");
+  check(designSummary.active === 7 && designSummary.draft === 1 && designSummary.awaitingApproval === 1 && designSummary.overdueApprovals === 1, "design summary: active, draft, awaiting and overdue counts follow the workflow dates");
+  check(designSummary.readyToIssue === 2 && designSummary.reviseAndResubmit === 1 && designSummary.issuedToProduction === 1 && designSummary.codes.A === 2 && designSummary.codes.B === 2 && designSummary.codes.none === 2, "design summary: production-ready, resubmittal, issued and approval-code counts are separated");
+  check(design.designDrawingStage({ status: "Returned", approvalCode: "B", commentsIncorporated: false }) === "Incorporate Code B comments" && design.designDrawingStage({ status: "Returned", approvalCode: "D" }) === "Revise & resubmit", "design stages: Code B work and rejected revisions get the correct next action");
+  check(design.suggestNextDesignRevision("P01") === "P02" && design.suggestNextDesignRevision("R9") === "R10" && design.suggestNextDesignRevision("A") === "B" && design.suggestNextDesignRevision("") === "R1", "design revisions: next-revision suggestions preserve common factory revision styles");
+
+  check(designFiles.designFileExtension("WD-101.DWG", "application/octet-stream") === "dwg" && designFiles.validateDesignFile("WD-101.DWG", "application/octet-stream", 1024) === null, "design files: CAD uploads are accepted by safe extension despite browser octet-stream MIME");
+  check(designFiles.validateDesignFile("drawing.exe", "", 1024) !== null && designFiles.validateDesignFile("drawing.svg", "image/svg+xml", 1024) !== null, "design files: executables and scriptable SVG payloads are rejected");
+  check(designFiles.validateDesignFile("drawing.pdf", "application/pdf", designFiles.MAX_DESIGN_FILE_BYTES + 1) !== null && designFiles.MAX_DESIGN_FILE_BYTES === 50 * 1024 * 1024, "design files: the 50 MB drawing-package limit is enforced");
+  check(designFiles.isSafeDesignFileName("design-12-123456-1.dwg") && !designFiles.isSafeDesignFileName("../design-12-1-1.dwg") && designFiles.designFileContentType("x.pdf") === "application/pdf", "design files: stored names are traversal-safe and downloads use the extension content type");
+
+  check(designOptional.moduleLabel("design") === "Design Department" && designOptional.screenOwnerModule("design") === "design", "design optional module: registry and screen ownership are wired");
+  check(designOptional.subjectHasModule("design", { role: "Manager" }, { version: 1, enabled: [], roles: {}, users: {} }) === true, "design optional module: Manager cannot lock themselves out");
+  check(designOptional.subjectHasModule("design", { id: 9, role: "Machine Operator" }, { version: 1, enabled: ["design"], roles: {}, users: { "9": ["design"] } }) === true, "design optional module: a personal grant works when the master switch is on");
+  check(designOptional.subjectHasModule("design", { role: "Sales Coordinator" }, { version: 1, enabled: [], roles: { "Sales Coordinator": ["design"] }, users: {} }) === false, "design optional module: a role grant remains off until the Manager switches the module on");
+  check(designInstalled.optionalModuleAddon("design") === null && designInstalled.isOptionalModuleInstalled("design", { addons: [] }) === true && !designInstalled.INSTALLER_ADDON_IDS.includes("design"), "design optional module: no new installer hard-lock can strand existing FS200 installations");
+  check(designAccess.MODULE_LABELS.design === "Design Department" && designAccess.canAccessModule("Manager", "design") === true && designAccess.canAccessModule("Unknown Role", "design") === false, "design navigation: ModuleId, label and known-role access are registered");
+  check(designMenu.MENU_REGISTRY.some((item) => item.id === "design" && item.label === "Design Department" && item.badge === "DWG") && designMenu.MENU_ICON_KEYS.includes("design"), "design navigation: menu registry and icon allowlist include the new screen");
+  const designManagerHtml = renderToString(React.createElement(Sidebar, { activeTab: "design", setActiveTab: () => {}, currentUser: { id: 1, role: "Manager", name: "Manager" }, menuConfig: null, optionalModulesConfig: { version: 1, enabled: [], roles: {}, users: {} }, isOpen: false, onClose: () => {}, mode: "keep" }));
+  check(designManagerHtml.includes("Design Department"), "design navigation: Manager sees Design Department in the real sidebar");
+  const designSalesHtml = renderToString(React.createElement(Sidebar, { activeTab: "dashboard", setActiveTab: () => {}, currentUser: { id: 2, role: "Sales Coordinator", name: "Sales" }, menuConfig: null, optionalModulesConfig: { version: 1, enabled: ["design"], roles: {}, users: {} }, isOpen: false, onClose: () => {}, mode: "keep" }));
+  check(!designSalesHtml.includes("Design Department"), "design navigation: an enabled module stays hidden without a role or personal grant");
+
+  const designPageSrc = fs.readFileSync("src/app/page.tsx", "utf8");
+  const designViewSrc = fs.readFileSync("src/components/DesignDepartmentView.tsx", "utf8");
+  const designServerSrc = fs.readFileSync("src/lib/designDepartment.server.ts", "utf8");
+  const designSchemaSrc = fs.readFileSync("src/db/schema.ts", "utf8");
+  const designEnsureSrc = fs.readFileSync("src/lib/designSchema.server.ts", "utf8");
+  const designInstallerSchemaSrc = fs.readFileSync("installer/schema.sql", "utf8");
+  const designRoutePaths = ["src/app/api/design/route.ts", "src/app/api/design/[id]/route.ts", "src/app/api/design/[id]/files/route.ts"];
+  check(designPageSrc.includes('import("@/components/DesignDepartmentView")') && designPageSrc.includes('subjectHasModule("design"') && designPageSrc.includes('activeTab === "design" && canDesign'), "design page: workspace is code-split and rendered only for a granted subject");
+  check(designRoutePaths.every((routePath) => fs.readFileSync(routePath, "utf8").includes('authorizeModule("design")')), "design API: every register and file route enforces the optional-module grant on the server");
+  check(designRoutePaths.every((routePath) => fs.readFileSync(routePath, "utf8").includes("logAudit(")), "design API: creates, workflow changes and file operations write audit entries");
+  check(designServerSrc.includes('current.status !== "Draft"') && designServerSrc.includes("Only a Draft revision can be submitted"), "design workflow: server only submits Draft revisions");
+  check(designServerSrc.includes('current.status !== "Submitted"') && designServerSrc.includes("approval code can be recorded only"), "design workflow: server records approval codes only for Submitted revisions");
+  check(designServerSrc.includes("canIssueToProduction({") && designServerSrc.includes("olderIssued") && designServerSrc.includes('status: "Superseded"'), "design workflow: issuing a revision supersedes older production releases of the same drawing");
+  check(designServerSrc.includes("Superseded by draft revision") && designServerSrc.includes("remains current until the new one is issued"), "design workflow: resubmittals supersede non-issued sources but never silently replace an issued production reference");
+  check(designServerSrc.includes("Only a never-submitted Draft can be deleted") && designServerSrc.includes("MAX_DESIGN_FILES_PER_DRAWING"), "design records: historical revisions cannot be hard-deleted and file counts are capped");
+  check(["designDrawings", "designDrawingEvents", "designDrawingFiles"].every((name) => designSchemaSrc.includes(`export const ${name}`)), "design schema: Drizzle owns drawings, events and file metadata tables");
+  check(designEnsureSrc.includes("pg_advisory_xact_lock(874221910)") && ["design_drawings", "design_drawing_events", "design_drawing_files"].every((table) => designEnsureSrc.includes(`create table if not exists ${table}`)), "design schema: existing PCs lazily create the three tables under one advisory lock");
+  check(["design_drawings_project_drawing_revision_unique_idx", "approval_code in ('', 'A', 'B', 'C', 'D')", "status in ('Draft', 'Submitted', 'Returned', 'Issued to Production'"].every((fragment) => designInstallerSchemaSrc.includes(fragment) && designEnsureSrc.includes(fragment)), "design schema: lazy DDL and fresh-install schema keep identity, status and code constraints in sync");
+  check(designViewSrc.includes("Record Code A/B/C/D") && designViewSrc.includes("Issue to production") && designViewSrc.includes("New revision / resubmit") && designViewSrc.includes("comments are already incorporated"), "design UI: submittal, Code B, production issue and resubmittal actions are visible in the workflow");
+  check(designViewSrc.includes("DESIGN_FILE_ACCEPT") && designViewSrc.includes("Upload file") && designViewSrc.includes("download=1") && designViewSrc.includes("External link / server path") && designViewSrc.includes("Export CSV"), "design UI: uploaded drawings, safe downloads, external locations and register export stay together");
 }
 
 // ---- Factory structure: company, branches, floors; supervisor links; version label ----

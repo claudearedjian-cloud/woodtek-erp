@@ -194,10 +194,11 @@ export function isScreenInstalled(
   return isAddonInstalled(owner, source);
 }
 
-/** Maps an OptionalModuleId ("invoicing" | "purchasing" | "payroll") to its installer add-on pack. */
+/** Maps an installer-owned OptionalModuleId to its add-on pack. Design Department is built into the app and intentionally has no installer hard-lock pack, so existing installations can enable it after a normal update. */
 export function optionalModuleAddon(
-  modId: "invoicing" | "purchasing" | "payroll" | string,
+  modId: "invoicing" | "purchasing" | "payroll" | "design" | string,
 ): InstallerAddonId | null {
+  if (modId === "design") return null;
   if (modId === "invoicing") return "invoicing";
   if (modId === "purchasing") return "purchasing";
   if (modId === "payroll") return "workforce";
@@ -206,9 +207,10 @@ export function optionalModuleAddon(
 
 /** True unless the optional module's add-on pack was omitted during installation. */
 export function isOptionalModuleInstalled(
-  modId: "invoicing" | "purchasing" | "payroll" | string,
+  modId: "invoicing" | "purchasing" | "payroll" | "design" | string,
   source?: EditionSource,
 ): boolean {
+  if (modId === "design") return true;
   const addon = optionalModuleAddon(modId);
   if (!addon) return false;
   return isAddonInstalled(addon, source);
