@@ -12,6 +12,7 @@ import { operationMachineCandidates } from "@/lib/operationMachineCandidates.ser
 import { readDispatchStore } from "@/lib/dispatch.server";
 import { allCurrentBatchesDelivered } from "@/lib/dispatch";
 import { clearDeletedOrderRuntimeState } from "@/lib/orderCleanup.server";
+import { orderDesignProductionGate } from "@/lib/designDepartment.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, error: authError } = await authorize("orders:read");
@@ -147,6 +148,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       } : material;
     });
 
+    let designGate = null;
+    try {
+      designGate = await orderDesignProductionGate(orderId);
+    } catch (gateError) {
+      console.warn("Design production gate skipped for order detail:", gateError);
+    }
     return NextResponse.json({
       ...order,
       totalValue: noMoney ? null : order.totalValue,
@@ -154,6 +161,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       materials: noMoney ? enrichedMats.map(m => ({ ...m, costPerUnit: null })) : enrichedMats,
       materialsTotalCost: noMoney ? null : materialsTotalCost.toFixed(2),
       productionPlan,
+      designGate,
     });
   } catch (error: any) {
     console.error("GET order details error:", error);
@@ -197,6 +205,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.notes !== undefined) updateFields.notes = body.notes;
     if (body.materialsStatus !== undefined) updateFields.materialsStatus = body.materialsStatus;
 
+    if (body.status === "In Production") {
+      const designGate = await orderDesignProductionGate(orderId);
+      if (designGate.state === "blocked") {
+        return NextResponse.json(
+          { error: `Design approval gate: ${designGate.message}`, designGate },
+          { status: 409 },
+        );
+      }
+    }
     // Parent delivery is controlled by independent Dispatch batches. A manual
     // whole-order status edit cannot let one material silently deliver siblings.
     if (body.status === "Delivered") {

@@ -30,6 +30,9 @@ export async function ensureDesignSchema(): Promise<void> {
         required_date date,
         external_link text not null default '',
         notes text not null default '',
+        submission_checklist_json text not null default '{}',
+        submission_checklist_by_id integer references users(id) on delete set null,
+        submission_checklist_at timestamp,
         submitted_to text not null default '',
         submitted_by_id integer references users(id) on delete set null,
         submitted_date date,
@@ -53,6 +56,9 @@ export async function ensureDesignSchema(): Promise<void> {
         updated_at timestamp not null default now()
       )
     `);
+    await tx.execute(sql`alter table design_drawings add column if not exists submission_checklist_json text not null default '{}'`);
+    await tx.execute(sql`alter table design_drawings add column if not exists submission_checklist_by_id integer references users(id) on delete set null`);
+    await tx.execute(sql`alter table design_drawings add column if not exists submission_checklist_at timestamp`);
     await tx.execute(sql`create unique index if not exists design_drawings_project_drawing_revision_unique_idx on design_drawings (lower(project_name), lower(drawing_no), lower(revision))`);
     await tx.execute(sql`create index if not exists design_drawings_status_idx on design_drawings (status)`);
     await tx.execute(sql`create index if not exists design_drawings_approval_code_idx on design_drawings (approval_code)`);

@@ -114,6 +114,44 @@ export const DESIGN_FILE_KINDS = [
 ] as const;
 export type DesignFileKind = (typeof DESIGN_FILE_KINDS)[number];
 
+export const DESIGN_SUBMISSION_CHECKLIST = [
+  {
+    id: "titleBlock",
+    label: "Drawing number, revision, title block and sheet list verified",
+  },
+  {
+    id: "dimensions",
+    label: "Dimensions, levels and site measurements checked",
+  },
+  {
+    id: "materials",
+    label: "Materials, finishes, hardware and specifications complete",
+  },
+  {
+    id: "coordination",
+    label: "Sections and details coordinated with the project and adjoining trades",
+  },
+  {
+    id: "package",
+    label: "PDF/CAD package, sheet count and external drawing location verified",
+  },
+  {
+    id: "comments",
+    label: "Previous client/consultant comments addressed, or first issue confirmed",
+  },
+] as const;
+export type DesignSubmissionChecklistId =
+  (typeof DESIGN_SUBMISSION_CHECKLIST)[number]["id"];
+export type DesignSubmissionChecklistState =
+  Record<DesignSubmissionChecklistId, boolean>;
+
+export interface DesignSubmissionChecklistProgress {
+  checked: number;
+  total: number;
+  complete: boolean;
+  missing: string[];
+}
+
 export interface DesignDrawingInput {
   drawingNo: string;
   revision: string;
@@ -137,6 +175,7 @@ export interface DesignSubmitInput {
   transmittalNo: string;
   responseDueDate: string | null;
   note: string;
+  submissionChecklist: DesignSubmissionChecklistState;
 }
 
 export interface DesignApprovalInput {
@@ -166,6 +205,10 @@ export interface DesignStatusChangeInput {
 export interface DesignCommentsInput {
   incorporated: boolean;
   note: string;
+}
+
+export interface DesignChecklistInput {
+  submissionChecklist: DesignSubmissionChecklistState;
 }
 
 function record(input: unknown): Record<string, unknown> {
@@ -236,6 +279,105 @@ function booleanValue(value: unknown, label: string): boolean {
   if (value === undefined) return false;
   if (typeof value !== "boolean") throw new DesignDepartmentError(`${label} must be true or false.`);
   return value;
+}
+
+export function designDateDiffDays(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): number | null {
+  if (!isValidDesignDate(start) || !isValidDesignDate(end)) return null;
+  return Math.round(
+    (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000,
+  );
+}
+
+export function emptyDesignSubmissionChecklist(): DesignSubmissionChecklistState {
+  const state = {} as DesignSubmissionChecklistState;
+  for (const item of DESIGN_SUBMISSION_CHECKLIST) state[item.id] = false;
+  return state;
+}
+
+export function readDesignSubmissionChecklist(
+  value: unknown,
+): DesignSubmissionChecklistState {
+  let raw: unknown = value;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw) as unknown;
+    } catch {
+      return emptyDesignSubmissionChecklist();
+    }
+  }
+  const state = emptyDesignSubmissionChecklist();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return state;
+  const source = raw as Record<string, unknown>;
+  for (const item of DESIGN_SUBMISSION_CHECKLIST) {
+    state[item.id] = source[item.id] === true;
+  }
+  return state;
+}
+
+export function designSubmissionChecklistProgress(
+  value: unknown,
+): DesignSubmissionChecklistProgress {
+  const state = readDesignSubmissionChecklist(value);
+  const missing = DESIGN_SUBMISSION_CHECKLIST
+    .filter((item) => !state[item.id])
+    .map((item) => item.label);
+  return {
+    checked: DESIGN_SUBMISSION_CHECKLIST.length - missing.length,
+    total: DESIGN_SUBMISSION_CHECKLIST.length,
+    complete: missing.length === 0,
+    missing,
+  };
+}
+
+export function parseDesignSubmissionChecklist(
+  input: unknown,
+  requireComplete = false,
+): DesignSubmissionChecklistState {
+  let raw: unknown = input;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw) as unknown;
+    } catch {
+      throw new DesignDepartmentError("Submission checklist must be a valid checklist object.");
+    }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new DesignDepartmentError("Complete the design submission checklist before submitting.");
+  }
+  const source = raw as Record<string, unknown>;
+  const known = new Set<string>(DESIGN_SUBMISSION_CHECKLIST.map((item) => item.id));
+  for (const key of Object.keys(source)) {
+    if (!known.has(key)) {
+      throw new DesignDepartmentError(`Unknown submission checklist item: ${key}.`);
+    }
+  }
+  const state = emptyDesignSubmissionChecklist();
+  for (const item of DESIGN_SUBMISSION_CHECKLIST) {
+    const value = source[item.id];
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new DesignDepartmentError(`Checklist item “${item.label}” must be true or false.`);
+    }
+    state[item.id] = value === true;
+  }
+  if (requireComplete) assertDesignSubmissionChecklistComplete(state);
+  return state;
+}
+
+export function assertDesignSubmissionChecklistComplete(
+  value: unknown,
+): DesignSubmissionChecklistState {
+  const state = readDesignSubmissionChecklist(value);
+  const progress = designSubmissionChecklistProgress(state);
+  if (!progress.complete) {
+    throw new DesignDepartmentError(
+      `Complete the submission checklist before submitting. Still required: ${progress.missing.join("; ")}`,
+      409,
+    );
+  }
+  return state;
 }
 
 export function cleanDesignExternalLink(value: unknown): string {
@@ -314,6 +456,7 @@ export function parseDesignSubmit(input: unknown): DesignSubmitInput {
     transmittalNo: text(raw.transmittalNo, "Transmittal number", 80, false, true),
     responseDueDate,
     note: text(raw.note, "Submittal note", 2000),
+    submissionChecklist: parseDesignSubmissionChecklist(raw.submissionChecklist, true),
   };
 }
 
@@ -364,6 +507,13 @@ export function parseDesignStatusChange(input: unknown): DesignStatusChangeInput
     throw new DesignDepartmentError("Choose Draft, On Hold or Cancelled for a manual status change.");
   }
   return { status, note: text(raw.note, "Status note", 2000) };
+}
+
+export function parseDesignChecklist(input: unknown): DesignChecklistInput {
+  const raw = record(input);
+  return {
+    submissionChecklist: parseDesignSubmissionChecklist(raw.submissionChecklist),
+  };
 }
 
 export function parseDesignComments(input: unknown): DesignCommentsInput {
@@ -510,6 +660,566 @@ export function summarizeDesignDrawings(
     if (canIssueToProduction(drawing).ok) summary.readyToIssue += 1;
   }
   return summary;
+}
+
+export interface DesignProductionGateDrawing extends DesignStageDrawing {
+  id?: number | string | null;
+  orderId?: number | string | null;
+  projectName?: string | null;
+  drawingNo?: string | null;
+  revision?: string | null;
+  title?: string | null;
+  createdAt?: string | Date | null;
+}
+
+export interface DesignProductionGateDrawingRef {
+  drawingId: number | null;
+  drawingNo: string;
+  revision: string;
+  projectName: string;
+  title: string;
+  status: string;
+  approvalCode: string;
+  stage: string;
+  reason: string;
+}
+
+export interface DesignProductionGate {
+  state: "not-controlled" | "ready" | "blocked";
+  controlled: boolean;
+  ready: boolean;
+  requiredFamilies: number;
+  issuedFamilies: number;
+  issuedDrawingCount: number;
+  blockers: DesignProductionGateDrawingRef[];
+  issuedRevisions: DesignProductionGateDrawingRef[];
+  message: string;
+}
+
+function gateDrawingTime(drawing: DesignProductionGateDrawing): number {
+  const id = Number(drawing.id);
+  if (Number.isSafeInteger(id) && id > 0) return id;
+  const time = drawing.createdAt instanceof Date
+    ? drawing.createdAt.getTime()
+    : Date.parse(String(drawing.createdAt ?? ""));
+  return Number.isFinite(time) ? time : 0;
+}
+
+function gateDrawingRef(
+  drawing: DesignProductionGateDrawing,
+  reason: string,
+  today: string,
+): DesignProductionGateDrawingRef {
+  const id = Number(drawing.id);
+  return {
+    drawingId: Number.isSafeInteger(id) && id > 0 ? id : null,
+    drawingNo: String(drawing.drawingNo ?? "Drawing"),
+    revision: String(drawing.revision ?? ""),
+    projectName: String(drawing.projectName ?? ""),
+    title: String(drawing.title ?? ""),
+    status: String(drawing.status ?? "Draft"),
+    approvalCode: String(drawing.approvalCode ?? ""),
+    stage: designDrawingStage(drawing, today),
+    reason,
+  };
+}
+
+/**
+ * The owner-selected hard production gate. Linking any current Design
+ * Department drawing family to an order makes that order design-controlled:
+ * production may start only when every linked family has an issued revision.
+ * An older issued revision remains valid while a replacement is being revised;
+ * cancelled/superseded-only families no longer control the order. Orders with
+ * no linked drawings stay outside this optional gate, so historical and
+ * non-design orders are not trapped by enabling the module.
+ */
+export function designProductionGate(
+  drawings: readonly DesignProductionGateDrawing[],
+  today = new Date().toISOString().slice(0, 10),
+): DesignProductionGate {
+  const families = new Map<string, DesignProductionGateDrawing[]>();
+  for (const drawing of drawings) {
+    const key = `${String(drawing.projectName ?? "").trim().toLowerCase()}|${String(drawing.drawingNo ?? "").trim().toLowerCase()}`;
+    const rows = families.get(key) ?? [];
+    rows.push(drawing);
+    families.set(key, rows);
+  }
+
+  let requiredFamilies = 0;
+  let issuedFamilies = 0;
+  let issuedDrawingCount = 0;
+  const blockers: DesignProductionGateDrawingRef[] = [];
+  const issuedRevisions: DesignProductionGateDrawingRef[] = [];
+
+  for (const rows of families.values()) {
+    const issued = rows.filter((row) => String(row.status ?? "") === "Issued to Production");
+    const current = rows.filter((row) => !["Cancelled", "Superseded"].includes(String(row.status ?? "")));
+    if (issued.length === 0 && current.length === 0) continue;
+    requiredFamilies += 1;
+    issuedDrawingCount += issued.length;
+    if (issued.length > 0) {
+      issuedFamilies += 1;
+      const latestIssued = [...issued].sort((a, b) => gateDrawingTime(b) - gateDrawingTime(a))[0];
+      issuedRevisions.push(gateDrawingRef(
+        latestIssued,
+        "This issued revision is the current production release for its drawing family.",
+        today,
+      ));
+      continue;
+    }
+    const latest = [...current].sort((a, b) => gateDrawingTime(b) - gateDrawingTime(a))[0];
+    const status = String(latest.status ?? "Draft");
+    const eligibility = canIssueToProduction(latest);
+    const reason = status === "Draft"
+      ? "This revision has not been submitted or issued to production."
+      : status === "Submitted"
+        ? "Approval is still pending; no revision of this drawing has been issued."
+        : eligibility.ok
+          ? "The approved revision is ready, but it has not yet been issued to production."
+          : eligibility.reason;
+    blockers.push(gateDrawingRef(latest, reason, today));
+  }
+
+  blockers.sort((a, b) => `${a.drawingNo} ${a.revision}`.localeCompare(`${b.drawingNo} ${b.revision}`));
+  issuedRevisions.sort((a, b) => `${a.drawingNo} ${a.revision}`.localeCompare(`${b.drawingNo} ${b.revision}`));
+  if (requiredFamilies === 0) {
+    return {
+      state: "not-controlled",
+      controlled: false,
+      ready: true,
+      requiredFamilies,
+      issuedFamilies,
+      issuedDrawingCount,
+      blockers,
+      issuedRevisions,
+      message: "No current Design Department drawings are linked to this order.",
+    };
+  }
+  if (blockers.length > 0) {
+    const names = blockers
+      .slice(0, 3)
+      .map((blocker) => `${blocker.drawingNo} Rev ${blocker.revision || "—"} (${blocker.stage})`)
+      .join(", ");
+    return {
+      state: "blocked",
+      controlled: true,
+      ready: false,
+      requiredFamilies,
+      issuedFamilies,
+      issuedDrawingCount,
+      blockers,
+      issuedRevisions,
+      message: `Production is blocked until every linked drawing has an issued revision. Waiting on ${names}${blockers.length > 3 ? ` and ${blockers.length - 3} more` : ""}.`,
+    };
+  }
+  return {
+    state: "ready",
+    controlled: true,
+    ready: true,
+    requiredFamilies,
+    issuedFamilies,
+    issuedDrawingCount,
+    blockers,
+    issuedRevisions,
+    message: `All ${requiredFamilies} linked drawing ${requiredFamilies === 1 ? "family has" : "families have"} an issued production revision.`,
+  };
+}
+
+export interface DesignAlertDrawing extends DesignProductionGateDrawing {
+  clientName?: string | null;
+  architectName?: string | null;
+  orderSnapshot?: string | null;
+  priority?: string | null;
+  requiredDate?: string | null;
+  submittedDate?: string | null;
+  submittedTo?: string | null;
+  approvalDate?: string | null;
+  discipline?: string | null;
+  submissionChecklist?: unknown;
+  submissionChecklistJson?: unknown;
+}
+
+export type DesignAlertSeverity = "rose" | "amber" | "sky" | "violet";
+
+export interface DesignDepartmentAlert {
+  kind: string;
+  severity: DesignAlertSeverity;
+  title: string;
+  detail: string;
+  drawingId: number | null;
+  orderId: number | null;
+  dueDate: string | null;
+  days: number | null;
+}
+
+export interface DesignAlertOptions {
+  dueSoonDays?: number;
+  includeChecklist?: boolean;
+}
+
+export function designDrawingAlerts(
+  drawing: DesignAlertDrawing | null | undefined,
+  today = new Date().toISOString().slice(0, 10),
+  options: DesignAlertOptions = {},
+): DesignDepartmentAlert[] {
+  if (!drawing) return [];
+  const status = String(drawing.status ?? "Draft");
+  if (status === "Superseded" || status === "Cancelled") return [];
+  const dueSoonDays = Math.max(0, Math.min(30, Math.floor(options.dueSoonDays ?? 3) || 0));
+  const drawingIdRaw = Number(drawing.id);
+  const drawingId = Number.isSafeInteger(drawingIdRaw) && drawingIdRaw > 0 ? drawingIdRaw : null;
+  const orderIdRaw = Number(drawing.orderId);
+  const orderId = Number.isSafeInteger(orderIdRaw) && orderIdRaw > 0 ? orderIdRaw : null;
+  const label = `${String(drawing.drawingNo ?? "Drawing")} Rev ${String(drawing.revision ?? "—")}`;
+  const project = String(drawing.projectName ?? "").trim();
+  const place = project ? ` · ${project}` : "";
+  const alerts: DesignDepartmentAlert[] = [];
+  const push = (
+    kind: string,
+    severity: DesignAlertSeverity,
+    title: string,
+    detail: string,
+    dueDate: string | null = null,
+    days: number | null = null,
+  ) => alerts.push({ kind, severity, title, detail, drawingId, orderId, dueDate, days });
+
+  const code = designApprovalCodeDef(drawing.approvalCode)?.code;
+  if (status === "Returned" && (code === "C" || code === "D")) {
+    push(
+      "resubmit",
+      "rose",
+      `${label}: revise and resubmit`,
+      `${designApprovalCodeDef(code)?.label ?? `Code ${code}`}${place} — this revision is not for production. Create the corrected revision.`,
+      drawing.approvalDate ?? null,
+    );
+  } else if (status === "Returned" && code === "B" && !drawing.commentsIncorporated) {
+    push(
+      "code-b-comments",
+      "amber",
+      `${label}: Code B comments pending`,
+      `Incorporate and confirm the returned comments before this drawing can be issued${place}.`,
+      drawing.approvalDate ?? null,
+    );
+  } else if (canIssueToProduction(drawing).ok) {
+    push(
+      "ready-to-issue",
+      "sky",
+      `${label}: ready to issue to production`,
+      `${designApprovalCodeDef(code)?.label ?? "Approved drawing"}${place} — production is waiting for the controlled issue action.`,
+      drawing.approvalDate ?? null,
+    );
+  }
+
+  if (status === "Submitted" && drawing.responseDueDate) {
+    const daysUntilDue = designDateDiffDays(today, drawing.responseDueDate);
+    if (daysUntilDue !== null && daysUntilDue < 0) {
+      push(
+        "approval-overdue",
+        "rose",
+        `${label}: approval response overdue`,
+        `${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) === 1 ? "" : "s"} past the response date${drawing.submittedTo ? ` from ${drawing.submittedTo}` : ""}${place}. Chase the return.`,
+        drawing.responseDueDate,
+        Math.abs(daysUntilDue),
+      );
+    } else if (daysUntilDue !== null && daysUntilDue <= dueSoonDays) {
+      push(
+        "approval-due-soon",
+        "amber",
+        `${label}: approval response due soon`,
+        daysUntilDue === 0
+          ? `The approval response is due today${place}.`
+          : `The approval response is due in ${daysUntilDue} day${daysUntilDue === 1 ? "" : "s"}${place}.`,
+        drawing.responseDueDate,
+        daysUntilDue,
+      );
+    }
+  }
+
+  if (["Draft", "Submitted", "Returned", "On Hold"].includes(status) && drawing.requiredDate) {
+    const daysUntilRequired = designDateDiffDays(today, drawing.requiredDate);
+    if (daysUntilRequired !== null && daysUntilRequired < 0) {
+      push(
+        "required-overdue",
+        "rose",
+        `${label}: required date passed`,
+        `The drawing was required ${Math.abs(daysUntilRequired)} day${Math.abs(daysUntilRequired) === 1 ? "" : "s"} ago and is not issued${place}.`,
+        drawing.requiredDate,
+        Math.abs(daysUntilRequired),
+      );
+    } else if (daysUntilRequired !== null && daysUntilRequired <= dueSoonDays) {
+      push(
+        "required-soon",
+        "amber",
+        `${label}: required soon`,
+        daysUntilRequired === 0
+          ? `This drawing is required today and is not issued${place}.`
+          : `This drawing is required in ${daysUntilRequired} day${daysUntilRequired === 1 ? "" : "s"} and is not issued${place}.`,
+        drawing.requiredDate,
+        daysUntilRequired,
+      );
+    }
+  }
+
+  if (status === "Draft" && options.includeChecklist !== false) {
+    const progress = designSubmissionChecklistProgress(
+      drawing.submissionChecklist ?? drawing.submissionChecklistJson,
+    );
+    if (!progress.complete) {
+      push(
+        "checklist",
+        "sky",
+        `${label}: submission checklist incomplete`,
+        `${progress.checked}/${progress.total} checks complete. Finish the design/checking list before this revision can be submitted${place}.`,
+        drawing.requiredDate ?? null,
+        progress.total - progress.checked,
+      );
+    }
+  }
+
+  if (status === "On Hold") {
+    push(
+      "on-hold",
+      "violet",
+      `${label}: on hold`,
+      `This drawing is paused and cannot move toward production until it is resumed${place}.`,
+      drawing.requiredDate ?? null,
+    );
+  }
+
+  return alerts;
+}
+
+export function designDepartmentAlerts(
+  drawings: readonly DesignAlertDrawing[],
+  today = new Date().toISOString().slice(0, 10),
+  options: DesignAlertOptions = {},
+): DesignDepartmentAlert[] {
+  const severityRank: Record<DesignAlertSeverity, number> = {
+    rose: 0,
+    amber: 1,
+    sky: 2,
+    violet: 3,
+  };
+  return drawings
+    .flatMap((drawing) => designDrawingAlerts(drawing, today, options))
+    .sort((a, b) => (
+      severityRank[a.severity] - severityRank[b.severity]
+      || String(a.dueDate ?? "9999-12-31").localeCompare(String(b.dueDate ?? "9999-12-31"))
+      || a.title.localeCompare(b.title)
+    ));
+}
+
+export interface DesignReportGroup {
+  name: string;
+  total: number;
+  active: number;
+  submitted: number;
+  returnedOutcomes: number;
+  issued: number;
+  readyToIssue: number;
+  codes: Record<DesignApprovalCode | "none", number>;
+  approvalRate: number;
+  responseSamples: number;
+  averageResponseDays: number | null;
+}
+
+export interface DesignDepartmentReport {
+  totals: {
+    records: number;
+    families: number;
+    active: number;
+    draft: number;
+    awaitingApproval: number;
+    overdueApprovals: number;
+    returnedOutcomes: number;
+    readyToIssue: number;
+    reviseAndResubmit: number;
+    issuedToProduction: number;
+    onHold: number;
+  };
+  codes: Record<DesignApprovalCode | "none", number>;
+  approvalOutcomes: {
+    productionEligible: number;
+    reviseOrReject: number;
+    firstPassApprovalRate: number;
+    codeARate: number;
+  };
+  turnaround: {
+    responseSamples: number;
+    totalResponseDays: number;
+    averageResponseDays: number | null;
+    issueSamples: number;
+    totalApprovalToIssueDays: number;
+    averageApprovalToIssueDays: number | null;
+  };
+  aging: {
+    awaiting0To7: number;
+    awaiting8To14: number;
+    awaiting15To30: number;
+    awaitingOver30: number;
+    overdue: number;
+  };
+  byDiscipline: DesignReportGroup[];
+  byProject: DesignReportGroup[];
+  byConsultant: DesignReportGroup[];
+}
+
+function emptyDesignReportGroup(name: string): DesignReportGroup & { responseDays: number } {
+  return {
+    name,
+    total: 0,
+    active: 0,
+    submitted: 0,
+    returnedOutcomes: 0,
+    issued: 0,
+    readyToIssue: 0,
+    codes: { A: 0, B: 0, C: 0, D: 0, none: 0 },
+    approvalRate: 0,
+    responseSamples: 0,
+    averageResponseDays: null,
+    responseDays: 0,
+  };
+}
+
+function percent(numerator: number, denominator: number): number {
+  if (denominator <= 0) return 0;
+  return Math.round((numerator / denominator) * 1000) / 10;
+}
+
+function averageOrNull(total: number, samples: number): number | null {
+  if (samples <= 0) return null;
+  return Math.round((total / samples) * 10) / 10;
+}
+
+export function buildDesignDepartmentReport(
+  drawings: readonly DesignAlertDrawing[],
+  today = new Date().toISOString().slice(0, 10),
+): DesignDepartmentReport {
+  const summary = summarizeDesignDrawings(drawings, today);
+  const families = new Set(drawings.map((drawing) => (
+    `${String(drawing.projectName ?? "").trim().toLowerCase()}|${String(drawing.drawingNo ?? "").trim().toLowerCase()}`
+  )));
+  let codedOutcomes = 0;
+  let eligibleOutcomes = 0;
+  let reviseOutcomes = 0;
+  let codeAOutcomes = 0;
+  let responseSamples = 0;
+  let totalResponseDays = 0;
+  let issueSamples = 0;
+  let totalApprovalToIssueDays = 0;
+  const aging = { awaiting0To7: 0, awaiting8To14: 0, awaiting15To30: 0, awaitingOver30: 0, overdue: 0 };
+  const disciplineGroups = new Map<string, ReturnType<typeof emptyDesignReportGroup>>();
+  const projectGroups = new Map<string, ReturnType<typeof emptyDesignReportGroup>>();
+  const consultantGroups = new Map<string, ReturnType<typeof emptyDesignReportGroup>>();
+
+  const addToGroup = (
+    groups: Map<string, ReturnType<typeof emptyDesignReportGroup>>,
+    rawName: string,
+    drawing: DesignAlertDrawing,
+    code: DesignApprovalCode | null,
+    responseDays: number | null,
+  ) => {
+    const name = rawName.trim() || "Not recorded";
+    const group = groups.get(name) ?? emptyDesignReportGroup(name);
+    const status = String(drawing.status ?? "Draft");
+    group.total += 1;
+    if (status !== "Superseded" && status !== "Cancelled") group.active += 1;
+    if (drawing.submittedDate || ["Submitted", "Returned", "Issued to Production"].includes(status)) group.submitted += 1;
+    if (code) {
+      group.returnedOutcomes += 1;
+      group.codes[code] += 1;
+    } else group.codes.none += 1;
+    if (status === "Issued to Production") group.issued += 1;
+    if (canIssueToProduction(drawing).ok) group.readyToIssue += 1;
+    if (responseDays !== null && responseDays >= 0) {
+      group.responseSamples += 1;
+      group.responseDays += responseDays;
+    }
+    groups.set(name, group);
+  };
+
+  for (const drawing of drawings) {
+    const code = designApprovalCodeDef(drawing.approvalCode)?.code ?? null;
+    const responseDays = designDateDiffDays(drawing.submittedDate, drawing.approvalDate);
+    if (code) {
+      codedOutcomes += 1;
+      if (code === "A" || code === "B") eligibleOutcomes += 1;
+      if (code === "C" || code === "D") reviseOutcomes += 1;
+      if (code === "A") codeAOutcomes += 1;
+    }
+    if (responseDays !== null && responseDays >= 0) {
+      responseSamples += 1;
+      totalResponseDays += responseDays;
+    }
+    const issuedDate = typeof (drawing as { issuedAt?: unknown }).issuedAt === "string"
+      ? String((drawing as { issuedAt?: unknown }).issuedAt).slice(0, 10)
+      : (drawing as { issuedAt?: unknown }).issuedAt instanceof Date
+        ? ((drawing as { issuedAt: Date }).issuedAt).toISOString().slice(0, 10)
+        : null;
+    const issueDays = designDateDiffDays(drawing.approvalDate, issuedDate);
+    if (issueDays !== null && issueDays >= 0) {
+      issueSamples += 1;
+      totalApprovalToIssueDays += issueDays;
+    }
+    if (String(drawing.status ?? "") === "Submitted") {
+      const age = designDateDiffDays(drawing.submittedDate, today);
+      if (age !== null && age >= 0) {
+        if (age <= 7) aging.awaiting0To7 += 1;
+        else if (age <= 14) aging.awaiting8To14 += 1;
+        else if (age <= 30) aging.awaiting15To30 += 1;
+        else aging.awaitingOver30 += 1;
+      }
+      if (drawing.responseDueDate && drawing.responseDueDate < today) aging.overdue += 1;
+    }
+    addToGroup(disciplineGroups, String(drawing.discipline ?? "General Joinery"), drawing, code, responseDays);
+    addToGroup(projectGroups, String(drawing.projectName ?? drawing.orderSnapshot ?? ""), drawing, code, responseDays);
+    addToGroup(consultantGroups, String(drawing.architectName ?? drawing.submittedTo ?? ""), drawing, code, responseDays);
+  }
+
+  const finishGroups = (groups: Map<string, ReturnType<typeof emptyDesignReportGroup>>): DesignReportGroup[] => (
+    [...groups.values()]
+      .map(({ responseDays, ...group }) => ({
+        ...group,
+        approvalRate: percent(group.codes.A + group.codes.B, group.returnedOutcomes),
+        averageResponseDays: averageOrNull(responseDays, group.responseSamples),
+      }))
+      .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+  );
+
+  return {
+    totals: {
+      records: summary.total,
+      families: drawings.length ? families.size : 0,
+      active: summary.active,
+      draft: summary.draft,
+      awaitingApproval: summary.awaitingApproval,
+      overdueApprovals: summary.overdueApprovals,
+      returnedOutcomes: codedOutcomes,
+      readyToIssue: summary.readyToIssue,
+      reviseAndResubmit: summary.reviseAndResubmit,
+      issuedToProduction: summary.issuedToProduction,
+      onHold: summary.onHold,
+    },
+    codes: summary.codes,
+    approvalOutcomes: {
+      productionEligible: eligibleOutcomes,
+      reviseOrReject: reviseOutcomes,
+      firstPassApprovalRate: percent(eligibleOutcomes, codedOutcomes),
+      codeARate: percent(codeAOutcomes, codedOutcomes),
+    },
+    turnaround: {
+      responseSamples,
+      totalResponseDays,
+      averageResponseDays: averageOrNull(totalResponseDays, responseSamples),
+      issueSamples,
+      totalApprovalToIssueDays,
+      averageApprovalToIssueDays: averageOrNull(totalApprovalToIssueDays, issueSamples),
+    },
+    aging,
+    byDiscipline: finishGroups(disciplineGroups),
+    byProject: finishGroups(projectGroups),
+    byConsultant: finishGroups(consultantGroups),
+  };
 }
 
 export function suggestNextDesignRevision(current: string | null | undefined): string {

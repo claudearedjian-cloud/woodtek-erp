@@ -28,6 +28,7 @@ import {
 import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
 import { dateToYmd, workBlockingEnabled, workLeaveBlock } from "@/lib/hrLeaveGate.server";
+import { orderDesignProductionGate } from "@/lib/designDepartment.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Paused", "Completed", "Rejected/Rework"];
 
@@ -301,6 +302,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Starting work is intentionally strict: predecessors, station availability,
       // and station capacity are validated atomically inside one transaction.
       if (requestedStatus === "In Progress") {
+        const designGate = await orderDesignProductionGate(currentOp.orderId, tx);
+        if (designGate.state === "blocked") {
+          throw new WorkflowError(`Design approval gate: ${designGate.message}`, 409);
+        }
         if (currentOp.status === "Completed" && body.allowRework !== true) {
           throw new WorkflowError("Completed work requires an explicit rework action before restarting.", 409);
         }
