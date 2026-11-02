@@ -21,6 +21,7 @@ import { applyMaterialsStatus, computeAvailability } from "@/lib/materials";
 import { evaluateStockLine, stockCheckSummary, type StockCheckLine } from "@/lib/stockCheck";
 import { ensureDispatchBatches, ensureLegacyDispatchOrder } from "@/lib/dispatch.server";
 import { autoScheduleDispatchSlots, type DispatchSchedulingResult } from "@/lib/dispatchScheduling.server";
+import { designProductionGatesForOrders } from "@/lib/designDepartment.server";
 
 export async function GET(request: Request) {
   // The auth gate requires a signed-in user with orders:read.
@@ -64,6 +65,14 @@ export async function GET(request: Request) {
       operationsByOrder.set(operation.orderId, list);
     }
 
+    let designGates = new Map<number, Awaited<ReturnType<typeof designProductionGatesForOrders>> extends Map<number, infer T> ? T : never>();
+    try {
+      designGates = await designProductionGatesForOrders(orderIds);
+    } catch (gateError) {
+      // The orders list remains available if the optional Design tables are
+      // unavailable; the operation-start transaction remains the hard gate.
+      console.warn("Design production gates skipped for orders list:", gateError);
+    }
     const enrichedOrders = scopedOrders.map(order => {
       const ops = operationsByOrder.get(order.id) ?? [];
       const totalSteps = ops.length;
@@ -86,6 +95,7 @@ export async function GET(request: Request) {
           status: currentOp.status,
         } : null,
         operations: ops,
+        designGate: designGates.get(order.id) ?? null,
       };
     });
 

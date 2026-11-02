@@ -10,22 +10,30 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   DesignDepartmentError,
+  buildDesignDepartmentReport,
   canIssueToProduction,
   designApprovalCodeDef,
+  designDepartmentAlerts,
+  designDrawingAlerts,
   designDrawingStage,
+  designProductionGate,
   designRecordNumber,
+  designSubmissionChecklistProgress,
   parseDesignApproval,
+  parseDesignChecklist,
   parseDesignComments,
   parseDesignDrawing,
   parseDesignIssue,
   parseDesignResubmission,
   parseDesignStatusChange,
   parseDesignSubmit,
+  readDesignSubmissionChecklist,
   summarizeDesignDrawings,
   type DesignDrawingInput,
+  type DesignProductionGate,
 } from "@/lib/designDepartment";
 import { MAX_DESIGN_FILES_PER_DRAWING } from "@/lib/designAttachments";
 import { ensureDesignSchema } from "@/lib/designSchema.server";
@@ -56,14 +64,19 @@ function serializeDrawing(row: DrawingRow, userNames: Map<number, string>) {
   const clean = serializeRow(row as unknown as Record<string, unknown>);
   const nameFor = (id: unknown) =>
     typeof id === "number" ? userNames.get(id) ?? "" : "";
+  const submissionChecklist = readDesignSubmissionChecklist(row.submissionChecklistJson);
   return {
     ...clean,
     recordNumber: designRecordNumber(row.id),
     approvalLabel: designApprovalCodeDef(row.approvalCode)?.label ?? "",
     stage: designDrawingStage(row),
     issueEligibility: canIssueToProduction(row),
+    submissionChecklist,
+    submissionChecklistProgress: designSubmissionChecklistProgress(submissionChecklist),
+    alerts: designDrawingAlerts({ ...row, submissionChecklist }),
     createdByName: nameFor(row.createdById),
     updatedByName: nameFor(row.updatedById),
+    submissionChecklistByName: nameFor(row.submissionChecklistById),
     submittedByName: nameFor(row.submittedById),
     commentsIncorporatedByName: nameFor(row.commentsIncorporatedById),
     issuedByName: nameFor(row.issuedById),
@@ -189,6 +202,113 @@ function drawingValues(input: DesignDrawingInput & { orderSnapshot: string }) {
   };
 }
 
+const PRODUCTION_GATE_SELECT = {
+  id: designDrawings.id,
+  orderId: designDrawings.orderId,
+  projectName: designDrawings.projectName,
+  drawingNo: designDrawings.drawingNo,
+  revision: designDrawings.revision,
+  title: designDrawings.title,
+  status: designDrawings.status,
+  approvalCode: designDrawings.approvalCode,
+  commentsIncorporated: designDrawings.commentsIncorporated,
+  responseDueDate: designDrawings.responseDueDate,
+  createdAt: designDrawings.createdAt,
+};
+
+async function designDrawingsTableExists(tx: DesignTx = db): Promise<boolean> {
+  try {
+    const result = await tx.execute(sql`select to_regclass('public.design_drawings') as reg`);
+    const rows = Array.isArray(result)
+      ? result
+      : (result as { rows?: Array<{ reg: string | null }> }).rows ?? [];
+    return Boolean(rows[0]?.reg);
+  } catch {
+    return false;
+  }
+}
+
+export async function orderDesignProductionGate(
+  orderId: number,
+  tx: DesignTx = db,
+): Promise<DesignProductionGate & { orderId: number }> {
+  const empty = { ...designProductionGate([]), orderId };
+  if (
+    !Number.isSafeInteger(orderId)
+    || orderId <= 0
+    || !(await designDrawingsTableExists(tx))
+  ) {
+    return empty;
+  }
+  const rows = await tx
+    .select(PRODUCTION_GATE_SELECT)
+    .from(designDrawings)
+    .where(eq(designDrawings.orderId, orderId))
+    .orderBy(asc(designDrawings.createdAt), asc(designDrawings.id));
+  return { ...designProductionGate(rows), orderId };
+}
+
+export async function designProductionGatesForOrders(
+  orderIds: readonly number[],
+  tx: DesignTx = db,
+): Promise<Map<number, DesignProductionGate & { orderId: number }>> {
+  const uniqueIds = [...new Set(orderIds.filter((id) => Number.isSafeInteger(id) && id > 0))];
+  const result = new Map<number, DesignProductionGate & { orderId: number }>(
+    uniqueIds.map((orderId) => [orderId, { ...designProductionGate([]), orderId }]),
+  );
+  if (uniqueIds.length === 0 || !(await designDrawingsTableExists(tx))) return result;
+  const rows = await tx
+    .select(PRODUCTION_GATE_SELECT)
+    .from(designDrawings)
+    .where(inArray(designDrawings.orderId, uniqueIds))
+    .orderBy(asc(designDrawings.createdAt), asc(designDrawings.id));
+  const grouped = new Map<number, typeof rows>();
+  for (const row of rows) {
+    if (row.orderId == null) continue;
+    const list = grouped.get(row.orderId) ?? [];
+    list.push(row);
+    grouped.set(row.orderId, list);
+  }
+  for (const orderId of uniqueIds) {
+    result.set(orderId, { ...designProductionGate(grouped.get(orderId) ?? []), orderId });
+  }
+  return result;
+}
+
+export async function designAlertsIfAvailable() {
+  if (!(await designDrawingsTableExists())) return [];
+  const rows = await db
+    .select({
+      id: designDrawings.id,
+      orderId: designDrawings.orderId,
+      projectName: designDrawings.projectName,
+      clientName: designDrawings.clientName,
+      architectName: designDrawings.architectName,
+      orderSnapshot: designDrawings.orderSnapshot,
+      drawingNo: designDrawings.drawingNo,
+      revision: designDrawings.revision,
+      title: designDrawings.title,
+      status: designDrawings.status,
+      priority: designDrawings.priority,
+      approvalCode: designDrawings.approvalCode,
+      commentsIncorporated: designDrawings.commentsIncorporated,
+      requiredDate: designDrawings.requiredDate,
+      responseDueDate: designDrawings.responseDueDate,
+      submittedDate: designDrawings.submittedDate,
+      submittedTo: designDrawings.submittedTo,
+      approvalDate: designDrawings.approvalDate,
+      createdAt: designDrawings.createdAt,
+    })
+    .from(designDrawings)
+    .orderBy(asc(designDrawings.createdAt), asc(designDrawings.id));
+  // The global dashboard can be called before a Phase-2 Design visit has run
+  // the additive checklist migration, so this read deliberately uses only
+  // Phase-1 columns and omits checklist alerts.
+  return designDepartmentAlerts(rows, new Date().toISOString().slice(0, 10), {
+    includeChecklist: false,
+  });
+}
+
 export async function designBoard() {
   await ensureDesignSchema();
   const drawingRows = await db
@@ -228,6 +348,14 @@ export async function designBoard() {
     eventCounts.set(event.drawingId, (eventCounts.get(event.drawingId) ?? 0) + 1);
   }
 
+  const drawingsByOrder = new Map<number, typeof drawingRows>();
+  for (const row of drawingRows) {
+    if (row.orderId == null) continue;
+    const list = drawingsByOrder.get(row.orderId) ?? [];
+    list.push(row);
+    drawingsByOrder.set(row.orderId, list);
+  }
+
   return {
     drawings: drawingRows.map((row) => ({
       ...serializeDrawing(row, userNames),
@@ -246,9 +374,15 @@ export async function designBoard() {
         projectName: order.title,
         clientName,
         label: `${order.orderNumber} — ${order.title}${clientName ? ` (${clientName})` : ""}`,
+        designGate: {
+          ...designProductionGate(drawingsByOrder.get(order.id) ?? []),
+          orderId: order.id,
+        },
       };
     }),
     summary: summarizeDesignDrawings(drawingRows),
+    alerts: designDepartmentAlerts(drawingRows),
+    report: buildDesignDepartmentReport(drawingRows),
   };
 }
 
@@ -278,9 +412,13 @@ export async function designDrawingDetail(id: number) {
       ),
     )
     .orderBy(asc(designDrawings.createdAt), asc(designDrawings.id));
+  const productionGate = row.orderId
+    ? await orderDesignProductionGate(row.orderId)
+    : { ...designProductionGate([]), orderId: null };
 
   return {
     ...serializeDrawing(row, userNames),
+    productionGate,
     files: files.map((file) => serializeFile(file, userNames)),
     fileCount: files.length,
     events: events.map((event: any) => serializeRow(event)),
@@ -316,6 +454,9 @@ export async function createDesignDrawing(input: unknown, actor: DesignActor) {
       .insert(designDrawings)
       .values({
         ...drawingValues(resolved),
+        submissionChecklistJson: "{}",
+        submissionChecklistById: null,
+        submissionChecklistAt: null,
         status: "Draft",
         createdById: actor.id,
         updatedById: actor.id,
@@ -353,6 +494,52 @@ export async function updateDesignDrawing(id: number, input: unknown, actor: Des
   });
 }
 
+export async function saveDesignSubmissionChecklist(id: number, input: unknown, actor: DesignActor) {
+  const parsed = parseDesignChecklist(input);
+  const progress = designSubmissionChecklistProgress(parsed.submissionChecklist);
+  await ensureDesignSchema();
+  return db.transaction(async (tx) => {
+    const current = await getDrawingForUpdate(tx, id);
+    if (current.status !== "Draft") {
+      throw new DesignDepartmentError(
+        "The submission checklist can be changed only while this revision is a Draft.",
+        409,
+      );
+    }
+    const now = new Date();
+    const [updated] = await tx
+      .update(designDrawings)
+      .set({
+        submissionChecklistJson: JSON.stringify(parsed.submissionChecklist),
+        submissionChecklistById: progress.complete ? actor.id : null,
+        submissionChecklistAt: progress.complete ? now : null,
+        updatedById: actor.id,
+        updatedAt: now,
+      })
+      .where(eq(designDrawings.id, id))
+      .returning();
+    await addEvent(
+      tx,
+      updated,
+      actor,
+      "checklist",
+      progress.complete
+        ? "Submission checklist completed"
+        : `Submission checklist updated (${progress.checked}/${progress.total})`,
+      progress.complete
+        ? "Every required design/checking item is confirmed for this revision."
+        : `Still required: ${progress.missing.join("; ")}`,
+    );
+    return {
+      id,
+      recordNumber: designRecordNumber(id),
+      status: updated.status,
+      submissionChecklist: parsed.submissionChecklist,
+      submissionChecklistProgress: progress,
+    };
+  });
+}
+
 export async function submitDesignDrawing(id: number, input: unknown, actor: DesignActor) {
   const parsed = parseDesignSubmit(input);
   await ensureDesignSchema();
@@ -364,10 +551,14 @@ export async function submitDesignDrawing(id: number, input: unknown, actor: Des
         409,
       );
     }
+    const now = new Date();
     const [updated] = await tx
       .update(designDrawings)
       .set({
         status: "Submitted",
+        submissionChecklistJson: JSON.stringify(parsed.submissionChecklist),
+        submissionChecklistById: actor.id,
+        submissionChecklistAt: now,
         submittedTo: parsed.submittedTo,
         submittedById: actor.id,
         submittedDate: parsed.submittedDate,
@@ -381,7 +572,7 @@ export async function submitDesignDrawing(id: number, input: unknown, actor: Des
         commentsIncorporatedById: null,
         commentsIncorporatedAt: null,
         updatedById: actor.id,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(designDrawings.id, id))
       .returning();
@@ -391,7 +582,11 @@ export async function submitDesignDrawing(id: number, input: unknown, actor: Des
       actor,
       "submitted",
       `Submitted to ${parsed.submittedTo}`,
-      [parsed.transmittalNo ? `Transmittal ${parsed.transmittalNo}` : "", parsed.note]
+      [
+        parsed.transmittalNo ? `Transmittal ${parsed.transmittalNo}` : "",
+        "Submission checklist completed (6/6)",
+        parsed.note,
+      ]
         .filter(Boolean)
         .join("\n"),
     );
@@ -603,6 +798,9 @@ export async function createDesignResubmission(id: number, input: unknown, actor
         requiredDate: source.requiredDate,
         externalLink: source.externalLink,
         notes: source.notes,
+        submissionChecklistJson: "{}",
+        submissionChecklistById: null,
+        submissionChecklistAt: null,
         supersedesId: source.id,
         createdById: actor.id,
         updatedById: actor.id,

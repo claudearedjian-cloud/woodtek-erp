@@ -5,15 +5,19 @@ import {
   AlertTriangle,
   Archive,
   Ban,
+  BarChart3,
+  BellRing,
   CalendarClock,
   CheckCircle2,
   ClipboardCheck,
+  ClipboardList,
   Copy,
   Download,
   DraftingCompass,
   ExternalLink,
   Eye,
   Factory,
+  FileArchive,
   FileText,
   FileUp,
   Filter,
@@ -24,6 +28,7 @@ import {
   Pencil,
   PlayCircle,
   Plus,
+  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -39,10 +44,13 @@ import {
   DESIGN_DRAWING_STATUSES,
   DESIGN_FILE_KINDS,
   DESIGN_PRIORITIES,
+  DESIGN_SUBMISSION_CHECKLIST,
   canIssueToProduction,
   designApprovalCodeDef,
   designDrawingStage,
+  designSubmissionChecklistProgress,
   isWebDesignLink,
+  readDesignSubmissionChecklist,
   suggestNextDesignRevision,
 } from "@/lib/designDepartment";
 import {
@@ -57,6 +65,7 @@ interface DesignDepartmentViewProps {
 }
 
 type ModalKind = "drawing" | "submit" | "approval" | "issue" | "resubmit" | "status" | null;
+type DesignViewTab = "register" | "alerts" | "reports";
 
 const inputCls =
   "w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-teal-400 focus:outline-none";
@@ -79,6 +88,19 @@ const STATUS_CLASSES: Record<string, string> = {
   "On Hold": "border-amber-500/50 bg-amber-500/15 text-amber-200",
   Superseded: "border-slate-700 bg-slate-900 text-slate-400",
   Cancelled: "border-rose-500/50 bg-rose-500/10 text-rose-300",
+};
+
+const ALERT_CLASSES: Record<string, string> = {
+  rose: "border-rose-500/50 bg-rose-500/10 text-rose-100",
+  amber: "border-amber-500/50 bg-amber-500/10 text-amber-100",
+  sky: "border-sky-500/50 bg-sky-500/10 text-sky-100",
+  violet: "border-violet-500/50 bg-violet-500/10 text-violet-100",
+};
+
+const GATE_CLASSES: Record<string, string> = {
+  ready: "border-emerald-500/50 bg-emerald-500/10 text-emerald-100",
+  blocked: "border-rose-500/60 bg-rose-500/10 text-rose-100",
+  "not-controlled": "border-slate-700 bg-slate-900 text-slate-300",
 };
 
 function todayYmd(): string {
@@ -174,6 +196,7 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Active");
   const [codeFilter, setCodeFilter] = useState("All");
+  const [viewTab, setViewTab] = useState<DesignViewTab>("register");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -181,6 +204,8 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
   const [editing, setEditing] = useState<any>(null);
   const [drawingForm, setDrawingForm] = useState(blankDrawingForm());
   const [submitForm, setSubmitForm] = useState({ submittedTo: "", submittedDate: todayYmd(), transmittalNo: "", responseDueDate: "", note: "" });
+  const [checklistDraft, setChecklistDraft] = useState<Record<string, boolean>>({});
+  const [submitChecklist, setSubmitChecklist] = useState<Record<string, boolean>>({});
   const [approvalForm, setApprovalForm] = useState({ approvalCode: "A", approvalBy: "", approvalDate: todayYmd(), approvalComments: "", commentsIncorporated: false });
   const [issueForm, setIssueForm] = useState({ issuedTo: "Production", note: "", confirmCommentsIncorporated: false });
   const [resubmitForm, setResubmitForm] = useState({ revision: "", note: "" });
@@ -194,6 +219,12 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
   const drawings = useMemo<any[]>(() => (Array.isArray(board?.drawings) ? board.drawings : []), [board]);
   const orders = useMemo<any[]>(() => (Array.isArray(board?.orders) ? board.orders : []), [board]);
   const summary = board?.summary ?? {};
+  const departmentAlerts = useMemo<any[]>(() => (Array.isArray(board?.alerts) ? board.alerts : []), [board]);
+  const report = board?.report ?? null;
+  const ordersById = useMemo(
+    () => new Map<number, any>(orders.map((order) => [Number(order.id), order])),
+    [orders],
+  );
 
   const requestJson = async (url: string, init?: RequestInit) => {
     const res = await fetch(url, { cache: "no-store", ...init });
@@ -237,6 +268,12 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
     // Loaded once per signed-in user; manual refresh remains available.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    setChecklistDraft({
+      ...readDesignSubmissionChecklist(detail?.submissionChecklist ?? detail?.submissionChecklistJson),
+    } as Record<string, boolean>);
+  }, [detail?.id, detail?.submissionChecklistJson]);
 
   const refreshAndSelect = async (id?: number | null) => {
     await loadBoard(false);
@@ -374,7 +411,25 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
     }
   };
 
+  const saveChecklist = async () => {
+    const progress = designSubmissionChecklistProgress(checklistDraft as any);
+    await patchDrawing(
+      "checklist",
+      { submissionChecklist: checklistDraft },
+      progress.complete
+        ? "Submission checklist completed and saved."
+        : `Submission checklist saved (${progress.checked}/${progress.total}). Complete every item before submitting.`,
+    );
+  };
+
+  const openAlertDrawing = (alert: any) => {
+    const drawing = drawings.find((item) => Number(item.id) === Number(alert?.drawingId));
+    if (drawing) openDetail(drawing);
+    else if (alert?.drawingId) void loadDetail(Number(alert.drawingId));
+  };
+
   const openSubmit = () => {
+    setSubmitChecklist({ ...checklistDraft });
     setSubmitForm({
       submittedTo: detail?.architectName || detail?.clientName || "",
       submittedDate: todayYmd(),
@@ -492,6 +547,7 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
       "Record", "Drawing No", "Revision", "Title", "Project", "Client", "Architect / Consultant",
       "Linked Order", "Discipline", "Area", "Sheets", "Priority", "Status", "Stage", "Approval Code",
       "Submitted To", "Submitted Date", "Transmittal", "Response Due", "Returned By", "Return Date",
+      "Submission Checklist", "Checklist By", "Checklist At", "Production Gate",
       "Comments Incorporated", "Issued To Production To", "Issued At", "Required Date", "Files", "Updated",
     ];
     const lines = [headers.map(csvCell).join(",")];
@@ -500,6 +556,9 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
         d.recordNumber, d.drawingNo, d.revision, d.title, d.projectName, d.clientName, d.architectName,
         d.orderSnapshot, d.discipline, d.area, d.sheetCount, d.priority, d.status, d.stage, d.approvalCode,
         d.submittedTo, d.submittedDate, d.transmittalNo, d.responseDueDate, d.approvalBy, d.approvalDate,
+        d.submissionChecklistProgress ? `${d.submissionChecklistProgress.checked}/${d.submissionChecklistProgress.total}` : "",
+        d.submissionChecklistByName, d.submissionChecklistAt,
+        d.orderId ? (ordersById.get(Number(d.orderId))?.designGate?.state ?? "") : "not linked",
         d.commentsIncorporated ? "Yes" : "No", d.issuedTo, d.issuedAt, d.requiredDate, d.fileCount, d.updatedAt,
       ].map(csvCell).join(","));
     }
@@ -533,7 +592,177 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
     );
   };
 
+  const gatePill = (gate: any) => {
+    if (!gate) return null;
+    if (gate.state === "blocked") {
+      return (
+        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black ${GATE_CLASSES.blocked}`} title={gate.message}>
+          Design blocked · {gate.issuedFamilies ?? 0}/{gate.requiredFamilies ?? 0} issued
+        </span>
+      );
+    }
+    if (gate.state === "ready") {
+      return (
+        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black ${GATE_CLASSES.ready}`} title={gate.message}>
+          Design ready · {gate.issuedFamilies ?? 0}/{gate.requiredFamilies ?? 0} issued
+        </span>
+      );
+    }
+    return (
+      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black ${GATE_CLASSES["not-controlled"]}`} title={gate.message}>
+        Not design-controlled
+      </span>
+    );
+  };
+
+  const productionGatePanel = (gate: any) => {
+    if (!gate) return null;
+    const cls = GATE_CLASSES[String(gate.state)] ?? GATE_CLASSES["not-controlled"];
+    return (
+      <div className={`rounded-2xl border p-3 text-xs leading-relaxed ${cls}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-black uppercase tracking-wide">
+            <Factory className="h-4 w-4" />
+            {gate.state === "blocked" ? "Production hard-blocked by Design" : gate.state === "ready" ? "Design production gate ready" : "No Design production gate"}
+          </div>
+          {gate.controlled && <span className="font-black">{gate.issuedFamilies ?? 0} of {gate.requiredFamilies ?? 0} drawing families issued</span>}
+        </div>
+        <p className="mt-1">{gate.message}</p>
+        {gate.state === "blocked" && (
+          <p className="mt-1 font-bold">Starting a production operation or manually moving the linked order to In Production will be rejected until every blocker below has an issued revision.</p>
+        )}
+        {Array.isArray(gate.blockers) && gate.blockers.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <div className="font-black uppercase tracking-wide">Blocking drawings</div>
+            {gate.blockers.map((blocker: any) => (
+              <button
+                key={`${blocker.drawingId ?? blocker.drawingNo}-${blocker.revision}`}
+                type="button"
+                onClick={() => openAlertDrawing({ drawingId: blocker.drawingId })}
+                className="block w-full rounded-xl border border-current/30 bg-slate-950/30 p-2.5 text-left hover:bg-slate-950/50"
+              >
+                <span className="font-black">{blocker.drawingNo} Rev {blocker.revision || "—"}</span>
+                <span className="ml-2 font-bold opacity-80">{blocker.stage}</span>
+                <span className="mt-0.5 block opacity-90">{blocker.reason}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {Array.isArray(gate.issuedRevisions) && gate.issuedRevisions.length > 0 && (
+          <div className="mt-3">
+            <div className="font-black uppercase tracking-wide">Current issued production revisions</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {gate.issuedRevisions.map((issued: any) => (
+                <button
+                  key={`${issued.drawingId ?? issued.drawingNo}-${issued.revision}`}
+                  type="button"
+                  onClick={() => openAlertDrawing({ drawingId: issued.drawingId })}
+                  className="rounded-full border border-current/30 bg-slate-950/30 px-2 py-1 font-black hover:bg-slate-950/50"
+                >
+                  {issued.drawingNo} Rev {issued.revision || "—"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderChecklist = (
+    value: Record<string, boolean>,
+    onToggle?: (id: string, checked: boolean) => void,
+    disabled = false,
+  ) => {
+    const progress = designSubmissionChecklistProgress(value as any);
+    const percent = progress.total > 0 ? Math.round((progress.checked / progress.total) * 100) : 0;
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="flex items-center justify-between gap-3 text-[11px] font-black uppercase tracking-wide">
+            <span className={progress.complete ? "text-emerald-300" : "text-amber-300"}>
+              {progress.complete ? "Checklist complete" : "Checklist incomplete"}
+            </span>
+            <span className="text-slate-300">{progress.checked}/{progress.total}</span>
+          </div>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-800">
+            <div className={`h-full rounded-full ${progress.complete ? "bg-emerald-500" : "bg-amber-500"}`} style={{ width: `${percent}%` }} />
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {DESIGN_SUBMISSION_CHECKLIST.map((item) => {
+            const checked = Boolean(value[item.id]);
+            return (
+              <label
+                key={item.id}
+                className={`flex items-start gap-2 rounded-xl border p-3 text-xs font-semibold leading-relaxed ${checked ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-50" : "border-slate-700 bg-slate-950/60 text-slate-200"} ${onToggle && !disabled ? "cursor-pointer hover:border-teal-500/60" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={!onToggle || disabled}
+                  onChange={(event) => onToggle?.(item.id, event.target.checked)}
+                  className="mt-0.5 shrink-0"
+                />
+                <span>{item.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        {!progress.complete && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">
+            Still required: {progress.missing.join("; ")}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderReportGroups = (title: string, groups: any[] | undefined) => (
+    <section className={`${cardCls} overflow-hidden`}>
+      <h4 className="border-b border-slate-800 px-4 py-3 text-xs font-black uppercase tracking-wider text-slate-400">{title}</h4>
+      {Array.isArray(groups) && groups.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-[720px] w-full text-left text-xs">
+            <thead className="bg-slate-950/60 text-[10px] uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5 font-black">Group</th>
+                <th className="px-4 py-2.5 font-black">Records</th>
+                <th className="px-4 py-2.5 font-black">Active</th>
+                <th className="px-4 py-2.5 font-black">Submitted</th>
+                <th className="px-4 py-2.5 font-black">Issued</th>
+                <th className="px-4 py-2.5 font-black">Ready</th>
+                <th className="px-4 py-2.5 font-black">A/B approval</th>
+                <th className="px-4 py-2.5 font-black">Avg response</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {groups.map((group) => (
+                <tr key={group.name}>
+                  <td className="px-4 py-2.5 font-black text-slate-100">{group.name}</td>
+                  <td className="px-4 py-2.5">{group.total}</td>
+                  <td className="px-4 py-2.5">{group.active}</td>
+                  <td className="px-4 py-2.5">{group.submitted}</td>
+                  <td className="px-4 py-2.5 text-emerald-300">{group.issued}</td>
+                  <td className="px-4 py-2.5">{group.readyToIssue}</td>
+                  <td className="px-4 py-2.5">{group.approvalRate}% <span className="text-slate-500">({group.codes?.A ?? 0}A / {group.codes?.B ?? 0}B / {group.codes?.C ?? 0}C / {group.codes?.D ?? 0}D)</span></td>
+                  <td className="px-4 py-2.5">{group.averageResponseDays == null ? "—" : `${group.averageResponseDays} days`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="p-4 text-xs font-semibold text-slate-500">No drawing records in this report group yet.</div>
+      )}
+    </section>
+  );
+
   const issueEligibility = detail ? canIssueToProduction(detail) : null;
+  const detailProductionGate = detail?.productionGate
+    ?? (detail?.orderId ? ordersById.get(Number(detail.orderId))?.designGate : null);
+  const submitChecklistProgress = designSubmissionChecklistProgress(submitChecklist as any);
+  const draftChecklistProgress = designSubmissionChecklistProgress(checklistDraft as any);
   const canOpenIssue = Boolean(detail && detail.status === "Returned" && ["A", "B"].includes(detail.approvalCode));
   const historical = detail ? ["Issued to Production", "Superseded", "Cancelled"].includes(detail.status) : false;
 
@@ -578,7 +807,7 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
           <div>
             <h2 className="text-2xl font-black tracking-tight text-white">Design Department</h2>
             <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-400">
-              Drawing register, revision submittals, Code A/B/C/D approval returns, and controlled issue to production.
+              Drawing register, required submission checklist, Code A/B/C/D approval returns, controlled production issue, transmittals, follow-up alerts and management reports. Linked orders are hard-blocked until every drawing family has an issued revision.
             </p>
           </div>
         </div>
@@ -622,6 +851,38 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
         ))}
       </div>
 
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Design Department views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "register"}
+          onClick={() => setViewTab("register")}
+          className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-black ${viewTab === "register" ? "border-teal-500/70 bg-teal-500/15 text-teal-100" : "border-slate-700 bg-slate-900 text-slate-300 hover:border-teal-500/50 hover:text-teal-200"}`}
+        >
+          <ClipboardList className="h-4 w-4" /> Drawing register
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "alerts"}
+          onClick={() => setViewTab("alerts")}
+          className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-black ${viewTab === "alerts" ? "border-amber-500/70 bg-amber-500/15 text-amber-100" : "border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500/50 hover:text-amber-200"}`}
+        >
+          <BellRing className="h-4 w-4" /> Follow-up alerts
+          <span className={`rounded-full px-2 py-0.5 text-[10px] ${departmentAlerts.length ? "bg-amber-500/25 text-amber-100" : "bg-slate-800 text-slate-400"}`}>{departmentAlerts.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "reports"}
+          onClick={() => setViewTab("reports")}
+          className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-black ${viewTab === "reports" ? "border-violet-500/70 bg-violet-500/15 text-violet-100" : "border-slate-700 bg-slate-900 text-slate-300 hover:border-violet-500/50 hover:text-violet-200"}`}
+        >
+          <BarChart3 className="h-4 w-4" /> Management reports
+        </button>
+      </div>
+
+      {viewTab === "register" && (<>
       <div className={`${cardCls} p-4`}>
         <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-400">
           <ShieldCheck className="h-4 w-4 text-teal-300" /> Approval-code production rule
@@ -694,10 +955,24 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                   <td className="px-4 py-3">
                     <div className="max-w-xs truncate font-bold text-slate-200" title={drawing.projectName}>{drawing.projectName || "—"}</div>
                     <div className="mt-0.5 max-w-xs truncate text-xs text-slate-400" title={drawing.orderSnapshot || drawing.clientName}>{drawing.orderSnapshot || drawing.clientName || "No linked order"}</div>
+                    {drawing.orderId && (
+                      <div className="mt-1.5">{gatePill(ordersById.get(Number(drawing.orderId))?.designGate)}</div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {statusPill(drawing)}
                     <div className="mt-1 text-[11px] font-bold text-slate-400">{drawing.stage || designDrawingStage(drawing)}</div>
+                    {drawing.submissionChecklistProgress && (
+                      <div className={`mt-1 text-[11px] font-black ${drawing.submissionChecklistProgress.complete ? "text-emerald-300" : "text-amber-300"}`}>
+                        Checklist {drawing.submissionChecklistProgress.checked}/{drawing.submissionChecklistProgress.total}
+                        {drawing.submissionChecklistProgress.complete ? " · complete" : " · incomplete"}
+                      </div>
+                    )}
+                    {Array.isArray(drawing.alerts) && drawing.alerts.length > 0 && (
+                      <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black text-amber-200">
+                        <BellRing className="h-3 w-3" /> {drawing.alerts.length} follow-up{drawing.alerts.length === 1 ? "" : "s"}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {codePill(drawing)}
@@ -744,6 +1019,127 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
         </div>
       </div>
 
+      </>)}
+
+      {viewTab === "alerts" && (
+        <section className={`${cardCls} p-4`}>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-black text-white">
+                <BellRing className="h-5 w-5 text-amber-300" /> Design follow-up queue
+              </h3>
+              <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-400">
+                Code B/C/D actions, drawings ready for controlled issue, approval responses due or overdue, Draft checklist gaps and drawings on hold. Select an alert to open the drawing revision.
+              </p>
+            </div>
+            <span className="rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1 text-xs font-black text-amber-100">
+              {departmentAlerts.length} open alert{departmentAlerts.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          {departmentAlerts.length > 0 ? (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {departmentAlerts.map((alert, index) => (
+                <button
+                  key={`${alert.kind}-${alert.drawingId ?? "none"}-${index}`}
+                  type="button"
+                  onClick={() => openAlertDrawing(alert)}
+                  className={`rounded-2xl border p-4 text-left transition hover:bg-slate-800/60 ${ALERT_CLASSES[String(alert.severity)] ?? "border-slate-700 bg-slate-950/60 text-slate-100"}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="rounded-full border border-current/30 bg-slate-950/30 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide">
+                      {String(alert.kind || "design").replace(/-/g, " ")}
+                    </span>
+                    {alert.dueDate && <span className="text-[11px] font-black opacity-80">Due {formatDate(alert.dueDate)}</span>}
+                  </div>
+                  <div className="mt-2 text-sm font-black">{alert.title}</div>
+                  <p className="mt-1 text-xs leading-relaxed opacity-90">{alert.detail}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-black uppercase tracking-wide opacity-75">
+                    {alert.days != null && <span>{alert.days} day{Number(alert.days) === 1 ? "" : "s"}</span>}
+                    {alert.orderId && <span>Linked production order</span>}
+                    <span>Open drawing →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-700 p-8 text-center">
+              <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-300" />
+              <div className="mt-3 text-sm font-black text-white">No Design follow-up alerts</div>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-400">There are no overdue approvals, checklist gaps, Code B/C/D actions or ready-to-issue drawings waiting right now.</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {viewTab === "reports" && (
+        <div className="space-y-4">
+          <section className={`${cardCls} p-4`}>
+            <div className="mb-4">
+              <h3 className="flex items-center gap-2 text-base font-black text-white">
+                <BarChart3 className="h-5 w-5 text-violet-300" /> Design Department performance
+              </h3>
+              <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-400">
+                Approval outcomes, response turnaround, production-issue speed and ageing of drawings still waiting for a return.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+              {[
+                ["Drawing families", report?.totals?.families ?? 0, "text-white"],
+                ["Revision records", report?.totals?.records ?? 0, "text-slate-200"],
+                ["A/B first-pass rate", `${report?.approvalOutcomes?.firstPassApprovalRate ?? 0}%`, "text-emerald-300"],
+                ["Code A rate", `${report?.approvalOutcomes?.codeARate ?? 0}%`, "text-teal-300"],
+                ["Avg approval response", report?.turnaround?.averageResponseDays == null ? "—" : `${report.turnaround.averageResponseDays} days`, "text-sky-300"],
+                ["Avg approval → issue", report?.turnaround?.averageApprovalToIssueDays == null ? "—" : `${report.turnaround.averageApprovalToIssueDays} days`, "text-violet-300"],
+              ].map(([label, value, cls]) => (
+                <div key={String(label)} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</div>
+                  <div className={`mt-1 text-2xl font-black ${cls}`}>{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Approval outcomes</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {DESIGN_APPROVAL_CODE_DEFS.map((def) => (
+                    <span key={def.code} className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${CODE_CLASSES[def.code]}`}>
+                      Code {def.code}: {report?.codes?.[def.code] ?? 0}
+                    </span>
+                  ))}
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${CODE_CLASSES.none}`}>No code: {report?.codes?.none ?? 0}</span>
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-slate-400">
+                  {report?.approvalOutcomes?.productionEligible ?? 0} production-eligible outcomes versus {report?.approvalOutcomes?.reviseOrReject ?? 0} revise/reject outcomes, from {report?.totals?.returnedOutcomes ?? 0} returned drawings.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Turnaround samples</div>
+                <dl className="mt-3 space-y-2 text-xs">
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">Submitted → returned</dt><dd className="font-black text-white">{report?.turnaround?.responseSamples ?? 0} drawings</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">Total response time</dt><dd className="font-black text-white">{report?.turnaround?.totalResponseDays ?? 0} days</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">Returned → issued</dt><dd className="font-black text-white">{report?.turnaround?.issueSamples ?? 0} drawings</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">Total issue delay</dt><dd className="font-black text-white">{report?.turnaround?.totalApprovalToIssueDays ?? 0} days</dd></div>
+                </dl>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Awaiting-approval ageing</div>
+                <dl className="mt-3 space-y-2 text-xs">
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">0–7 days</dt><dd className="font-black text-white">{report?.aging?.awaiting0To7 ?? 0}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">8–14 days</dt><dd className="font-black text-white">{report?.aging?.awaiting8To14 ?? 0}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">15–30 days</dt><dd className="font-black text-amber-300">{report?.aging?.awaiting15To30 ?? 0}</dd></div>
+                  <div className="flex justify-between gap-3"><dt className="text-slate-400">Over 30 days</dt><dd className="font-black text-rose-300">{report?.aging?.awaitingOver30 ?? 0}</dd></div>
+                  <div className="flex justify-between gap-3 border-t border-slate-800 pt-2"><dt className="text-slate-400">Past response date</dt><dd className="font-black text-rose-300">{report?.aging?.overdue ?? 0}</dd></div>
+                </dl>
+              </div>
+            </div>
+          </section>
+
+          {renderReportGroups("Performance by discipline", report?.byDiscipline)}
+          {renderReportGroups("Performance by project", report?.byProject)}
+          {renderReportGroups("Performance by architect / consultant", report?.byConsultant)}
+        </div>
+      )}
+
       {selectedId && detail && (
         <div className="fixed inset-0 z-[100] flex justify-end bg-slate-950/70 backdrop-blur-sm" role="dialog" aria-modal="true">
           <button type="button" className="absolute inset-0 cursor-default" onClick={closeDetail} aria-label="Close drawing details" />
@@ -781,6 +1177,12 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                       <Pencil className="h-4 w-4" /> Edit details
                     </button>
                   )}
+                  <a href={`/api/design/${detail.id}/transmittal`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-black text-slate-100 hover:border-teal-500/60 hover:text-teal-200">
+                    <Printer className="h-4 w-4" /> Print transmittal
+                  </a>
+                  <a href={`/api/design/${detail.id}/package`} className="inline-flex items-center gap-1.5 rounded-xl border border-teal-500/50 bg-teal-500/10 px-3 py-2 text-xs font-black text-teal-100 hover:bg-teal-500/20">
+                    <FileArchive className="h-4 w-4" /> Download package ZIP
+                  </a>
                   {detail.status === "Draft" && (
                     <button type="button" onClick={openSubmit} className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-black text-white hover:bg-sky-500">
                       <Send className="h-4 w-4" /> Submit drawing
@@ -834,6 +1236,88 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                     <span> Issued to {detail.issuedTo || "Production"} by {detail.issuedByName || "—"} on {formatDate(detail.issuedAt)}.</span>
                   )}
                 </div>
+                {detailProductionGate && (
+                  <div className="mt-3">{productionGatePanel(detailProductionGate)}</div>
+                )}
+              </section>
+
+              {Array.isArray(detail.alerts) && detail.alerts.length > 0 && (
+                <section className={`${cardCls} p-4`}>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-400">
+                      <BellRing className="h-4 w-4 text-amber-300" /> Follow-up needed
+                    </h4>
+                    <span className="rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black text-amber-100">
+                      {detail.alerts.length} alert{detail.alerts.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {detail.alerts.map((alert: any, index: number) => (
+                      <div key={`${alert.kind}-${index}`} className={`rounded-2xl border p-3 text-xs leading-relaxed ${ALERT_CLASSES[String(alert.severity)] ?? "border-slate-700 bg-slate-950/60 text-slate-100"}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-black">{alert.title}</span>
+                          {alert.dueDate && <span className="font-black opacity-80">Due {formatDate(alert.dueDate)}</span>}
+                        </div>
+                        <p className="mt-1 opacity-90">{alert.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className={`${cardCls} p-4`}>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-400">
+                    <ClipboardList className="h-4 w-4 text-teal-300" /> Submission checklist
+                  </h4>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${(detail.status === "Draft" ? draftChecklistProgress.complete : detail.submissionChecklistProgress?.complete) ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100" : "border-amber-500/50 bg-amber-500/10 text-amber-100"}`}>
+                    {detail.status === "Draft"
+                      ? `${draftChecklistProgress.checked}/${draftChecklistProgress.total}`
+                      : `${detail.submissionChecklistProgress?.checked ?? 0}/${detail.submissionChecklistProgress?.total ?? DESIGN_SUBMISSION_CHECKLIST.length}`}
+                    {(detail.status === "Draft" ? draftChecklistProgress.complete : detail.submissionChecklistProgress?.complete) ? " · complete" : " · incomplete"}
+                  </span>
+                </div>
+
+                {detail.status === "Draft" ? (
+                  <>
+                    <p className="mb-3 text-xs leading-relaxed text-slate-400">
+                      Save progress at any time. All six checks must be complete before this revision can be submitted; the same completed checklist is printed on the transmittal.
+                    </p>
+                    {renderChecklist(
+                      checklistDraft,
+                      (id, checked) => setChecklistDraft((current) => ({ ...current, [id]: checked })),
+                      busy === "checklist",
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-[11px] font-semibold text-slate-500">
+                        {detail.submissionChecklistByName || detail.submissionChecklistAt
+                          ? `Completed by ${detail.submissionChecklistByName || "—"}${detail.submissionChecklistAt ? ` · ${formatDate(detail.submissionChecklistAt)}` : ""}`
+                          : "Not completed yet."}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={busy === "checklist"}
+                        onClick={() => void saveChecklist()}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 px-3 py-2 text-xs font-black text-white hover:bg-teal-500 disabled:opacity-50"
+                      >
+                        <ClipboardCheck className="h-4 w-4" /> {busy === "checklist" ? "Saving…" : draftChecklistProgress.complete ? "Save completed checklist" : "Save checklist progress"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {renderChecklist(
+                      { ...readDesignSubmissionChecklist(detail.submissionChecklist ?? detail.submissionChecklistJson) } as Record<string, boolean>,
+                      undefined,
+                      true,
+                    )}
+                    <p className="mt-3 text-[11px] font-semibold leading-relaxed text-slate-500">
+                      {detail.submissionChecklistProgress?.complete
+                        ? `Recorded by ${detail.submissionChecklistByName || "—"}${detail.submissionChecklistAt ? ` on ${formatDate(detail.submissionChecklistAt)}` : ""}. Create a new revision to change the submitted checklist.`
+                        : "This revision has no completed Phase 2 checklist on record. Create a new revision if a corrected, fully checked submittal is required."}
+                    </p>
+                  </>
+                )}
               </section>
 
               <section className={`${cardCls} p-4`}>
@@ -868,6 +1352,8 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                     ["Transmittal no", detail.transmittalNo], ["Response due", formatDate(detail.responseDueDate)],
                     ["Approval return", detail.approvalLabel || (detail.approvalCode ? `Code ${detail.approvalCode}` : "Not returned")],
                     ["Returned by", detail.approvalBy], ["Return date", formatDate(detail.approvalDate)],
+                    ["Submission checklist", detail.submissionChecklistProgress ? `${detail.submissionChecklistProgress.checked}/${detail.submissionChecklistProgress.total}${detail.submissionChecklistProgress.complete ? " · complete" : " · incomplete"}` : "—"],
+                    ["Checklist recorded", detail.submissionChecklistByName ? `${detail.submissionChecklistByName}${detail.submissionChecklistAt ? ` · ${formatDate(detail.submissionChecklistAt)}` : ""}` : "—"],
                     ["Code B comments", detail.approvalCode === "B" ? (detail.commentsIncorporated ? `Incorporated by ${detail.commentsIncorporatedByName || "—"}` : "Not incorporated yet") : "—"],
                   ].map(([term, value]) => (
                     <div key={String(term)}>
@@ -894,7 +1380,7 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h4 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-400"><FileUp className="h-4 w-4 text-teal-300" /> Drawing files and external location</h4>
-                    <p className="mt-1 text-[11px] text-slate-500">PDF, DWG, DXF, images, ZIP, DOCX or XLSX · maximum {(MAX_DESIGN_FILE_BYTES / (1024 * 1024)).toFixed(0)} MB each.</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">PDF, DWG, DXF, images, ZIP, DOCX or XLSX · maximum {(MAX_DESIGN_FILE_BYTES / (1024 * 1024)).toFixed(0)} MB each. The package ZIP includes all uploaded files plus the transmittal and manifest.</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <select value={fileKind} onChange={(e) => setFileKind(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white focus:border-teal-400 focus:outline-none">
@@ -904,6 +1390,12 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                     <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 px-3 py-2 text-xs font-black text-white hover:bg-teal-500 disabled:opacity-50">
                       <Upload className="h-4 w-4" /> {uploading ? "Uploading…" : "Upload file"}
                     </button>
+                    <a href={`/api/design/${detail.id}/package`} className="inline-flex items-center gap-1.5 rounded-xl border border-teal-500/50 bg-teal-500/10 px-3 py-2 text-xs font-black text-teal-100 hover:bg-teal-500/20">
+                      <FileArchive className="h-4 w-4" /> Download all ZIP
+                    </a>
+                    <a href={`/api/design/${detail.id}/transmittal?format=text&download=1`} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-black text-slate-100 hover:border-teal-500/60 hover:text-teal-200">
+                      <FileText className="h-4 w-4" /> Text transmittal
+                    </a>
                   </div>
                 </div>
 
@@ -1005,6 +1497,12 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
                 {orders.map((order) => <option key={order.id} value={order.id}>{order.label}</option>)}
               </select>
             </Field>
+            {drawingForm.orderId && productionGatePanel(ordersById.get(Number(drawingForm.orderId))?.designGate)}
+            {drawingForm.orderId && (
+              <p className="-mt-2 text-[11px] font-semibold leading-relaxed text-slate-500">
+                Linking this drawing makes the order design-controlled. Production remains hard-blocked until this drawing family also has an issued revision.
+              </p>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Project"><input value={drawingForm.projectName} onChange={(e) => setDrawingForm({ ...drawingForm, projectName: e.target.value })} placeholder="Villa / office / site name" className={inputCls} /></Field>
               <Field label="Client"><input value={drawingForm.clientName} onChange={(e) => setDrawingForm({ ...drawingForm, clientName: e.target.value })} className={inputCls} /></Field>
@@ -1033,18 +1531,35 @@ export default function DesignDepartmentView({ currentUser, onSelectOrder }: Des
       )}
 
       {modal === "submit" && detail && (
-        <Modal title="Submit drawing for approval" subtitle={`${detail.drawingNo} · Rev ${detail.revision}`} onClose={() => setModal(null)}>
-          <form onSubmit={(e) => { e.preventDefault(); void patchDrawing("submit", submitForm, "Drawing submittal recorded."); }} className="space-y-4">
+        <Modal title="Submit drawing for approval" subtitle={`${detail.drawingNo} · Rev ${detail.revision} — the six-point checklist must be complete`} onClose={() => setModal(null)} wide>
+          <form onSubmit={(e) => { e.preventDefault(); void patchDrawing("submit", { ...submitForm, submissionChecklist: submitChecklist }, "Drawing submittal recorded with a completed checklist."); }} className="space-y-4">
             <Field label="Submitted to *"><input required value={submitForm.submittedTo} onChange={(e) => setSubmitForm({ ...submitForm, submittedTo: e.target.value })} placeholder="Client / architect / consultant" className={inputCls} /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Submitted date *"><input required type="date" value={submitForm.submittedDate} onChange={(e) => setSubmitForm({ ...submitForm, submittedDate: e.target.value })} className={inputCls} /></Field>
               <Field label="Response due date"><input type="date" value={submitForm.responseDueDate} onChange={(e) => setSubmitForm({ ...submitForm, responseDueDate: e.target.value })} className={inputCls} /></Field>
             </div>
             <Field label="Transmittal number"><input value={submitForm.transmittalNo} onChange={(e) => setSubmitForm({ ...submitForm, transmittalNo: e.target.value })} placeholder="TR-001" className={inputCls} /></Field>
+            <section className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
+              <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-300">
+                <ClipboardList className="h-4 w-4 text-teal-300" /> Required submission checklist
+              </div>
+              {renderChecklist(
+                submitChecklist,
+                (id, checked) => setSubmitChecklist((current) => ({ ...current, [id]: checked })),
+                busy === "submit",
+              )}
+            </section>
             <Field label="Submittal note"><textarea value={submitForm.note} onChange={(e) => setSubmitForm({ ...submitForm, note: e.target.value })} rows={3} className={inputCls} /></Field>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setModal(null)} className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-black text-slate-200 hover:bg-slate-800">Cancel</button>
-              <button type="submit" disabled={busy === "submit"} className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white hover:bg-sky-500 disabled:opacity-50">{busy === "submit" ? "Recording…" : "Record submittal"}</button>
+              <button
+                type="submit"
+                disabled={busy === "submit" || !submitChecklistProgress.complete}
+                className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+                title={submitChecklistProgress.complete ? "Record this submittal" : `Complete the checklist first (${submitChecklistProgress.checked}/${submitChecklistProgress.total})`}
+              >
+                {busy === "submit" ? "Recording…" : submitChecklistProgress.complete ? "Record submittal" : `Checklist ${submitChecklistProgress.checked}/${submitChecklistProgress.total}`}
+              </button>
             </div>
           </form>
         </Modal>

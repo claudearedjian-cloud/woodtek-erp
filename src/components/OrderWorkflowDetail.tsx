@@ -22,6 +22,7 @@ import {
   Boxes,
   DollarSign,
   FileText,
+  DraftingCompass,
   QrCode,
   Copy,
   Printer,
@@ -848,6 +849,11 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
     return <div className="p-6 text-slate-400 animate-pulse font-medium">Loading operation workflow...</div>;
   }
 
+  const designGate = order.designGate ?? null;
+  const designGateBlocked = designGate?.state === "blocked";
+  const designGateReady = designGate?.state === "ready";
+  const designGateBlockers: any[] = Array.isArray(designGate?.blockers) ? designGate.blockers : [];
+  const designGateIssued: any[] = Array.isArray(designGate?.issuedRevisions) ? designGate.issuedRevisions : [];
   const getStatusBadge = (s: string) => {
     if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
     if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border border-teal-500/30";
@@ -878,6 +884,15 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
             <span className="text-xs text-slate-400 font-semibold bg-slate-800 px-2.5 py-0.5 rounded border border-slate-700">
               Priority: <strong className="text-white">{order.priority}</strong>
             </span>
+            {designGate?.controlled && (
+              <span
+                className={`inline-flex items-center gap-1 rounded border px-2.5 py-0.5 text-xs font-extrabold uppercase ${designGateBlocked ? "border-rose-500/50 bg-rose-500/20 text-rose-200" : "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"}`}
+                title={designGate.message}
+              >
+                <DraftingCompass className="h-3.5 w-3.5" />
+                Design {designGateBlocked ? "blocked" : "ready"} · {designGate.issuedFamilies ?? 0}/{designGate.requiredFamilies ?? 0}
+              </span>
+            )}
           </div>
           <h1 className="text-xl font-extrabold text-white mt-1 tracking-tight">{order.title}</h1>
           <p className="text-sm text-slate-400 mt-0.5 flex flex-wrap items-center gap-3">
@@ -898,12 +913,12 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
           <select
             value={order.status || "Pending"}
             onChange={(e) => handleOrderStatusChange(e.target.value)}
-            title="Change order status (Completed consumes reserved materials; On Hold / Cancelled releases them)"
+            title={designGateBlocked ? `Design approval gate: ${designGate.message}` : "Change order status (Completed consumes reserved materials; On Hold / Cancelled releases them)"}
             className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500/50"
           >
             {["Pending", "In Production", "Quality Review", "Completed", "On Hold", "Cancelled"].map((s) => (
-              <option key={s} value={s} className="bg-slate-900 text-white">
-                {s}
+              <option key={s} value={s} disabled={s === "In Production" && designGateBlocked && order.status !== "In Production"} className="bg-slate-900 text-white">
+                {s === "In Production" && designGateBlocked && order.status !== "In Production" ? "In Production — Design blocked" : s}
               </option>
             ))}
           </select>
@@ -1029,6 +1044,64 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
         </div>
       </div>
 
+      {designGate?.controlled && (
+        <section className={`rounded-2xl border p-5 shadow-sm ${designGateBlocked ? "border-rose-500/60 bg-rose-500/10" : "border-emerald-500/50 bg-emerald-500/10"}`} role="alert">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className={`rounded-2xl border p-2.5 ${designGateBlocked ? "border-rose-500/50 bg-rose-500/15 text-rose-200" : "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"}`}>
+                <DraftingCompass className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className={`text-base font-black ${designGateBlocked ? "text-rose-100" : "text-emerald-100"}`}>
+                  {designGateBlocked ? "Production is hard-blocked by Design approval" : "Design production gate is ready"}
+                </h3>
+                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-slate-200">{designGate.message}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-300">
+                  {designGateBlocked
+                    ? "Start Station, re-opening a completed step, and manually moving this order to In Production will be rejected until every linked drawing family has an issued revision. Work already running can still be paused or completed, but it cannot be restarted while the gate is blocked."
+                    : "Every current linked drawing family has a controlled production revision, so this order may enter production subject to the normal station, sequence and material-reception checks."}
+                </p>
+              </div>
+            </div>
+            <span className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-xs font-black ${designGateBlocked ? "border-rose-500/50 bg-rose-500/15 text-rose-100" : "border-emerald-500/50 bg-emerald-500/15 text-emerald-100"}`}>
+              {designGate.issuedFamilies ?? 0} of {designGate.requiredFamilies ?? 0} families issued
+            </span>
+          </div>
+
+          {designGateBlockers.length > 0 && (
+            <div className="mt-4">
+              <div className="text-[11px] font-black uppercase tracking-wider text-rose-200">Blocking drawing revisions</div>
+              <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                {designGateBlockers.map((blocker: any) => (
+                  <div key={`${blocker.drawingId ?? blocker.drawingNo}-${blocker.revision}`} className="rounded-xl border border-rose-500/30 bg-slate-950/50 p-3 text-xs leading-relaxed">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-black text-white">{blocker.drawingNo} Rev {blocker.revision || "—"}</span>
+                      <span className="rounded-full bg-slate-800 px-2 py-0.5 font-bold text-slate-200">{blocker.stage}</span>
+                      {blocker.approvalCode && <span className="rounded-full bg-slate-800 px-2 py-0.5 font-bold text-slate-200">Code {blocker.approvalCode}</span>}
+                    </div>
+                    {blocker.title && <div className="mt-1 font-semibold text-slate-300">{blocker.title}</div>}
+                    <p className="mt-1 text-rose-100/90">{blocker.reason}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[11px] font-semibold text-slate-300">Open Design Department from the main menu to complete the checklist, approval return and controlled production issue for these drawings.</p>
+            </div>
+          )}
+
+          {designGateIssued.length > 0 && (
+            <div className="mt-4">
+              <div className={`text-[11px] font-black uppercase tracking-wider ${designGateBlocked ? "text-slate-300" : "text-emerald-200"}`}>Current issued production revisions</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {designGateIssued.map((issued: any) => (
+                  <span key={`${issued.drawingId ?? issued.drawingNo}-${issued.revision}`} className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-black text-emerald-100" title={issued.reason}>
+                    {issued.drawingNo} Rev {issued.revision || "—"}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
       {/* Progress & Conveyor Banner */}
       <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-sm">
         <div className="flex items-center justify-between mb-2">
@@ -1271,11 +1344,11 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         {canRunStations && (op.status === "Ready" || op.status === "Rejected/Rework") && (
                           <button
                             onClick={() => handleUpdateOpStatus(op.id, "In Progress")}
-                            disabled={busyOperationId !== null}
-                            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shadow-md shadow-amber-600/20 transition active:scale-95 disabled:opacity-40"
+                            disabled={busyOperationId !== null || designGateBlocked}
+                            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shadow-md shadow-amber-600/20 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40" title={designGateBlocked ? `Design approval gate: ${designGate.message}` : undefined}
                           >
                             <Play className="w-4 h-4 fill-slate-950 stroke-[2]" />
-                            <span>{op.status === "Rejected/Rework" ? "START REWORK" : "START STATION"}</span>
+                            <span>{designGateBlocked ? "DESIGN BLOCKED" : op.status === "Rejected/Rework" ? "START REWORK" : "START STATION"}</span>
                           </button>
                         )}
                         {op.status === "Pending" && (
@@ -1308,12 +1381,12 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                         {isCompleted && (
                           <button
                             onClick={() => handleUpdateOpStatus(op.id, "In Progress", true)}
-                            disabled={busyOperationId !== null}
+                            disabled={busyOperationId !== null || designGateBlocked}
                             className="text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 flex items-center gap-1 transition disabled:opacity-40"
-                            title="Re-open Step for Rework"
+                            title={designGateBlocked ? `Design approval gate: ${designGate.message}` : "Re-open Step for Rework"}
                           >
                             <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Re-open</span>
+                            <span>{designGateBlocked ? "Design blocked" : "Re-open"}</span>
                           </button>
                         )}
 

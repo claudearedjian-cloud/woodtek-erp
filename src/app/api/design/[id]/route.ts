@@ -16,6 +16,7 @@ import {
   issueDesignDrawing,
   markDesignComments,
   recordDesignApproval,
+  saveDesignSubmissionChecklist,
   submitDesignDrawing,
   updateDesignDrawing,
 } from "@/lib/designDepartment.server";
@@ -58,6 +59,11 @@ export async function PATCH(request: Request, context: RouteContext) {
         result = await updateDesignDrawing(id, body, user);
         auditAction = "design.drawing.update";
         auditSummary = `Updated ${result.recordNumber}`;
+        break;
+      case "checklist":
+        result = await saveDesignSubmissionChecklist(id, body, user);
+        auditAction = "design.drawing.checklist";
+        auditSummary = `Saved submission checklist for ${result.recordNumber} (${result.submissionChecklistProgress.checked}/${result.submissionChecklistProgress.total})`;
         break;
       case "submit":
         result = await submitDesignDrawing(id, body, user);

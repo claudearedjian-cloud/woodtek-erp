@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardList,
   Cpu,
+  DraftingCompass,
   Filter,
   User,
 } from "lucide-react";
@@ -139,7 +140,10 @@ export default function OrdersView({
     const matchesSearch = !searchQuery || 
       order.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
       order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (order.customerCompany && order.customerCompany.toLowerCase().includes(searchQuery.toLowerCase()));
+      (order.customerCompany && order.customerCompany.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (order.designGate?.state && String(order.designGate.state).toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (Array.isArray(order.designGate?.blockers) && order.designGate.blockers.some((blocker: any) =>
+        `${blocker.drawingNo ?? ""} ${blocker.revision ?? ""} ${blocker.title ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase())));
     
     const matchesStatus = statusFilter === "All" || order.status === statusFilter;
     const matchesPriority = priorityFilter === "All" || order.priority === priorityFilter;
@@ -159,6 +163,35 @@ export default function OrdersView({
     if (s === "Quality Review") return "bg-purple-500/20 text-purple-300 border-purple-500/30";
     if (s === "On Hold") return "bg-rose-500/20 text-rose-300 border-rose-500/30";
     return "bg-slate-800 text-slate-300 border-slate-700";
+  };
+
+  const designGateBadge = (order: any) => {
+    const gate = order?.designGate;
+    if (!gate?.controlled) return null;
+    if (gate.state === "blocked") {
+      const blockers = Array.isArray(gate.blockers)
+        ? gate.blockers.slice(0, 3).map((blocker: any) => `${blocker.drawingNo} Rev ${blocker.revision || "—"}`).join(", ")
+        : "";
+      return (
+        <span
+          className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold uppercase text-rose-200"
+          title={`${gate.message}${blockers ? ` Blockers: ${blockers}` : ""}`}
+        >
+          <DraftingCompass className="h-3 w-3" /> Design blocked · {gate.issuedFamilies ?? 0}/{gate.requiredFamilies ?? 0}
+        </span>
+      );
+    }
+    if (gate.state === "ready") {
+      return (
+        <span
+          className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-extrabold uppercase text-emerald-200"
+          title={gate.message}
+        >
+          <DraftingCompass className="h-3 w-3" /> Design ready · {gate.issuedFamilies ?? 0}/{gate.requiredFamilies ?? 0}
+        </span>
+      );
+    }
+    return null;
   };
 
   const isOverdue = (order: any) =>
@@ -289,6 +322,7 @@ export default function OrdersView({
                     <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
                       {t(order.status)}
                     </span>
+                    {designGateBadge(order)}
                     {Number(order.totalSteps) > 0 && (
                       <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border ${
                         Number(order.scheduledSteps) === Number(order.totalSteps)
@@ -415,6 +449,7 @@ export default function OrdersView({
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={`rounded px-2 py-0.5 text-[10px] font-extrabold uppercase ${getStatusBadge(order.status)}`}>{t(order.status)}</span>
+                      {order.designGate?.controlled && <span className="mt-1 block">{designGateBadge(order)}</span>}
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                         <span className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-extrabold uppercase text-sky-300">
                           {dispatchByOrder[String(order.id)].delivered}/{dispatchByOrder[String(order.id)].total} delivered
@@ -490,6 +525,9 @@ export default function OrdersView({
                             Machine slots: {Number(order.scheduledSteps) || 0}/{order.totalSteps}
                           </span>
                         </div>
+                      )}
+                      {order.designGate?.controlled && (
+                        <div className="mb-2">{designGateBadge(order)}</div>
                       )}
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                         <div className="mb-2">

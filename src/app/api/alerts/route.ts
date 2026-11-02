@@ -7,6 +7,9 @@ import { readReceived } from "@/lib/bomStatus.server";
 import { suggestedReorderQty } from "@/lib/purchasing";
 import { isAddonInstalled } from "@/lib/installedEdition";
 import { readInstalledEdition } from "@/lib/installedEdition.server";
+import { subjectHasModule } from "@/lib/optionalModules";
+import { readOptionalModules } from "@/lib/optionalModules.server";
+import { designAlertsIfAvailable } from "@/lib/designDepartment.server";
 
 // ============================================================================
 // GET /api/alerts — everything that needs a human's attention right now:
@@ -14,6 +17,8 @@ import { readInstalledEdition } from "@/lib/installedEdition.server";
 //   • orders whose operator flagged materials as NOT received
 //   • plant assets whose service interval is exhausted
 //   • inventory at or below the reorder level
+//   • Design drawings needing approval follow-up, comment incorporation,
+//     resubmittal or controlled issue (granted Design users only)
 // Every alert carries the tab it should navigate to.
 // ============================================================================
 
@@ -93,6 +98,23 @@ export async function GET() {
       }
     }
 
+    if (subjectHasModule("design", user, readOptionalModules())) {
+      try {
+        const designAlerts = await designAlertsIfAvailable();
+        for (const alert of designAlerts.slice(0, 25)) {
+          alerts.push({
+            kind: "design",
+            severity: alert.severity,
+            title: alert.title,
+            detail: alert.detail,
+            tab: "design",
+            itemId: alert.drawingId ?? undefined,
+          });
+        }
+      } catch (designAlertError) {
+        console.warn("Design alerts skipped:", designAlertError);
+      }
+    }
     for (const i of invRows) {
       if (i.stockQuantity <= i.reorderLevel) {
         alerts.push({

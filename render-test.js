@@ -77,6 +77,8 @@ compile("src/lib/jobCosting.ts", "lib/jobCosting.js");
 compile("src/lib/hrPayroll.ts", "lib/hrPayroll.js");
 compile("src/lib/designDepartment.ts", "lib/designDepartment.js");
 compile("src/lib/designAttachments.ts", "lib/designAttachments.js");
+compile("src/lib/designTransmittal.ts", "lib/designTransmittal.js");
+compile("src/lib/zipStore.ts", "lib/zipStore.js");
 compile("src/lib/hrCalendar.ts", "lib/hrCalendar.js");
 compile("src/lib/hrCalendar.server.ts", "lib/hrCalendar.server.js");
 compile("src/lib/leaveAvailability.ts", "lib/leaveAvailability.js");
@@ -5727,6 +5729,8 @@ async function checkAssemblyProjectApi() {
 {
   const design = require("./compiled/lib/designDepartment.js");
   const designFiles = require("./compiled/lib/designAttachments.js");
+  const designTransmittal = require("./compiled/lib/designTransmittal.js");
+  const designZip = require("./compiled/lib/zipStore.js");
   const designInstalled = require("./compiled/lib/installedEdition.js");
   const designOptional = require("./compiled/lib/optionalModules.js");
   const designAccess = require("./compiled/lib/moduleAccess.js");
@@ -5774,6 +5778,402 @@ async function checkAssemblyProjectApi() {
   check(design.designDrawingStage({ status: "Returned", approvalCode: "B", commentsIncorporated: false }) === "Incorporate Code B comments" && design.designDrawingStage({ status: "Returned", approvalCode: "D" }) === "Revise & resubmit", "design stages: Code B work and rejected revisions get the correct next action");
   check(design.suggestNextDesignRevision("P01") === "P02" && design.suggestNextDesignRevision("R9") === "R10" && design.suggestNextDesignRevision("A") === "B" && design.suggestNextDesignRevision("") === "R1", "design revisions: next-revision suggestions preserve common factory revision styles");
 
+  // Phase 2: mandatory six-point submission checklist.
+  const completeChecklist = Object.fromEntries(
+    design.DESIGN_SUBMISSION_CHECKLIST.map((item) => [item.id, true]),
+  );
+  const partialChecklist = { ...completeChecklist, dimensions: false, package: false };
+  check(
+    design.DESIGN_SUBMISSION_CHECKLIST.length === 6
+      && design.DESIGN_SUBMISSION_CHECKLIST.map((item) => item.id).join(",") === "titleBlock,dimensions,materials,coordination,package,comments",
+    "design checklist: the owner-approved six submission checks stay in a stable order",
+  );
+  const partialProgress = design.designSubmissionChecklistProgress(JSON.stringify(partialChecklist));
+  check(
+    partialProgress.checked === 4
+      && partialProgress.total === 6
+      && partialProgress.complete === false
+      && partialProgress.missing.includes("Dimensions, levels and site measurements checked")
+      && partialProgress.missing.includes("PDF/CAD package, sheet count and external drawing location verified"),
+    "design checklist: saved JSON progress reports the exact incomplete checks",
+  );
+  check(
+    design.parseDesignChecklist({ submissionChecklist: { titleBlock: true } }).submissionChecklist.dimensions === false
+      && design.designSubmissionChecklistProgress(completeChecklist).complete === true
+      && design.assertDesignSubmissionChecklistComplete(completeChecklist).comments === true,
+    "design checklist: Draft progress may be partial while completion is detected exactly",
+  );
+  check(
+    throwsDesign(() => design.parseDesignSubmissionChecklist({ unknownCheck: true }))
+      && throwsDesign(() => design.parseDesignSubmissionChecklist({ titleBlock: "yes" }))
+      && throwsDesign(() => design.assertDesignSubmissionChecklistComplete(partialChecklist)),
+    "design checklist: unknown keys, non-boolean answers and incomplete submissions are rejected",
+  );
+  const parsedSubmit = design.parseDesignSubmit({
+    submittedTo: "Architect",
+    submittedDate: "2026-10-10",
+    responseDueDate: "2026-10-17",
+    submissionChecklist: completeChecklist,
+  });
+  check(
+    Object.values(parsedSubmit.submissionChecklist).every(Boolean)
+      && throwsDesign(() => design.parseDesignSubmit({
+        submittedTo: "Architect",
+        submittedDate: "2026-10-10",
+        submissionChecklist: partialChecklist,
+      })),
+    "design checklist: submittal parsing stores a complete checklist and blocks a partial one",
+  );
+
+  // Phase 2: order-level hard production gate by normalized drawing family.
+  const gateDrawing = (overrides = {}) => ({
+    id: 1,
+    orderId: 42,
+    projectName: "Villa A",
+    drawingNo: "WD-101",
+    revision: "R0",
+    title: "Kitchen elevations",
+    status: "Draft",
+    approvalCode: "",
+    commentsIncorporated: false,
+    ...overrides,
+  });
+  const uncontrolledGate = design.designProductionGate([]);
+  check(
+    uncontrolledGate.state === "not-controlled"
+      && uncontrolledGate.controlled === false
+      && uncontrolledGate.ready === true
+      && uncontrolledGate.requiredFamilies === 0,
+    "design hard gate: an order with no linked drawings is not trapped by the optional module",
+  );
+  const historicalGate = design.designProductionGate([
+    gateDrawing({ id: 1, status: "Superseded" }),
+    gateDrawing({ id: 2, drawingNo: "WD-102", status: "Cancelled" }),
+  ]);
+  check(
+    historicalGate.state === "not-controlled" && historicalGate.blockers.length === 0,
+    "design hard gate: cancelled and superseded-only drawing families no longer control an order",
+  );
+  const draftGate = design.designProductionGate([gateDrawing({ id: 7 })], "2026-10-20");
+  check(
+    draftGate.state === "blocked"
+      && draftGate.controlled === true
+      && draftGate.ready === false
+      && draftGate.blockers[0]?.drawingId === 7
+      && draftGate.blockers[0]?.reason.includes("has not been submitted"),
+    "design hard gate: a linked Draft family blocks production with the blocking revision identified",
+  );
+  const replacementGate = design.designProductionGate([
+    gateDrawing({ id: 3, revision: "R0", status: "Issued to Production", approvalCode: "A" }),
+    gateDrawing({ id: 9, revision: "R1", status: "Draft" }),
+  ], "2026-10-20");
+  check(
+    replacementGate.state === "ready"
+      && replacementGate.requiredFamilies === 1
+      && replacementGate.issuedFamilies === 1
+      && replacementGate.issuedRevisions[0]?.revision === "R0"
+      && replacementGate.blockers.length === 0,
+    "design hard gate: an older issued revision remains valid while its replacement is drafted",
+  );
+  const mixedGate = design.designProductionGate([
+    gateDrawing({ id: 1, status: "Issued to Production", approvalCode: "A" }),
+    gateDrawing({ id: 2, drawingNo: "WD-102", revision: "P01", status: "Returned", approvalCode: "C" }),
+  ], "2026-10-20");
+  check(
+    mixedGate.state === "blocked"
+      && mixedGate.requiredFamilies === 2
+      && mixedGate.issuedFamilies === 1
+      && mixedGate.blockers.length === 1
+      && mixedGate.blockers[0]?.stage === "Revise & resubmit"
+      && mixedGate.message.includes("WD-102 Rev P01"),
+    "design hard gate: every linked family must have an issued revision, not just one of them",
+  );
+  const normalizedGate = design.designProductionGate([
+    gateDrawing({ id: 1, projectName: " villa a ", drawingNo: " wd-101 ", status: "Issued to Production", approvalCode: "B", commentsIncorporated: true }),
+    gateDrawing({ id: 2, projectName: "Villa A", drawingNo: "WD-101", revision: "R1" }),
+    gateDrawing({ id: 3, projectName: "Villa B", drawingNo: "WD-101", revision: "R0" }),
+  ], "2026-10-20");
+  check(
+    normalizedGate.requiredFamilies === 2
+      && normalizedGate.issuedFamilies === 1
+      && normalizedGate.blockers[0]?.projectName === "Villa B",
+    "design hard gate: family matching trims project/drawing case but never crosses projects",
+  );
+  const latestBlockerGate = design.designProductionGate([
+    gateDrawing({ id: 1, revision: "R0" }),
+    gateDrawing({ id: 2, revision: "R1", status: "Returned", approvalCode: "A" }),
+  ], "2026-10-20");
+  check(
+    latestBlockerGate.blockers[0]?.revision === "R1"
+      && latestBlockerGate.blockers[0]?.reason.includes("approved revision is ready"),
+    "design hard gate: the newest unissued revision explains when only controlled issue remains",
+  );
+
+  // Phase 2: follow-up alerts and management reporting.
+  const alertFixture = (overrides = {}) => ({
+    ...gateDrawing(),
+    architectName: "Studio A",
+    discipline: "General Joinery",
+    ...overrides,
+  });
+  const codeBAlerts = design.designDrawingAlerts(alertFixture({
+    id: 11,
+    status: "Returned",
+    approvalCode: "B",
+    approvalDate: "2026-10-18",
+  }), "2026-10-20");
+  const readyAlerts = design.designDrawingAlerts(alertFixture({
+    id: 12,
+    status: "Returned",
+    approvalCode: "B",
+    commentsIncorporated: true,
+    approvalDate: "2026-10-18",
+  }), "2026-10-20");
+  check(
+    codeBAlerts.some((alert) => alert.kind === "code-b-comments" && alert.drawingId === 11 && alert.orderId === 42)
+      && readyAlerts.some((alert) => alert.kind === "ready-to-issue"),
+    "design alerts: Code B waits for incorporated comments, then becomes ready-to-issue follow-up",
+  );
+  const overdueAlerts = design.designDrawingAlerts(alertFixture({
+    id: 13,
+    status: "Submitted",
+    submittedDate: "2026-10-10",
+    submittedTo: "Studio A",
+    responseDueDate: "2026-10-17",
+  }), "2026-10-20");
+  const dueSoonAlerts = design.designDrawingAlerts(alertFixture({
+    id: 14,
+    status: "Submitted",
+    submittedDate: "2026-10-18",
+    responseDueDate: "2026-10-22",
+  }), "2026-10-20");
+  check(
+    overdueAlerts.some((alert) => alert.kind === "approval-overdue" && alert.days === 3 && alert.severity === "rose")
+      && dueSoonAlerts.some((alert) => alert.kind === "approval-due-soon" && alert.days === 2),
+    "design alerts: approval responses are separated into overdue and due-soon work",
+  );
+  const draftAlerts = design.designDrawingAlerts(alertFixture({
+    id: 15,
+    requiredDate: "2026-10-19",
+    submissionChecklist: partialChecklist,
+  }), "2026-10-20");
+  const noChecklistAlerts = design.designDrawingAlerts(alertFixture({
+    id: 15,
+    requiredDate: "2026-10-19",
+    submissionChecklist: partialChecklist,
+  }), "2026-10-20", { includeChecklist: false });
+  check(
+    draftAlerts.some((alert) => alert.kind === "required-overdue")
+      && draftAlerts.some((alert) => alert.kind === "checklist" && alert.days === 2)
+      && !noChecklistAlerts.some((alert) => alert.kind === "checklist"),
+    "design alerts: Draft checklist and required-date gaps can be included or safely omitted for older schemas",
+  );
+  const departmentAlerts = design.designDepartmentAlerts([
+    alertFixture({ id: 16, drawingNo: "WD-301", submissionChecklist: partialChecklist }),
+    alertFixture({ id: 17, drawingNo: "WD-302", status: "On Hold" }),
+    alertFixture({ id: 18, drawingNo: "WD-303", status: "Returned", approvalCode: "C", approvalDate: "2026-10-18" }),
+    alertFixture({ id: 19, drawingNo: "WD-304", status: "Superseded", approvalCode: "D" }),
+  ], "2026-10-20");
+  check(
+    departmentAlerts[0]?.kind === "resubmit"
+      && departmentAlerts.some((alert) => alert.kind === "checklist")
+      && departmentAlerts.some((alert) => alert.kind === "on-hold")
+      && !departmentAlerts.some((alert) => alert.drawingId === 19)
+      && design.designDrawingAlerts(null).length === 0,
+    "design alerts: department queue is severity-ordered and historical revisions stay silent",
+  );
+
+  const designReport = design.buildDesignDepartmentReport([
+    alertFixture({ id: 21, status: "Issued to Production", approvalCode: "A", submittedDate: "2026-10-01", approvalDate: "2026-10-06", issuedAt: "2026-10-09T08:00:00.000Z" }),
+    alertFixture({ id: 22, drawingNo: "WD-102", status: "Submitted", submittedDate: "2026-10-18", responseDueDate: "2026-10-19" }),
+    alertFixture({ id: 23, projectName: "Villa B", drawingNo: "WD-201", discipline: "Wardrobes", architectName: "Studio B", status: "Returned", approvalCode: "C", submittedDate: "2026-10-02", approvalDate: "2026-10-12" }),
+    alertFixture({ id: 24, projectName: "Villa B", drawingNo: "WD-202", discipline: "Wardrobes", architectName: "Studio B", status: "On Hold" }),
+    alertFixture({ id: 25, revision: "R1", status: "Draft" }),
+  ], "2026-10-20");
+  check(
+    designReport.totals.records === 5
+      && designReport.totals.families === 4
+      && designReport.totals.issuedToProduction === 1
+      && designReport.totals.onHold === 1
+      && designReport.totals.overdueApprovals === 1
+      && designReport.codes.A === 1
+      && designReport.codes.C === 1
+      && designReport.codes.none === 3,
+    "design report: totals count records separately from drawing families and approval codes",
+  );
+  check(
+    designReport.approvalOutcomes.productionEligible === 1
+      && designReport.approvalOutcomes.reviseOrReject === 1
+      && designReport.approvalOutcomes.firstPassApprovalRate === 50
+      && designReport.approvalOutcomes.codeARate === 50,
+    "design report: A/B production-eligible and C/D revise outcomes drive first-pass rates",
+  );
+  check(
+    designReport.turnaround.responseSamples === 2
+      && designReport.turnaround.totalResponseDays === 15
+      && designReport.turnaround.averageResponseDays === 7.5
+      && designReport.turnaround.issueSamples === 1
+      && designReport.turnaround.averageApprovalToIssueDays === 3,
+    "design report: approval response and approval-to-issue turnaround use only dated samples",
+  );
+  check(
+    designReport.aging.awaiting0To7 === 1
+      && designReport.aging.overdue === 1
+      && designReport.byProject.find((group) => group.name === "Villa A")?.total === 3
+      && designReport.byProject.find((group) => group.name === "Villa A")?.approvalRate === 100
+      && designReport.byProject.find((group) => group.name === "Villa B")?.averageResponseDays === 10,
+    "design report: ageing and project grouping expose where approvals are waiting or slow",
+  );
+  check(
+    designReport.byDiscipline.find((group) => group.name === "Wardrobes")?.codes.C === 1
+      && designReport.byConsultant.find((group) => group.name === "Studio B")?.returnedOutcomes === 1,
+    "design report: discipline and consultant groups retain their approval-code outcomes",
+  );
+
+  // Phase 2 documents: checked transmittal text/HTML/CSV and stored ZIP packages.
+  const packageDrawing = {
+    id: 42,
+    recordNumber: "DES-00042",
+    drawingNo: "WD 101",
+    revision: "R1",
+    title: "Kitchen <script>alert(\"x\")</script>",
+    projectName: "Villa & Gardens",
+    clientName: "Client \"One\"",
+    architectName: "Studio A",
+    orderSnapshot: "ORD-42 — Kitchen",
+    discipline: "General Joinery",
+    area: "Ground floor",
+    sheetCount: 3,
+    status: "Returned",
+    priority: "High",
+    requiredDate: "2026-10-25",
+    externalLink: "https://example.com/drawings?a=1&b=2",
+    notes: "Handle <carefully>",
+    submittedTo: "Studio A",
+    submittedByName: "Sara Haddad",
+    submittedDate: "2026-10-10",
+    transmittalNo: "TR-009",
+    responseDueDate: "2026-10-17",
+    approvalCode: "B",
+    approvalLabel: "Code B — Approved as noted",
+    approvalBy: "Architect",
+    approvalDate: "2026-10-15",
+    approvalComments: "Move the <img src=x onerror=alert(1)> handle",
+    commentsIncorporated: false,
+    submissionChecklist: completeChecklist,
+    submissionChecklistByName: "Sara Haddad",
+    submissionChecklistAt: "2026-10-10T08:30:00.000Z",
+  };
+  const packageFiles = [{
+    id: 7,
+    kind: "Drawing PDF/CAD",
+    fileName: "design-42-100-1.pdf",
+    originalName: "Kitchen \"Final\".pdf",
+    size: 2048,
+    createdAt: "2026-10-10T09:00:00.000Z",
+    uploadedByName: "Sara Haddad",
+  }];
+  check(
+    designTransmittal.designTransmittalReference(packageDrawing) === "TR-009"
+      && designTransmittal.designTransmittalReference({ id: 42, revision: "R1" }) === "WT-DES-00042-REV-R1"
+      && designTransmittal.designTransmittalFilename(packageDrawing, ".HTML") === "WD-101-Rev-R1-transmittal.HTML",
+    "design transmittal: explicit and generated references plus safe filenames are deterministic",
+  );
+  const transmittalText = designTransmittal.designTransmittalText(
+    packageDrawing,
+    packageFiles,
+    new Date("2026-10-20T10:00:00.000Z"),
+  );
+  check(
+    transmittalText.includes("CODE B — COMMENTS MUST BE INCORPORATED BEFORE PRODUCTION")
+      && transmittalText.includes("SUBMISSION CHECKLIST (6/6 — COMPLETE)")
+      && transmittalText.includes("[x] Dimensions, levels and site measurements checked")
+      && transmittalText.includes("Kitchen \"Final\".pdf")
+      && transmittalText.includes("Prepared by:")
+      && transmittalText.includes("Received by:"),
+    "design transmittal: plain text carries approval warning, completed checklist, files and signatures",
+  );
+  const manifestCsv = designTransmittal.designPackageManifestCsv(packageDrawing, packageFiles);
+  check(
+    manifestCsv.startsWith("\"Transmittal\",\"Record\",\"Drawing No\"")
+      && manifestCsv.includes("\"Kitchen \"\"Final\"\".pdf\"")
+      && manifestCsv.includes("\"Kitchen <script>alert(\"\"x\"\")</script>\"")
+      && manifestCsv.trimEnd().split("\r\n").length === 2,
+    "design package manifest: CSV values are fully quoted and embedded quotes are doubled",
+  );
+  const transmittalHtml = designTransmittal.buildDesignTransmittalHtml(
+    packageDrawing,
+    packageFiles,
+    new Date("2026-10-20T10:00:00.000Z"),
+  );
+  check(
+    transmittalHtml.includes("CODE B — COMMENTS MUST BE INCORPORATED BEFORE PRODUCTION")
+      && transmittalHtml.includes("Submission checklist — 6/6 complete")
+      && transmittalHtml.includes("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;")
+      && !transmittalHtml.includes("<script>alert")
+      && !transmittalHtml.includes("<img src=x")
+      && transmittalHtml.includes("window.print()")
+      && transmittalHtml.includes("Prepared / issued by"),
+    "design transmittal: print HTML escapes drawing/file data and carries status, checklist and signatures",
+  );
+  check(
+    designZip.crc32(new TextEncoder().encode("123456789")) === 0xCBF43926,
+    "design ZIP: CRC32 matches the standard check value",
+  );
+  check(
+    designZip.safeZipEntryName("/../folder/../bad:name?.pdf") === "folder/bad_name_.pdf"
+      && designZip.uniqueZipEntryName("files/Drawing.pdf", new Set(["files/drawing.pdf"])) === "files/Drawing (2).pdf",
+    "design ZIP: entry names cannot traverse folders and case-insensitive duplicates are renamed",
+  );
+  const zipEntries = [
+    { name: "folder/readme.txt", data: new TextEncoder().encode("first") },
+    { name: "folder/readme.txt", data: new TextEncoder().encode("second") },
+    { name: "drawings/رسم.pdf", data: new Uint8Array([0, 1, 2, 250, 255]) },
+  ];
+  const packageZip = Buffer.from(designZip.createStoredZip(zipEntries));
+  const eocd = packageZip.length - 22;
+  const centralCount = packageZip.readUInt16LE(eocd + 10);
+  let centralCursor = packageZip.readUInt32LE(eocd + 16);
+  const unpacked = [];
+  for (let index = 0; index < centralCount; index += 1) {
+    const nameLength = packageZip.readUInt16LE(centralCursor + 28);
+    const extraLength = packageZip.readUInt16LE(centralCursor + 30);
+    const commentLength = packageZip.readUInt16LE(centralCursor + 32);
+    const compressedSize = packageZip.readUInt32LE(centralCursor + 20);
+    const storedCrc = packageZip.readUInt32LE(centralCursor + 16);
+    const localOffset = packageZip.readUInt32LE(centralCursor + 42);
+    const name = packageZip.subarray(centralCursor + 46, centralCursor + 46 + nameLength).toString("utf8");
+    const localNameLength = packageZip.readUInt16LE(localOffset + 26);
+    const localExtraLength = packageZip.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const data = packageZip.subarray(dataStart, dataStart + compressedSize);
+    unpacked.push({ name, data: Buffer.from(data), crc: storedCrc });
+    centralCursor += 46 + nameLength + extraLength + commentLength;
+  }
+  check(
+    packageZip.readUInt32LE(0) === 0x04034b50
+      && packageZip.readUInt32LE(eocd) === 0x06054b50
+      && unpacked.map((entry) => entry.name).join("|") === "folder/readme.txt|folder/readme (2).txt|drawings/رسم.pdf"
+      && unpacked[0].data.toString("utf8") === "first"
+      && unpacked[1].data.toString("utf8") === "second"
+      && unpacked[2].data.equals(Buffer.from([0, 1, 2, 250, 255]))
+      && unpacked.every((entry) => entry.crc === designZip.crc32(entry.data)),
+    "design ZIP: stored local/central records round-trip duplicate and UTF-8 entries byte-for-byte",
+  );
+  let oversizedZipRejected = false;
+  try {
+    designZip.createStoredZip(Array.from({ length: 65536 }, (_, index) => ({
+      name: `file-${index}.txt`,
+      data: new Uint8Array(),
+    })));
+  } catch (error) {
+    oversizedZipRejected = /Too many files/.test(String(error?.message ?? error));
+  }
+  check(
+    Buffer.from(designZip.createStoredZip([])).length === 22 && oversizedZipRejected,
+    "design ZIP: an empty package is a valid EOCD while ZIP64-sized entry counts fail clearly",
+  );
+
   check(designFiles.designFileExtension("WD-101.DWG", "application/octet-stream") === "dwg" && designFiles.validateDesignFile("WD-101.DWG", "application/octet-stream", 1024) === null, "design files: CAD uploads are accepted by safe extension despite browser octet-stream MIME");
   check(designFiles.validateDesignFile("drawing.exe", "", 1024) !== null && designFiles.validateDesignFile("drawing.svg", "image/svg+xml", 1024) !== null, "design files: executables and scriptable SVG payloads are rejected");
   check(designFiles.validateDesignFile("drawing.pdf", "application/pdf", designFiles.MAX_DESIGN_FILE_BYTES + 1) !== null && designFiles.MAX_DESIGN_FILE_BYTES === 50 * 1024 * 1024, "design files: the 50 MB drawing-package limit is enforced");
@@ -5797,7 +6197,22 @@ async function checkAssemblyProjectApi() {
   const designSchemaSrc = fs.readFileSync("src/db/schema.ts", "utf8");
   const designEnsureSrc = fs.readFileSync("src/lib/designSchema.server.ts", "utf8");
   const designInstallerSchemaSrc = fs.readFileSync("installer/schema.sql", "utf8");
-  const designRoutePaths = ["src/app/api/design/route.ts", "src/app/api/design/[id]/route.ts", "src/app/api/design/[id]/files/route.ts"];
+  const designRoutePaths = [
+    "src/app/api/design/route.ts",
+    "src/app/api/design/[id]/route.ts",
+    "src/app/api/design/[id]/files/route.ts",
+    "src/app/api/design/[id]/transmittal/route.ts",
+    "src/app/api/design/[id]/package/route.ts",
+  ];
+  const designDetailRouteSrc = fs.readFileSync("src/app/api/design/[id]/route.ts", "utf8");
+  const designTransmittalRouteSrc = fs.readFileSync("src/app/api/design/[id]/transmittal/route.ts", "utf8");
+  const designPackageRouteSrc = fs.readFileSync("src/app/api/design/[id]/package/route.ts", "utf8");
+  const designOperationsRouteSrc = fs.readFileSync("src/app/api/operations/[id]/route.ts", "utf8");
+  const designOrdersRouteSrc = fs.readFileSync("src/app/api/orders/route.ts", "utf8");
+  const designOrderDetailRouteSrc = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+  const designGlobalAlertsRouteSrc = fs.readFileSync("src/app/api/alerts/route.ts", "utf8");
+  const designOrdersViewSrc = fs.readFileSync("src/components/OrdersView.tsx", "utf8");
+  const designOrderWorkflowSrc = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
   check(designPageSrc.includes('import("@/components/DesignDepartmentView")') && designPageSrc.includes('subjectHasModule("design"') && designPageSrc.includes('activeTab === "design" && canDesign'), "design page: workspace is code-split and rendered only for a granted subject");
   check(designRoutePaths.every((routePath) => fs.readFileSync(routePath, "utf8").includes('authorizeModule("design")')), "design API: every register and file route enforces the optional-module grant on the server");
   check(designRoutePaths.every((routePath) => fs.readFileSync(routePath, "utf8").includes("logAudit(")), "design API: creates, workflow changes and file operations write audit entries");
@@ -5811,6 +6226,91 @@ async function checkAssemblyProjectApi() {
   check(["design_drawings_project_drawing_revision_unique_idx", "approval_code in ('', 'A', 'B', 'C', 'D')", "status in ('Draft', 'Submitted', 'Returned', 'Issued to Production'"].every((fragment) => designInstallerSchemaSrc.includes(fragment) && designEnsureSrc.includes(fragment)), "design schema: lazy DDL and fresh-install schema keep identity, status and code constraints in sync");
   check(designViewSrc.includes("Record Code A/B/C/D") && designViewSrc.includes("Issue to production") && designViewSrc.includes("New revision / resubmit") && designViewSrc.includes("comments are already incorporated"), "design UI: submittal, Code B, production issue and resubmittal actions are visible in the workflow");
   check(designViewSrc.includes("DESIGN_FILE_ACCEPT") && designViewSrc.includes("Upload file") && designViewSrc.includes("download=1") && designViewSrc.includes("External link / server path") && designViewSrc.includes("Export CSV"), "design UI: uploaded drawings, safe downloads, external locations and register export stay together");
+
+  check(
+    designDetailRouteSrc.includes('case "checklist"')
+      && designDetailRouteSrc.includes("saveDesignSubmissionChecklist(id, body, user)")
+      && designDetailRouteSrc.includes("design.drawing.checklist")
+      && designServerSrc.includes("The submission checklist can be changed only while this revision is a Draft")
+      && designServerSrc.includes("progress.complete ? actor.id : null")
+      && designServerSrc.includes("Submission checklist completed (6/6)"),
+    "design Phase 2 checklist: Draft-only API action, completion actor/time and submitted evidence are server-enforced",
+  );
+  check(
+    ["submissionChecklistJson", "submissionChecklistById", "submissionChecklistAt"].every((field) => designSchemaSrc.includes(field))
+      && ["submission_checklist_json", "submission_checklist_by_id", "submission_checklist_at"].every((column) =>
+        designInstallerSchemaSrc.includes(column)
+        && designEnsureSrc.includes(column)
+        && designEnsureSrc.includes(`add column if not exists ${column}`)),
+    "design Phase 2 schema: checklist evidence exists for fresh installs and Phase 1 PCs receive additive columns",
+  );
+  check(
+    designServerSrc.includes("to_regclass('public.design_drawings')")
+      && designServerSrc.includes("PRODUCTION_GATE_SELECT")
+      && designServerSrc.includes("export async function orderDesignProductionGate")
+      && designServerSrc.includes("export async function designProductionGatesForOrders")
+      && designServerSrc.includes("includeChecklist: false"),
+    "design hard gate server: order reads stay table-safe and global alerts avoid Phase 2-only checklist columns",
+  );
+  check(
+    designOperationsRouteSrc.includes("orderDesignProductionGate(currentOp.orderId, tx)")
+      && designOperationsRouteSrc.includes('designGate.state === "blocked"')
+      && designOperationsRouteSrc.includes("Design approval gate:")
+      && designOperationsRouteSrc.includes("409"),
+    "design hard gate enforcement: an operation cannot enter In Progress inside its transaction while drawings are unissued",
+  );
+  check(
+    designOrderDetailRouteSrc.includes('body.status === "In Production"')
+      && designOrderDetailRouteSrc.includes("orderDesignProductionGate(orderId)")
+      && designOrderDetailRouteSrc.includes("designGate,")
+      && designOrdersRouteSrc.includes("designProductionGatesForOrders(orderIds)")
+      && designOrdersRouteSrc.includes("designGate: designGates.get(order.id)"),
+    "design hard gate orders API: manual In Production is guarded and list/detail payloads expose gate state",
+  );
+  check(
+    designGlobalAlertsRouteSrc.includes('subjectHasModule("design", user, readOptionalModules())')
+      && designGlobalAlertsRouteSrc.includes("designAlertsIfAvailable()")
+      && designGlobalAlertsRouteSrc.includes('tab: "design"')
+      && designGlobalAlertsRouteSrc.includes(".slice(0, 25)"),
+    "design alerts: dashboard follow-up is capped and only sent to users granted the Design module",
+  );
+  check(
+    designTransmittalRouteSrc.includes("buildDesignTransmittalHtml")
+      && designTransmittalRouteSrc.includes("designTransmittalText")
+      && designTransmittalRouteSrc.includes("designPackageManifestCsv")
+      && designTransmittalRouteSrc.includes('params.get("format")')
+      && designTransmittalRouteSrc.includes("design.drawing.transmittal"),
+    "design transmittal API: authorized route serves checked print HTML, text and manifest formats with audit",
+  );
+  check(
+    designPackageRouteSrc.includes("createStoredZip(entries)")
+      && designPackageRouteSrc.includes("isSafeDesignFileName(storedName)")
+      && designPackageRouteSrc.includes("MISSING-FILES.txt")
+      && designPackageRouteSrc.includes("application/zip")
+      && designPackageRouteSrc.includes("status: 413"),
+    "design package API: download-all reads only safe stored names, reports missing data and rejects oversized ZIPs clearly",
+  );
+  check(
+    designViewSrc.includes("Submission checklist")
+      && designViewSrc.includes("saveChecklist")
+      && designViewSrc.includes("submitChecklistProgress.complete")
+      && designViewSrc.includes('viewTab === "alerts"')
+      && designViewSrc.includes('viewTab === "reports"')
+      && designViewSrc.includes("Management reports")
+      && designViewSrc.includes("productionGatePanel")
+      && designViewSrc.includes("/transmittal")
+      && designViewSrc.includes("/package"),
+    "design Phase 2 UI: checklist, gate, documents, alerts and reports are reachable from the Design workspace",
+  );
+  check(
+    designOrdersViewSrc.includes("designGateBadge")
+      && designOrdersViewSrc.includes("Design blocked")
+      && designOrderWorkflowSrc.includes("Production is hard-blocked by Design approval")
+      && designOrderWorkflowSrc.includes("designGateBlocked")
+      && designOrderWorkflowSrc.includes("In Production — Design blocked")
+      && designOrderWorkflowSrc.includes("DESIGN BLOCKED"),
+    "design hard gate UI: order lists warn early and workflow start/status controls explain the block",
+  );
 }
 
 // ---- Factory structure: company, branches, floors; supervisor links; version label ----
