@@ -439,7 +439,8 @@ table — lives in **[UPDATING.md](UPDATING.md)**.
   checkout is on `main`, safely fast-forwards from GitHub, installs dependencies
   from `package-lock.json`, builds and packages the update, and restarts the
   build PC's server if needed. It preserves the previous pack's generated
-  version increment and stops safely for other local edits or a diverged branch. The first time only, the old PC
+  version increment, leaves existing untracked files alone, and stops safely
+  for other tracked edits or a diverged branch. The first time only, the old PC
   must run its existing `update-woodtek.bat` once to receive this improved helper.
 - **Installed PC** (`C:\WoodTek-ERP`, no git, installed from
   `WoodTek-ERP-Setup.exe`): copy the generated
