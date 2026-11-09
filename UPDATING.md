@@ -74,10 +74,11 @@ administrator rights when needed, and **restarts the old PC's own WoodTek
 server** after the build. It does not update FS200.
 
 For safety it stops if the checkout is not on `main`, has diverged from GitHub,
-or has other local edits/untracked files. The only allowed local change is the
-app version increment made by the previous pack build. Nothing is reset or
-deleted. Do not rename or manually replace files to get past an error; send the
-message to support. The pack's commit stamp is the exact `main` commit that was
+or has tracked local edits other than the app version increment made by the
+previous pack build. Existing untracked files/folders are left in place; if an
+incoming tracked file would conflict with one, Git stops the fast-forward safely.
+Nothing is reset or deleted. Do not rename or manually replace files to get past
+an error; send the message to support. The pack's commit stamp is the exact `main` commit that was
 fetched and built.
 
 **One-time activation:** the old PC's existing `build-update.bat` cannot run

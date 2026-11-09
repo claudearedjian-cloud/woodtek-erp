@@ -118,13 +118,19 @@ if ($SyncMain) {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not check the Git working tree. No source files were changed."
     }
-    $unexpectedDirty = @($dirty | Where-Object { $_ -notmatch '^ M version\.json$' })
-    if ($unexpectedDirty.Count -gt 0) {
-        Write-Host "Local files need attention before the safe main update:" -ForegroundColor Yellow
-        $unexpectedDirty | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
-        throw "The working tree has local changes. They were left untouched; show this message to support before continuing."
+    $untracked = @($dirty | Where-Object { $_ -match '^\?\? ' })
+    if ($untracked.Count -gt 0) {
+        Write-Info "Leaving $($untracked.Count) untracked file/folder entries in place; Git will safely stop if an incoming tracked file conflicts."
     }
-    if ($dirty.Count -gt 0) {
+
+    $trackedDirty = @($dirty | Where-Object { $_ -notmatch '^\?\? ' })
+    $unexpectedDirty = @($trackedDirty | Where-Object { $_ -notmatch '^ M version\.json$' })
+    if ($unexpectedDirty.Count -gt 0) {
+        Write-Host "Tracked local files need attention before the safe main update:" -ForegroundColor Yellow
+        $unexpectedDirty | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+        throw "Tracked local changes were left untouched; show this message to support before continuing."
+    }
+    if ($trackedDirty.Count -gt 0) {
         Write-Info "Keeping the version.json increment from the previous production build."
     }
 
