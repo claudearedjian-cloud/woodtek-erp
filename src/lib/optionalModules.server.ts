@@ -38,6 +38,11 @@ function applyEditionLock(base: OptionalModulesConfig): OptionalModulesConfig {
   return sanitizeOptionalModules({
     ...base,
     installedAddons: edition.addons,
+    // Workflow Lab and any other installation that hard-locked optional modules
+    // without an add-on pack (design). Absent on ordinary installations.
+    ...(Array.isArray(edition.lockedOptionalModules)
+      ? { lockedOptionalModules: edition.lockedOptionalModules }
+      : {}),
   });
 }
 
@@ -67,6 +72,8 @@ export function writeOptionalModules(input: OptionalModulesConfig): OptionalModu
     enabled: locked.enabled,
     roles: locked.roles,
     users: locked.users,
+    // The installation lock is never persisted into the grant file: it comes
+    // from data/installed-edition.json on every read (applyEditionLock).
   };
   writeJsonAtomic(fileLocation(), diskPayload);
   cache = null; // force a re-read on the next access

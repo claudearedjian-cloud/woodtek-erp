@@ -172,6 +172,26 @@ ROLLBACK (something looks wrong)
   2. node scripts\build-prod.cjs
   3. Restart the server (step 5 above)
 
+WORKFLOW LAB (side-by-side test installation, since 2026-11-09)
+  A second WoodTek for trying production workflows without risking the factory
+  system. Create it once by double-clicking Create-WoodTek-Workflow-Lab.bat in
+  the repository folder (it asks for administrator rights and pauses at the
+  end).
+    Lab web address .... http://localhost:3001   (factory stays on 3000)
+    Lab folder ......... C:\WoodTek-Workflow-Lab (factory folder untouched)
+    Lab database ....... woodtek_workflow_lab   (woodtek_erp untouched)
+    Lab task ........... "\WoodTek Workflow Lab" (factory task untouched)
+    Lab backup task .... "WoodTek Workflow Lab Nightly Backup" at 02:30
+    Lab firewall rule .. "WoodTek Workflow Lab Server"
+    Lab log ............ C:\WoodTek-Workflow-Lab\logs\woodtek-workflow-lab.log
+  Locked in the lab on purpose: Invoicing & Money, Purchasing & Suppliers,
+  HR & Payroll and Design. No role - not even Manager - can switch them on.
+  Helpers inside the lab folder: start-workflow-lab.bat,
+  stop-workflow-lab.bat, check-workflow-lab.bat, update-workflow-lab.bat.
+  To remove the lab, follow README-WORKFLOW-LAB.txt in the lab folder. It is
+  manual on purpose so no script deletes test data by itself.
+  Details: installer\WORKFLOW-LAB.md
+
 DATABASE BACKUPS
   - The "WoodTek Nightly Backup" task runs backup\backup-woodtek.ps1 at 01:30
     every day: a database dump plus a zip of the data\ folder into

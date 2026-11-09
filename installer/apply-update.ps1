@@ -378,6 +378,12 @@ if (-not (Test-Path $InstallDir)) {
     throw "$InstallDir does not exist. If WoodTek ERP was installed somewhere else, run: installer\apply-update.ps1 -InstallDir <that folder>"
 }
 
+$labMarkerPath = Join-Path $InstallDir "workflow-lab-instance.json"
+if (Test-Path $labMarkerPath) {
+    throw ("$InstallDir is a WoodTek Workflow Lab installation. An update pack belongs to the factory installation; " +
+           "use update-workflow-lab.bat inside the lab folder instead. Nothing was changed.")
+}
+
 $script:LauncherPath = Join-Path $InstallDir "start-prod.cjs"
 if (-not (Test-Path $script:LauncherPath)) {
     throw "No WoodTek ERP installation found in $InstallDir (start-prod.cjs is missing). Run WoodTek-ERP-Setup.exe first, or point -InstallDir at the right folder."

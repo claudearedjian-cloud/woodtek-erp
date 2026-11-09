@@ -3,7 +3,9 @@
 // WoodTek ERP — Installer Database & Edition Bootstrapper (bootstrap-db.cjs)
 // ----------------------------------------------------------------------------
 // Runs during Windows .exe installation (and re-configuration) to:
-//   1. Persist data/installed-edition.json (hard-locked add-on selection).
+//   1. Persist data/installed-edition.json (hard-locked add-on selection, and
+//      - for a Workflow Lab instance - the optional modules that must stay
+//      locked even though no add-on pack owns them, e.g. Design).
 //   2. Sync data/optional-modules.json so only installed modules can be enabled.
 //   3. Connect to PostgreSQL, create the target database if missing, and apply
 //      installer/schema.sql (all 31 tables + indexes idempotently).
@@ -20,6 +22,11 @@ const crypto = require("node:crypto");
 
 const ROOT = path.resolve(__dirname, "..");
 const VALID_ADDONS = ["invoicing", "purchasing", "cmms", "workforce"];
+// Optional modules that have NO installer add-on pack of their own but can still
+// be hard-locked per installation (the Workflow Lab locks all four). Written to
+// installed-edition.json as `lockedOptionalModules`; a build that predates this
+// field simply ignores it, so existing installations are unaffected.
+const VALID_LOCKED_MODULES = ["invoicing", "purchasing", "payroll", "design"];
 
 function log(msg) {
   console.log(`[bootstrap-db] ${msg}`);
@@ -54,12 +61,17 @@ function parseArgs(argv) {
     dataDir: null,
     managerName: null,
     managerPin: "1234",
+    lockedModules: null,
     configOnly: false,
   };
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--config-only") {
       out.configOnly = true;
+    } else if (arg.startsWith("--locked-modules=")) {
+      out.lockedModules = arg.slice("--locked-modules=".length);
+    } else if (arg === "--locked-modules" && i + 1 < argv.length) {
+      out.lockedModules = argv[++i];
     } else if (arg.startsWith("--addons=")) {
       out.addons = arg.slice("--addons=".length);
     } else if (arg === "--addons" && i + 1 < argv.length) {
@@ -126,17 +138,40 @@ function normalizeAddons(rawAddons) {
   return VALID_ADDONS.filter((id) => tokens.includes(id));
 }
 
-function configureInstalledEdition(dataDir, addonsList) {
+function normalizeLockedModules(rawModules) {
+  if (rawModules === null || rawModules === undefined) return [];
+  const tokens = String(rawModules)
+    .split(/[,\s;]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.includes("none") || tokens.includes("core")) return [];
+  return VALID_LOCKED_MODULES.filter((id) => tokens.includes(id));
+}
+
+function configureInstalledEdition(dataDir, addonsList, lockedModules) {
   const editionPath = path.join(dataDir, "installed-edition.json");
+  const locks = Array.isArray(lockedModules) ? lockedModules : [];
+  for (const locked of locks) {
+    if (addonsList.includes(locked)) {
+      throw new Error(
+        `Module "${locked}" is both installed (addons) and hard-locked (locked-modules). Pick one.`,
+      );
+    }
+  }
   const editionPayload = {
     version: 1,
     addons: addonsList,
     installedAt: new Date().toISOString(),
     installerVersion: "1.0.0",
   };
+  // Only written when something is locked, so an ordinary installation keeps
+  // producing exactly the same file it always did.
+  if (locks.length > 0) editionPayload.lockedOptionalModules = [...locks];
   writeJsonSafe(editionPath, editionPayload);
   log(
-    `Saved installed-edition.json (addons: ${addonsList.length > 0 ? addonsList.join(", ") : "core-only"})`,
+    `Saved installed-edition.json (addons: ${addonsList.length > 0 ? addonsList.join(", ") : "core-only"})${
+      locks.length > 0 ? ` (locked modules: ${locks.join(", ")})` : ""
+    }`,
   );
 
   // Sync optional-modules.json so enabled modules match the installed edition
@@ -158,7 +193,7 @@ function configureInstalledEdition(dataDir, addonsList) {
   const baseEnabled = existing && Array.isArray(existing.enabled)
     ? existing.enabled
     : allowedOptMods.filter((m) => m === "invoicing" || m === "purchasing");
-  const nextEnabled = baseEnabled.filter((m) => allowedOptMods.includes(m));
+  const nextEnabled = baseEnabled.filter((m) => allowedOptMods.includes(m) && !locks.includes(m));
   // If installing an optional add-on for the first time, switch it on by default
   for (const mod of ["invoicing", "purchasing"]) {
     if (allowedOptMods.includes(mod) && (!existing || !Array.isArray(existing.enabled))) {
@@ -273,9 +308,25 @@ async function main() {
   const args = parseArgs(process.argv);
   const dataDir = args.dataDir || process.env.WOODTEK_DATA_DIR || path.join(ROOT, "data");
 
-  if (args.addons !== null) {
-    const addonsList = normalizeAddons(args.addons);
-    configureInstalledEdition(dataDir, addonsList);
+  if (args.addons !== null || args.lockedModules !== null) {
+    const addonsList = args.addons !== null ? normalizeAddons(args.addons) : null;
+    const lockedList = normalizeLockedModules(args.lockedModules);
+    if (addonsList !== null) {
+      configureInstalledEdition(dataDir, addonsList, lockedList);
+    } else {
+      // Only the lock list was given: keep the installed packs already on disk.
+      let currentAddons = [];
+      const editionPath = path.join(dataDir, "installed-edition.json");
+      if (fs.existsSync(editionPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(editionPath, "utf8"));
+          currentAddons = normalizeAddons(Array.isArray(parsed.addons) ? parsed.addons.join(",") : "none");
+        } catch {
+          currentAddons = [];
+        }
+      }
+      configureInstalledEdition(dataDir, currentAddons, lockedList);
+    }
   }
 
   if (args.configOnly) {

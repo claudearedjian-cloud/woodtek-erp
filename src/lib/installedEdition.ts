@@ -23,6 +23,31 @@
 
 export type InstallerAddonId = "invoicing" | "purchasing" | "cmms" | "workforce";
 
+/**
+ * Optional modules that can be hard-locked per installation even though no
+ * installer add-on pack owns them. The Workflow Lab (a side-by-side trial
+ * installation) locks all four of these: Invoicing & Money, Purchasing &
+ * Suppliers, HR & Payroll and the Design Department.
+ *
+ * The add-on packs (invoicing/purchasing/workforce) are already locked by the
+ * installed-edition add-on list; `lockedOptionalModules` is the extra,
+ * installation-level lock that also covers ids without a pack - today that is
+ * `design`. A PC whose installed-edition.json has no `lockedOptionalModules`
+ * behaves exactly as before (nothing locked).
+ */
+export type LockedOptionalModuleId = "invoicing" | "purchasing" | "payroll" | "design";
+
+export const LOCKABLE_OPTIONAL_MODULE_IDS: readonly LockedOptionalModuleId[] = [
+  "invoicing",
+  "purchasing",
+  "payroll",
+  "design",
+] as const;
+
+export function isLockableOptionalModuleId(value: unknown): value is LockedOptionalModuleId {
+  return typeof value === "string" && (LOCKABLE_OPTIONAL_MODULE_IDS as readonly string[]).includes(value);
+}
+
 export const INSTALLER_ADDON_IDS: readonly InstallerAddonId[] = [
   "invoicing",
   "purchasing",
@@ -89,13 +114,22 @@ export interface InstalledEditionConfig {
   version: 1;
   /** Add-on packs selected when WoodTek-ERP-Setup.exe was run on this PC. */
   addons: InstallerAddonId[];
+  /**
+   * Optional modules this installation hard-locked at install time (Workflow
+   * Lab). Absent on every ordinary installation.
+   */
+  lockedOptionalModules?: LockedOptionalModuleId[];
   installedAt?: string;
   installerVersion?: string;
 }
 
 export type EditionSource =
   | InstalledEditionConfig
-  | { installedAddons?: readonly string[] | null; addons?: readonly string[] | null }
+  | {
+      installedAddons?: readonly string[] | null;
+      addons?: readonly string[] | null;
+      lockedOptionalModules?: readonly string[] | null;
+    }
   | readonly string[]
   | null
   | undefined;
@@ -140,6 +174,12 @@ export function sanitizeInstalledEdition(input: unknown): InstalledEditionConfig
   const rawList = src.addons;
   const addons = INSTALLER_ADDON_IDS.filter((id) => rawList.includes(id));
   const out: InstalledEditionConfig = { version: 1, addons };
+  if (Array.isArray(src.lockedOptionalModules)) {
+    const locked = LOCKABLE_OPTIONAL_MODULE_IDS.filter((id) =>
+      (src.lockedOptionalModules as unknown[]).includes(id),
+    );
+    if (locked.length > 0) out.lockedOptionalModules = locked;
+  }
   if (typeof src.installedAt === "string" && src.installedAt.trim()) {
     out.installedAt = src.installedAt.trim().slice(0, 64);
   }
@@ -205,11 +245,36 @@ export function optionalModuleAddon(
   return null;
 }
 
-/** True unless the optional module's add-on pack was omitted during installation. */
+/**
+ * The installation-level lock list of a source (installed-edition.json, or the
+ * optional-modules config that carries it). Empty when nothing is locked, so
+ * every existing PC keeps its current behaviour.
+ */
+export function resolveLockedOptionalModules(source?: EditionSource): LockedOptionalModuleId[] {
+  if (!source || Array.isArray(source)) return [];
+  const obj = source as { lockedOptionalModules?: readonly string[] | null };
+  if (!Array.isArray(obj.lockedOptionalModules)) return [];
+  return LOCKABLE_OPTIONAL_MODULE_IDS.filter((id) => obj.lockedOptionalModules!.includes(id));
+}
+
+/** True when this installation hard-locked the optional module (nobody has it). */
+export function isOptionalModuleLocked(
+  modId: "invoicing" | "purchasing" | "payroll" | "design" | string,
+  source?: EditionSource,
+): boolean {
+  if (!isLockableOptionalModuleId(modId)) return false;
+  return resolveLockedOptionalModules(source).includes(modId);
+}
+
+/**
+ * True unless the optional module's add-on pack was omitted during installation
+ * OR the installation explicitly locked the module (Workflow Lab).
+ */
 export function isOptionalModuleInstalled(
   modId: "invoicing" | "purchasing" | "payroll" | "design" | string,
   source?: EditionSource,
 ): boolean {
+  if (isOptionalModuleLocked(modId, source)) return false;
   if (modId === "design") return true;
   const addon = optionalModuleAddon(modId);
   if (!addon) return false;

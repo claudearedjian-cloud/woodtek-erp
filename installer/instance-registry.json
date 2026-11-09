@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "schema": "woodtek-instance-registry",
+  "about": "Every machine-wide name a WoodTek installation registers (scheduled tasks, firewall rule, shortcuts, database, port, log file) lives here. Two instances may never share one of these values: that is what keeps a second installation from stopping, re-pointing or overwriting the first one. installer/install-workflow-lab.ps1 and scripts/workflow-lab-test.cjs both read this file.",
+  "instances": {
+    "default": {
+      "id": "woodtek-erp",
+      "label": "WoodTek ERP",
+      "purpose": "The existing factory installation. Unchanged: these are the values the current installer has always used.",
+      "installDir": "C:\\WoodTek-ERP",
+      "port": 3000,
+      "databaseName": "woodtek_erp",
+      "serviceTask": "\\WoodTek ERP",
+      "backupTask": "WoodTek Nightly Backup",
+      "backupTime": "01:30",
+      "firewallRule": "WoodTek ERP Server",
+      "desktopShortcut": "WoodTek ERP.lnk",
+      "startMenuFolder": "WoodTek ERP",
+      "startMenuOpenShortcut": "WoodTek ERP.lnk",
+      "startMenuServerShortcut": "Start WoodTek Server.lnk",
+      "logFile": "woodtek.log",
+      "silentLauncher": "start-woodtek-prod-silent.bat",
+      "interactiveLauncher": "start-woodtek-prod.bat",
+      "addons": ["invoicing", "purchasing", "cmms", "workforce"],
+      "lockedOptionalModules": [],
+      "markerFile": ""
+    },
+    "workflow-lab": {
+      "id": "workflow-lab",
+      "label": "WoodTek Workflow Lab",
+      "purpose": "Side-by-side trial installation for workflow testing. Own folder, own port, own database, own scheduled tasks, own firewall rule, own shortcuts. Never touches the default installation.",
+      "installDir": "C:\\WoodTek-Workflow-Lab",
+      "port": 3001,
+      "databaseName": "woodtek_workflow_lab",
+      "serviceTask": "\\WoodTek Workflow Lab",
+      "backupTask": "WoodTek Workflow Lab Nightly Backup",
+      "backupTime": "02:30",
+      "firewallRule": "WoodTek Workflow Lab Server",
+      "desktopShortcut": "WoodTek Workflow Lab.lnk",
+      "startMenuFolder": "WoodTek Workflow Lab",
+      "startMenuOpenShortcut": "WoodTek Workflow Lab.lnk",
+      "startMenuServerShortcut": "Start WoodTek Workflow Lab Server.lnk",
+      "logFile": "woodtek-workflow-lab.log",
+      "silentLauncher": "start-workflow-lab-silent.bat",
+      "interactiveLauncher": "start-workflow-lab.bat",
+      "addons": ["cmms"],
+      "lockedOptionalModules": ["invoicing", "purchasing", "payroll", "design"],
+      "markerFile": "workflow-lab-instance.json"
+    }
+  },
+  "protectedPaths": [
+    "C:\\WoodTek-ERP",
+    "C:\\Windows",
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
+    "C:\\ProgramData",
+    "C:\\Users"
+  ],
+  "protectedDatabases": ["woodtek_erp", "postgres", "template0", "template1"],
+  "protectedPorts": [3000]
+}

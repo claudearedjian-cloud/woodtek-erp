@@ -17,6 +17,7 @@ import {
   addonLabel,
   isAddonInstalled,
   isOptionalModuleInstalled,
+  isOptionalModuleLocked,
   type InstallerAddonId,
 } from "@/lib/installedEdition";
 import { readInstalledEdition } from "@/lib/installedEdition.server";
@@ -289,7 +290,21 @@ export async function authorizeModule(
       error: NextResponse.json({ error: "You are signed out. Please sign in again." }, { status: 401 }),
     };
   }
-  if (!isOptionalModuleInstalled(id, readInstalledEdition())) {
+  const edition = readInstalledEdition();
+  // Workflow Lab and any installation that hard-locked this module: nobody has
+  // it, and re-running Setup is not the answer - the installation decided.
+  if (isOptionalModuleLocked(id, edition)) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        {
+          error: `${moduleLabel(id)} is locked in this installation and cannot be used here.`,
+        },
+        { status: 403 },
+      ),
+    };
+  }
+  if (!isOptionalModuleInstalled(id, edition)) {
     return {
       user: null,
       error: NextResponse.json(

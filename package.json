@@ -8,7 +8,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "build:portable": "node scripts/build-portable.js",
-    "build:installer": "node scripts/build-installer.js"
+    "build:installer": "node scripts/build-installer.js",
+    "test:workflow-lab": "node scripts/workflow-lab-test.cjs"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

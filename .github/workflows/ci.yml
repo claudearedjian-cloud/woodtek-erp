@@ -43,6 +43,13 @@ jobs:
       - name: Render tests
         run: node render-test.js
 
+      # Workflow Lab guards: the side-by-side test installation must keep its
+      # own database/port/tasks/firewall rule, the four optional modules must
+      # stay hard-locked there, and the EXISTING installer defaults must not
+      # move. Runs without Windows and without a database.
+      - name: Workflow Lab guards
+        run: npm run test:workflow-lab
+
       - name: Production build (standalone)
         run: npx next build
         env:
