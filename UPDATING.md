@@ -261,6 +261,15 @@ node scripts\build-prod.cjs
 schtasks /Run /TN "\WoodTek ERP"
 ```
 
+### Inspect database row counts without restoring
+
+On the **old PC only**, double-click `inspect-db-dump.bat` and choose a custom
+PostgreSQL `.dump` file. The helper streams the dump through `pg_restore` and
+reports counts for users, machines, orders and operations. It does not connect
+to any database, write SQL/data to a temporary file, or modify the selected
+dump. It is suitable for checking a backup before deciding whether a restore is
+needed. Never use a restore helper on FS200 just to inspect a backup.
+
 ### Restoring the database
 
 `backup\restore-woodtek.bat` restores a dump. Practise it once a quarter, on

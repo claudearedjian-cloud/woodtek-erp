@@ -5341,6 +5341,31 @@ check(
   "build-update: a failed build restarts the server it stopped, and the RUNBOOK explains the port-3000 stop and its cure",
 );
 
+const dumpInspector = require("./scripts/inspect-db-dump.cjs");
+const dumpInspectorCounts = dumpInspector.parseCopyCounts([
+  "COPY public.users (id, name) FROM stdin;", "1\\tA", "2\\tB", "\\.",
+  'COPY "public"."machines" (id) FROM stdin;', "10", "\\.",
+  "COPY public.orders (id, description) FROM stdin;", "po-1\\tfirst\\nsecond", "\\.",
+  "COPY public.order_operations (id) FROM stdin;", "op-1", "op-2", "\\.",
+  "COPY public.other_table (id) FROM stdin;", "ignored", "\\.",
+]);
+check(
+  dumpInspectorCounts.users === 2 && dumpInspectorCounts.machines === 1
+    && dumpInspectorCounts.orders === 1 && dumpInspectorCounts.order_operations === 2
+    && dumpInspector.copyTableName('COPY "public"."orders" (id) FROM stdin;') === "orders",
+  "database-dump inspector: counts COPY rows in a custom pg_dump, including quoted identifiers, without interpreting row contents",
+);
+const dumpInspectorSource = fs.readFileSync("scripts/inspect-db-dump.cjs", "utf8");
+const dumpInspectorPs = fs.readFileSync("scripts/inspect-db-dump.ps1", "utf8");
+const dumpInspectorBat = fs.readFileSync("inspect-db-dump.bat", "utf8");
+check(
+  dumpInspectorSource.includes('"--data-only"') && dumpInspectorSource.includes('"--file=-"')
+    && !dumpInspectorSource.includes("--dbname") && !dumpInspectorSource.includes("DATABASE_URL")
+    && dumpInspectorPs.includes("OpenFileDialog") && dumpInspectorPs.includes("inspect-db-dump.cjs")
+    && dumpInspectorBat.includes("-STA") && dumpInspectorBat.includes("inspect-db-dump.ps1"),
+  "database-dump inspector: file picker streams the dump through pg_restore without a database connection or temporary SQL/data file",
+);
+
 // The apply engine must merge folders, verify the pack and roll back on ANY
 // failure (2026-10-14) --------------------------------------------------------
 // The first real pack nested every folder on the server: Copy-Item copies a
