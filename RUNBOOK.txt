@@ -41,10 +41,12 @@ SENDING AN UPDATE TO THE FACTORY SERVER (the normal way now)
   working on FS200 the whole time except a 1-3 minute restart while the pack
   is applied - do that at lunch or after hours.
   1. ON THE OLD PC (development machine)
-       double-click  update-woodtek.bat    (get the newest code first)
        double-click  build-update.bat
-     It builds and packs, and prints the pack name, for example
+     It safely fast-forwards main from GitHub, installs dependencies using
+     package-lock.json, builds and packs, and prints the pack name, for example
      dist-update\WoodTek-ERP-Update-20261014-6c1a9f9.zip  (+ a .sha256 next to it).
+     First time only, use the existing update-woodtek.bat once to receive this
+     improved helper; after that, build-update.bat does both jobs in one click.
      Packing never leaves this PC without its own running app.
   2. COPY BOTH FILES TO FS200 (keep them side by side - the .sha256 proves the
      transfer was intact). Easiest with no USB stick: on the old PC open File

@@ -5308,8 +5308,32 @@ check(
     && buildProdSrc.includes("NOT an administrator window"),
   "build-prod: retries the stop, kills every listener on the port, and names the real cause (not elevated) when the port will not free",
 );
+const syncBuildUpdateSrc = fs.readFileSync("installer/build-update.ps1", "utf8");
 check(
-  fs.readFileSync("installer/build-update.ps1", "utf8").includes("Build failed - restarting the WoodTek server")
+  buildUpdateBatSrc.includes("if not \"%~1\"==\"/staged\"")
+    && buildUpdateBatSrc.includes('set "WT_PKG=%TEMP%\\%~n0-staged.bat"')
+    && buildUpdateBatSrc.includes('call "!WT_PKG!" /staged "%~dp0."')
+    && buildUpdateBatSrc.includes('del "!WT_PKG!"')
+    && cmdLabelProblems(buildUpdateBatSrc).length === 0,
+  "build-update.bat: stages itself before syncing so Git cannot rewrite the running batch file by byte position; remains label-free for cmd.exe safety",
+);
+check(
+  buildUpdateBatSrc.includes('build-update.ps1\" -SyncMain')
+    && syncBuildUpdateSrc.includes("[switch]$SyncMain")
+    && syncBuildUpdateSrc.includes("[switch]$SourceSynced")
+    && syncBuildUpdateSrc.includes("git status --porcelain --untracked-files=normal")
+    && syncBuildUpdateSrc.includes("$branch -ne \"main\"")
+    && syncBuildUpdateSrc.includes("git fetch origin +refs/heads/main:refs/remotes/origin/main")
+    && syncBuildUpdateSrc.includes("git merge-base --is-ancestor HEAD origin/main")
+    && syncBuildUpdateSrc.includes("git merge --ff-only origin/main")
+    && syncBuildUpdateSrc.includes("npm install --no-audit --no-fund")
+    && syncBuildUpdateSrc.includes("Keeping the version.json increment from the previous production build")
+    && syncBuildUpdateSrc.includes("Starting the pack builder from the synced main source")
+    && syncBuildUpdateSrc.includes("-SkipBuild cannot be combined with -SyncMain"),
+  "one-click update-pack build: safe fast-forward of main, preserves generated release version, installs locked dependencies, and uses the freshly synced builder",
+);
+check(
+  syncBuildUpdateSrc.includes("Build failed - restarting the WoodTek server")
     && runbookSource.includes('IF THE PACK BUILD STOPS AT "Port 3000 is STILL occupied"'),
   "build-update: a failed build restarts the server it stopped, and the RUNBOOK explains the port-3000 stop and its cure",
 );

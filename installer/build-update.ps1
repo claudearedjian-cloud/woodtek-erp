@@ -23,10 +23,12 @@
 # so local configuration, licences and history survive every update.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File installer\build-update.ps1
-#   (or double-click build-update.bat)
+#   Double-click build-update.bat on the development PC to safely fast-forward
+#   main, install dependencies from package-lock.json, and build the pack.
+#   Direct PowerShell invocation builds the current checkout without syncing.
 #
 # Options:
+#   -SyncMain           require main, fast-forward from origin/main, install dependencies
 #   -SkipBuild          reuse the existing .next\standalone instead of rebuilding
 #   -OutputDir <path>   where to write the ZIP (default: dist-update)
 #   -Version <string>   override the version stamp (default: yyyyMMdd-<gitsha>)
@@ -39,6 +41,8 @@
 # ============================================================================
 
 param(
+    [switch]$SyncMain,
+    [switch]$SourceSynced,
     [switch]$SkipBuild,
     [string]$OutputDir = "dist-update",
     [string]$Version = "",
@@ -90,6 +94,95 @@ function Get-HealthBuild {
 }
 
 Write-Banner "WoodTek ERP - Building Update Pack"
+
+# ----------------------------------------------------------------------------
+# 0. Optional one-click source sync (the double-click .bat always enables it)
+# ----------------------------------------------------------------------------
+if ($SyncMain) {
+    Write-Banner "Syncing merged main before packaging"
+    if ($SkipBuild) {
+        throw "-SkipBuild cannot be combined with -SyncMain: the existing standalone may contain older application code."
+    }
+
+    $topLevel = (& git rev-parse --show-toplevel 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $topLevel -or [System.IO.Path]::GetFullPath($topLevel) -ne [System.IO.Path]::GetFullPath($Root)) {
+        throw "This folder is not the root of a Git checkout. No source files were changed."
+    }
+
+    $branch = (& git rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -ne "main") {
+        throw "The one-click pack builder only updates a checkout on branch 'main' (current branch: '$branch'). No source files were changed."
+    }
+
+    $dirty = @(& git status --porcelain --untracked-files=normal)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not check the Git working tree. No source files were changed."
+    }
+    $unexpectedDirty = @($dirty | Where-Object { $_ -notmatch '^ M version\.json$' })
+    if ($unexpectedDirty.Count -gt 0) {
+        Write-Host "Local files need attention before the safe main update:" -ForegroundColor Yellow
+        $unexpectedDirty | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+        throw "The working tree has local changes. They were left untouched; show this message to support before continuing."
+    }
+    if ($dirty.Count -gt 0) {
+        Write-Info "Keeping the version.json increment from the previous production build."
+    }
+
+    $origin = (& git remote get-url origin 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $origin) {
+        throw "Git remote 'origin' is missing. No source files were changed."
+    }
+
+    Write-Host "[sync] Fetching origin/main..." -ForegroundColor Yellow
+    & git fetch origin +refs/heads/main:refs/remotes/origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not fetch origin/main. Check the network/GitHub connection; no working files were changed."
+    }
+
+    & git merge-base --is-ancestor HEAD origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Local main is ahead of or has diverged from origin/main. Nothing was merged; ask for help before building a production pack."
+    }
+
+    & git merge --ff-only origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not safely fast-forward main. No non-fast-forward merge was attempted."
+    }
+    $syncedSha = (& git rev-parse --short HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $syncedSha) {
+        throw "Could not verify the synced main commit."
+    }
+    Write-Info "Source is now at main commit $syncedSha."
+
+    Write-Host "[sync] Installing dependencies from package-lock.json..." -ForegroundColor Yellow
+    & npm install --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm install failed. No update pack was created; fix the install error and double-click build-update.bat again."
+    }
+
+    # The fetch may have replaced this script. Start a fresh PowerShell process
+    # so the builder itself is also the version that just arrived from main.
+    Write-Info "Starting the pack builder from the synced main source..."
+    $childArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-SourceSynced",
+        "-OutputDir", $OutputDir,
+        "-Port", [string]$Port
+    )
+    if ($Version) { $childArgs += @("-Version", $Version) }
+    $powerShellExe = Join-Path $PSHOME "powershell.exe"
+    if (-not (Test-Path $powerShellExe)) {
+        throw "Could not locate Windows PowerShell to restart the synced builder."
+    }
+    & $powerShellExe @childArgs
+    $childExitCode = $LASTEXITCODE
+    if ($childExitCode -ne 0) {
+        throw "The synced pack builder failed (exit code $childExitCode)."
+    }
+    exit $childExitCode
+}
 
 # ----------------------------------------------------------------------------
 # 1. Work out the version stamp
