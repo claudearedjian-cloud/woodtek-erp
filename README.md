@@ -434,14 +434,17 @@ build-installer.bat
 Two different jobs. The full procedure — including rollback and a troubleshooting
 table — lives in **[UPDATING.md](UPDATING.md)**.
 
-- **Build PC** (the one with `src\` and git): once the change is pushed,
-  double-click `update-woodtek.bat` — it pulls, installs, stops the server,
-  rebuilds and restarts it.
+- **Build PC** (the one with `src\` and git): after the change is merged to
+  `main` and CI passes, double-click `build-update.bat`. It checks that the
+  checkout is on `main`, safely fast-forwards from GitHub, installs dependencies
+  from `package-lock.json`, builds and packages the update, and restarts the
+  build PC's server if needed. It preserves the previous pack's generated
+  version increment and stops safely for other local edits or a diverged branch. The first time only, the old PC
+  must run its existing `update-woodtek.bat` once to receive this improved helper.
 - **Installed PC** (`C:\WoodTek-ERP`, no git, installed from
-  `WoodTek-ERP-Setup.exe`): run `build-update.bat` on the build PC to produce
-  `dist-update\WoodTek-ERP-Update-<version>.zip`, copy the `.zip` **and** its
-  `.sha256` file to the target PC, then double-click
-  `installer\apply-update.bat` there.
+  `WoodTek-ERP-Setup.exe`): copy the generated
+  `dist-update\WoodTek-ERP-Update-<version>.zip` **and** its `.sha256` file to
+  the target PC, then double-click `installer\apply-update.bat` there.
 
 `.env`, `node_modules/`, `.next/`, `logs/`, `backups/` and `data/` are NOT
 tracked, and an update never overwrites them on the target machine.

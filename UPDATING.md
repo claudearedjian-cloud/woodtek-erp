@@ -58,16 +58,33 @@ An **update pack** is one `.zip` file that carries the new application. It is bu
 on the build PC, carried over on a USB stick, and applied on the installed PC.
 The installed PC does **not** need git, Node.js, or an internet connection.
 
-### Step 1 — Build the pack (on the build PC, after the code is pushed)
+### Step 1 — Build the pack (one double-click on the build PC)
+
+After the change is merged to `main` and CI passes, double-click:
 
 ```
 build-update.bat
 ```
 
-The build has to stop the WoodTek server to rebuild the standalone folder —
-`build-update.bat` **starts it again** afterwards and tells you the build number
-that came back up. (If Windows blocks that, it says so and tells you the one
-command to run yourself.)
+This single helper safely requires branch `main`, fast-forwards from
+`origin/main`, installs dependencies using `package-lock.json`, builds the production
+standalone app, and creates the ZIP plus SHA-256 file. It preserves the
+`version.json` increment from the previous production build, asks for
+administrator rights when needed, and **restarts the old PC's own WoodTek
+server** after the build. It does not update FS200.
+
+For safety it stops if the checkout is not on `main`, has diverged from GitHub,
+or has other local edits/untracked files. The only allowed local change is the
+app version increment made by the previous pack build. Nothing is reset or
+deleted. Do not rename or manually replace files to get past an error; send the
+message to support. The pack's commit stamp is the exact `main` commit that was
+fetched and built.
+
+**One-time activation:** the old PC's existing `build-update.bat` cannot run
+code it has not pulled yet. The first time this improved helper is introduced,
+double-click the existing `update-woodtek.bat` once to receive it, then
+`build-update.bat` to make the first pack. After that, `build-update.bat` does
+the source sync and pack build in one double-click.
 
 Output:
 
@@ -78,12 +95,16 @@ dist-update\WoodTek-ERP-Update-20261005-0b83546.zip.sha256
 
 The `.sha256` file is the tamper/corruption check. **Copy both files.**
 
-Options, if you need them:
+Advanced options are for support/development use only. To retain the safe
+main-sync behavior when invoking PowerShell directly, include `-SyncMain` (and
+do not combine it with `-SkipBuild`, which could package stale compiled code):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File installer\build-update.ps1 -SkipBuild   # reuse the last build
-powershell -ExecutionPolicy Bypass -File installer\build-update.ps1 -Version 2.3.0
+powershell -ExecutionPolicy Bypass -File installer\build-update.ps1 -SyncMain
+powershell -ExecutionPolicy Bypass -File installer\build-update.ps1 -SyncMain -Version 2.3.0
 ```
+
+The normal owner workflow is just the `build-update.bat` double-click above.
 
 ### Step 2 — Move it to the installed PC
 
