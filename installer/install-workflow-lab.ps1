@@ -52,6 +52,27 @@ param(
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# Every failure ends with the same plain-language sentence instead of a raw
+# PowerShell stack: what stopped, that the factory installation is untouched,
+# and that re-running the helper continues where this stopped.
+trap {
+    $trapMessage = "$($_.Exception.Message)"
+    Write-Host ""
+    Write-Host "[lab] !! The Workflow Lab $Action did not finish." -ForegroundColor Yellow
+    Write-Host "[lab] !! $trapMessage" -ForegroundColor Yellow
+    try {
+        $trapLogDir = Join-Path $TargetDir "logs"
+        if ($TargetDir -and (Test-Path $trapLogDir)) {
+            $trapLine = "{0} [{1}] {2}: {3}" -f (Get-Date).ToString("s"), $Action, "FAILED", $trapMessage
+            Add-Content -Path (Join-Path $trapLogDir "lab-install.log") -Value $trapLine
+        }
+    } catch { }
+    Write-Host "[lab] Nothing in the existing WoodTek ERP installation was changed." -ForegroundColor Yellow
+    Write-Host "[lab] Fix what the message above names, then double-click Create-WoodTek-Workflow-Lab.bat again -" -ForegroundColor Yellow
+    Write-Host "[lab] it continues from here instead of starting over." -ForegroundColor Yellow
+    exit 1
+}
+
 function Write-Step([string]$msg) {
     Write-Host ""
     Write-Host "[lab] == $msg" -ForegroundColor Cyan
@@ -229,6 +250,11 @@ if (-not $nodeExe) {
     throw "No working Node.js was found. The Workflow Lab needs the same runtime the factory installation uses - install Node.js 22 LTS and run this again."
 }
 Write-Info "Node.js runtime: $nodeExe"
+# Put the runtime's own folder first on PATH: the lab build calls tools that
+# live beside node.exe, and on this PC node was found by full path because PATH
+# does not necessarily contain it (that is also why the factory .bat files add
+# C:\Program Files\nodejs themselves).
+$env:PATH = "$(Split-Path -Parent $nodeExe);$env:PATH"
 
 if (-not $DbUrl) {
     $escapedPwd = [Uri]::EscapeDataString($PgSuperPassword)
@@ -250,7 +276,9 @@ function Invoke-LabPreflight([string]$ActionName, [string]$ExtraArgs) {
     $code = $LASTEXITCODE
     foreach ($line in $output) { Write-Host "     $line" -ForegroundColor Gray }
     if ($code -ne 0) {
-        throw "Safety preflight refused the Workflow Lab $ActionName. Nothing was created, changed or deleted. Reasons are above."
+        throw ("Safety preflight refused the Workflow Lab $ActionName. Nothing was created, changed or deleted " +
+               "(reasons above). If a Workflow Lab already exists in $TargetDir, run update-workflow-lab.bat there " +
+               "or pass -Action Refresh.")
     }
 }
 
@@ -371,20 +399,39 @@ if ($Action -eq "Refresh") {
         }
         Start-Sleep -Seconds 2
     }
-    $existingEnv = Join-Path $TargetDir ".env"
-    if (-not (Test-Path $existingEnv)) {
-        throw "Refresh needs the existing lab .env - $existingEnv is missing. Use -Action Install for a new installation."
-    }
 }
 
 Write-Step "Preparing the Workflow Lab folder"
 if (-not (Test-Path $TargetDir)) {
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 }
-foreach ($sub in @("data", "logs", "backups", "backups\nightly")) {
-    $folder = Join-Path $TargetDir $sub
-    if (-not (Test-Path $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+
+# Stamp the folder as a lab folder IMMEDIATELY, before anything else is written.
+# From this moment an interrupted run is recognisable: the helper continues a
+# half-built lab instead of calling the folder "unrelated data".
+$marker = @{
+    version = 1
+    instanceId = "workflow-lab"
+    label = [string]$LabProfile.label
+    port = $Port
+    databaseName = $labDatabase
+    installDir = $TargetDir
+    serviceTask = $labTask
+    backupTask = $labBackupTask
+    firewallRule = $labFirewallRule
+    desktopShortcut = $labDesktopShortcut
+    startMenuFolder = $labStartMenuFolder
+    logFile = $labLogFile
+    addons = @($labAddons)
+    lockedOptionalModules = @($labLocks)
+    appFiles = $appMode
+    installedAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+    completed = $false
+    note = "Side-by-side WoodTek Workflow Lab. The factory installation is separate."
 }
+$markerPath = Join-Path $TargetDir $labMarkerFile
+[System.IO.File]::WriteAllText($markerPath, ($marker | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+Write-Info "Marked $TargetDir as a Workflow Lab folder ($labMarkerFile)."
 
 Write-Step "Laying down the lab application files"
     switch ($appMode) {
@@ -423,15 +470,26 @@ Write-Step "Laying down the lab application files"
             try {
                 $buildSha = (& git -C $ParentDir rev-parse --short HEAD 2>$null | Select-Object -First 1)
             } catch { }
+            # Call Next.js through the Node.js we already found, by full path.
+            # "npx next build" depends on PATH and on npm being installed beside
+            # node.exe, which is exactly what failed on this PC - the error then
+            # appeared as a bare exit code. node + the CLI file cannot miss.
+            $nextCli = Join-Path $ParentDir "node_modules\next\dist\bin\next"
+            if (-not (Test-Path $nextCli)) {
+                throw ("The repository at $ParentDir has no node_modules\next, so the lab application cannot be built here. " +
+                       "Open a command window in $ParentDir, run: npm install   then double-click Create-WoodTek-Workflow-Lab.bat again " +
+                       "(it continues from this point). Alternatively pass -AppFiles copy (needs a factory build from this release) or -PayloadZip.")
+            }
             $oldDataUrl = $env:DATABASE_URL
             $oldBuildEnv = $env:NEXT_PUBLIC_WOODTEK_BUILD
             $env:DATABASE_URL = $DbUrl
             $env:NEXT_PUBLIC_WOODTEK_BUILD = "$buildSha"
             Push-Location $ParentDir
             try {
-                & cmd.exe /c "npx next build"
+                & $nodeExe $nextCli "build"
                 if ($LASTEXITCODE -ne 0) {
-                    throw "The production build of the lab failed (exit code $LASTEXITCODE). Nothing was installed; the factory installation is untouched."
+                    throw ("The Next.js production build of the lab failed (exit code $LASTEXITCODE, see the messages above). " +
+                           "The factory installation is untouched and this folder is marked as a lab, so you can simply run the helper again once the build works.")
                 }
             } finally {
                 Pop-Location
@@ -464,6 +522,13 @@ Write-Step "Laying down the lab application files"
 
 if ($Action -eq "Refresh") {
     Write-Info "The lab .env, data, logs and backups were left exactly as they were."
+}
+
+# data/logs/backups are created only now, after the application files are in
+# place, so a failed copy does not leave half a folder behind.
+foreach ($sub in @("data", "logs", "backups", "backups\nightly")) {
+    $folder = Join-Path $TargetDir $sub
+    if (-not (Test-Path $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
 }
 
 # Schema + database bootstrapper (version-matched with the app where possible).
@@ -517,10 +582,16 @@ if (Test-Path $TemplatesDir) {
 # ---------------------------------------------------------------------------
 Write-Step "Writing the lab .env (own port, own database, own AUTH_SECRET)"
 $envFile = Join-Path $TargetDir ".env"
-if ($Action -eq "Install") {
-    if (Test-Path $envFile) {
-        throw "$envFile already exists. The lab never reuses an existing .env - delete it only if you are sure it is a lab file."
+if (Test-Path $envFile) {
+    # An existing .env is only ever kept when it is a LAB .env. A factory .env
+    # (woodtek_erp / port 3000) must never be adopted by the lab.
+    $envText = Get-Content -Raw -Path $envFile
+    if (($envText -notmatch [Regex]::Escape($labDatabase)) -or ($envText -notmatch "(?m)^\s*PORT\s*=\s*$Port\s*$")) {
+        throw ("$envFile exists but is not a Workflow Lab .env (it does not name $labDatabase on port $Port). " +
+               "Refusing to reuse it - the lab must never connect to the factory database.")
     }
+    Write-Info "Kept the existing lab .env (port $Port, database $labDatabase, its own AUTH_SECRET)."
+} else {
     $dataDir = Join-Path $TargetDir "data"
     $envLines = @(
         "# WoodTek Workflow Lab - generated by install-workflow-lab.ps1",
@@ -534,12 +605,6 @@ if ($Action -eq "Install") {
     )
     [System.IO.File]::WriteAllText($envFile, ($envLines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
     Write-Info "Created $envFile"
-} else {
-    $envText = Get-Content -Raw -Path $envFile
-    if ($envText -notmatch [Regex]::Escape($labDatabase)) {
-        throw "The lab .env does not mention $labDatabase - refusing to continue. Restore the lab .env or reinstall the lab."
-    }
-    Write-Info "Kept the existing lab .env (port $Port, database $labDatabase)."
 }
 
 # ---------------------------------------------------------------------------
@@ -563,30 +628,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Info "Lab database ready: $labDatabase (add-ons: $labAddonsArg; locked modules: $labLocksArg)."
 
-# Instance marker - this is what makes the folder recognisably a lab folder, and
-# what Refresh/Verify use to prove they are looking at the right installation.
-$marker = @{
-    version = 1
-    instanceId = "workflow-lab"
-    label = [string]$LabProfile.label
-    port = $Port
-    databaseName = $labDatabase
-    installDir = $TargetDir
-    serviceTask = $labTask
-    backupTask = $labBackupTask
-    firewallRule = $labFirewallRule
-    desktopShortcut = $labDesktopShortcut
-    startMenuFolder = $labStartMenuFolder
-    logFile = $labLogFile
-    addons = @($labAddons)
-    lockedOptionalModules = @($labLocks)
-    appFiles = $appMode
-    installedAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
-    note = "Side-by-side WoodTek Workflow Lab. The factory installation is separate."
-}
-$markerPath = Join-Path $TargetDir $labMarkerFile
+# The folder was already stamped as a lab before the copy; now record that the
+# database, the module lock and the application files are all in place.
+$marker.completed = $true
+$marker.completedAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
 [System.IO.File]::WriteAllText($markerPath, ($marker | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
-Write-Info "Wrote $markerPath"
+Write-Info "Updated $markerPath (database and module lock in place)."
 
 # ---------------------------------------------------------------------------
 # 9. Windows Firewall - THIS instance's rule only

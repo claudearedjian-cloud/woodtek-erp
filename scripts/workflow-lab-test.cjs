@@ -131,7 +131,17 @@ check(
     !labInstaller.includes('schtasks /Run /TN "\\WoodTek ERP"'),
   "the lab installer never registers, ends or starts the factory scheduled task",
 );
-check(!labInstaller.includes("woodtek_erp"), "the lab installer never names the factory database");
+// Comments may mention the factory database (to say it is never touched); the
+// executable lines must never contain it.
+const psCodeOnly = (text) =>
+  text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+check(
+  !psCodeOnly(labInstaller).includes("woodtek_erp"),
+  "no executable line of the lab installer names the factory database",
+);
 check(labInstaller.includes("preflight.cjs"), "the lab installer runs the safety preflight");
 check(labInstaller.includes("--locked-modules="), "the lab installer passes the hard module lock to the database bootstrap");
 check(
@@ -143,6 +153,49 @@ check(
   labInstaller.includes('if ($Action -eq "Install" -and (Test-TcpPort') &&
     labInstaller.includes('if ($Action -eq "Refresh" -and (Test-TcpPort'),
   "only a fresh install demands a free port (a refresh stops the running lab first)",
+);
+
+// 2026-11-09: the first real run on the old PC stopped in the build step with a
+// bare exit code, because "npx next build" needs npm/Node on PATH while node.exe
+// had been found by full path. The build now calls Next.js through node.exe and
+// a checked CLI path, and the runtime folder is put on PATH.
+check(
+  labInstaller.includes('$env:PATH = "$(Split-Path -Parent $nodeExe);$env:PATH'),
+  "the lab installer puts the Node.js runtime folder on PATH",
+);
+check(
+  labInstaller.includes('node_modules\\next\\dist\\bin\\next') &&
+    labInstaller.includes('& $nodeExe $nextCli "build"') &&
+    !labInstaller.includes('cmd.exe /c "npx next build"'),
+  "the lab build calls Next.js through node.exe and a checked CLI path (no npx/PATH dependency)",
+);
+check(
+  labInstaller.includes("has no node_modules") && labInstaller.includes("npm install"),
+  "a repository without node_modules fails with an instruction instead of a bare exit code",
+);
+
+// A failure must leave a readable trail and a resumable folder.
+check(
+  labInstaller.includes("trap {") &&
+    labInstaller.includes("did not finish") &&
+    labInstaller.includes('"lab-install.log"') &&
+    labInstaller.includes("it continues from here instead of starting over"),
+  "every failure ends with what stopped, that the factory install is untouched, and that re-running resumes",
+);
+check(
+  labInstaller.indexOf("Marked $TargetDir as a Workflow Lab folder") <
+    labInstaller.indexOf('Write-Step "Laying down the lab application files"'),
+  "the folder is marked as a lab BEFORE the application files are laid down (an interrupted run stays recognisable)",
+);
+check(
+  labInstaller.indexOf('Write-Step "Laying down the lab application files"') <
+    labInstaller.indexOf('foreach ($sub in @("data", "logs", "backups", "backups\\nightly"))'),
+  "data/logs/backups are created only after the application files are in place",
+);
+check(
+  labInstaller.includes("must never connect to the factory database") &&
+    labInstaller.includes("Refusing to reuse it"),
+  "an existing .env is only reused when it is the lab's own",
 );
 check(
   !/schtasks \/End \/TN "\\WoodTek ERP"/.test(labInstaller),
@@ -251,12 +304,58 @@ check(
 const labDir = tmpDir("lab");
 write(path.join(labDir, "workflow-lab-instance.json"), JSON.stringify({ instanceId: "workflow-lab" }));
 check(
-  preflight.runPreflight({ registry, targetDir: labDir, port: 3001, action: "install" }).ok === false,
-  "refuses to install over an existing Workflow Lab",
+  preflight.runPreflight({ registry, targetDir: labDir, port: 3001, action: "install" }).ok === true,
+  "a lab folder stamped by an unfinished run is resumed instead of refused",
+);
+const finishedLab = tmpDir("lab-finished");
+write(path.join(finishedLab, "workflow-lab-instance.json"), JSON.stringify({ instanceId: "workflow-lab", completed: true }));
+check(
+  preflight.runPreflight({ registry, targetDir: finishedLab, port: 3001, action: "install" }).ok === false,
+  "refuses to install over a finished Workflow Lab",
 );
 check(
-  preflight.runPreflight({ registry, targetDir: labDir, port: 3001, action: "refresh" }).ok === true,
-  "allows a refresh of an existing Workflow Lab",
+  preflight.runPreflight({ registry, targetDir: finishedLab, port: 3001, action: "refresh" }).ok === true,
+  "allows a refresh of a finished Workflow Lab",
+);
+
+// The owner's 2026-11-09 case: an earlier attempt created only data/logs/backups
+// and then stopped. A plain re-run must continue, not refuse.
+const leftover = tmpDir("leftover");
+for (const sub of ["data", "logs", "backups"]) write(path.join(leftover, sub, ".keep-is-not-used"), "");
+fs.rmSync(path.join(leftover, "data", ".keep-is-not-used"));
+fs.rmSync(path.join(leftover, "logs", ".keep-is-not-used"));
+fs.rmSync(path.join(leftover, "backups", ".keep-is-not-used"));
+const leftoverResult = preflight.runPreflight({ registry, targetDir: leftover, port: 3001 });
+check(leftoverResult.ok === true, "continues an interrupted lab that left data/logs/backups behind", reasons(leftoverResult));
+check(
+  (leftoverResult.warnings || []).some((w) => /unfinished Workflow Lab/.test(w)),
+  "says out loud that it is continuing an unfinished lab",
+);
+const leftoverForeign = tmpDir("leftover-foreign");
+write(path.join(leftoverForeign, "data", "uploads", "photo.jpg"), "x");
+write(path.join(leftoverForeign, "logs", "woodtek-workflow-lab.log"), "y");
+check(
+  preflight.runPreflight({ registry, targetDir: leftoverForeign, port: 3001 }).ok === false,
+  "still refuses when the lab folders hold something the lab never writes",
+);
+const leftoverFactoryEnv = tmpDir("leftover-env");
+write(path.join(leftoverFactoryEnv, "data", "installed-edition.json"), "{}");
+write(path.join(leftoverFactoryEnv, ".env"), "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/woodtek_erp\nPORT=3000\n");
+check(
+  preflight.runPreflight({ registry, targetDir: leftoverFactoryEnv, port: 3001 }).ok === false,
+  "refuses a leftover folder holding a factory .env",
+);
+const leftoverLabEnv = tmpDir("leftover-lab-env");
+write(path.join(leftoverLabEnv, "data", "installed-edition.json"), "{}");
+write(path.join(leftoverLabEnv, ".env"), "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/woodtek_workflow_lab\nPORT=3001\n");
+check(
+  preflight.runPreflight({ registry, targetDir: leftoverLabEnv, port: 3001 }).ok === true,
+  "continues a leftover folder that already holds its own lab .env",
+);
+check(
+  preflight.envIsLabOwned(path.join(leftoverLabEnv, ".env"), registry) === true &&
+    preflight.envIsLabOwned(path.join(leftoverFactoryEnv, ".env"), registry) === false,
+  "recognises only a lab .env as its own",
 );
 const otherInstall = tmpDir("other");
 write(path.join(otherInstall, "start-prod.cjs"), "// app");

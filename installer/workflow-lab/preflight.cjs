@@ -188,6 +188,117 @@ function registryProblems(registry) {
   return problems;
 }
 
+/* ------------------------------------------------------- leftover detection */
+
+/**
+ * Names the Workflow Lab installer itself creates inside its folder. A folder
+ * that holds NOTHING else is the remains of an interrupted lab install (for
+ * example a build that failed after the helper had created its folders), so a
+ * re-run continues instead of refusing. Anything else in the folder - an
+ * upload, a database dump, a foreign app, a copied factory .env - is not ours
+ * and stays refused.
+ */
+const LAB_SCAFFOLD_ENTRIES = ["data", "logs", "backups"];
+/** Files the lab bootstrap writes into <lab>\data. */
+const LAB_DATA_FILES = ["installed-edition.json", "optional-modules.json"];
+
+function readEnvFileIfPresent(file) {
+  try {
+    return parseDotEnv(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** True when <target>\.env is a LAB .env (lab database on the lab port). */
+function envIsLabOwned(file, registry) {
+  const env = readEnvFileIfPresent(file);
+  if (!env) return false;
+  const lab = registry && registry.instances ? registry.instances[LAB_ID] : null;
+  if (!lab) return false;
+  if (!env.DATABASE_URL) return false;
+  if (portableDatabaseName(env.DATABASE_URL) !== String(lab.databaseName)) return false;
+  const port = Number(env.PORT);
+  return Number.isInteger(port) ? port === Number(lab.port) : true;
+}
+
+/** True when every file under `dir` is something the lab itself writes. */
+function onlyLabFiles(dir, top) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // A "data" folder with subfolders means uploads/overlays of a real
+      // installation: not ours. logs/ and backups/ may hold any depth.
+      if (top === "data") return false;
+      if (!onlyLabFiles(full, top)) return false;
+      continue;
+    }
+    const name = entry.name.toLowerCase();
+    if (top === "data") {
+      if (!LAB_DATA_FILES.includes(name)) return false;
+    } else if (top === "logs") {
+      if (!name.endsWith(".log")) return false;
+    }
+    // backups/ may legitimately contain dumps and zips: nothing to veto.
+  }
+  return true;
+}
+
+/**
+ * Classifies a non-empty target folder:
+ *   "lab-complete"    - the marker file proves a finished lab install
+ *   "lab-interrupted" - only our own folders (and maybe a lab .env) exist
+ *   "foreign"         - anything else
+ */
+function classifyExistingFolder(target, entries, registry) {
+  const markerName = (registry && registry.instances && registry.instances[LAB_ID]
+    && registry.instances[LAB_ID].markerFile) || "workflow-lab-instance.json";
+  const markerPath = path.join(target, markerName);
+  let marker = null;
+  if (fs.existsSync(markerPath)) {
+    try {
+      marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+    } catch {
+      marker = null;
+    }
+  }
+  if (marker && String(marker.instanceId || "") === LAB_ID) {
+    // A lab counts as finished when it says so, or when it was written by the
+    // first version of the helper (no "completed" flag, but a lab .env exists).
+    // Anything else is a run that stopped early and must be resumable by simply
+    // running the same helper again.
+    const finished =
+      marker.completed === true ||
+      (marker.completed === undefined && envIsLabOwned(path.join(target, ".env"), registry));
+    return finished
+      ? { kind: "lab-complete", marker }
+      : { kind: "lab-interrupted", marker, reason: "previous attempt stopped before finishing" };
+  }
+  for (const entry of entries) {
+    const name = entry.toLowerCase();
+    if (name === ".env") {
+      if (envIsLabOwned(path.join(target, entry), registry)) continue;
+      return { kind: "foreign" };
+    }
+    if (!LAB_SCAFFOLD_ENTRIES.includes(name)) return { kind: "foreign" };
+    let stat = null;
+    try {
+      stat = fs.statSync(path.join(target, entry));
+    } catch {
+      stat = null;
+    }
+    if (!stat || !stat.isDirectory()) return { kind: "foreign" };
+    if (!onlyLabFiles(path.join(target, entry), name)) return { kind: "foreign" };
+  }
+  return { kind: "lab-interrupted", marker: null };
+}
+
 /* ------------------------------------------------------------ target rules */
 
 /** System folders and the factory folder may never be the lab folder. */
@@ -244,9 +355,7 @@ function checkTargetDir(targetDir, registry, options) {
     }
   }
 
-  // Folder contents.
-  const lab = registry && registry.instances ? registry.instances[LAB_ID] : null;
-  const markerName = (lab && lab.markerFile) || "workflow-lab-instance.json";
+  // Folder contents (classifyExistingFolder also reads the instance marker).
   let exists = false;
   try {
     exists = fs.existsSync(target);
@@ -272,25 +381,25 @@ function checkTargetDir(targetDir, registry, options) {
         errors.push("cannot read " + target + " (" + (err && err.message ? err.message : err) + ")");
       }
       if (entries.length > 0) {
-        const markerPath = path.join(target, markerName);
-        if (fs.existsSync(markerPath)) {
-          try {
-            existingMarker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-          } catch {
-            existingMarker = null;
-          }
-        }
-        const isLabInstall = Boolean(existingMarker && String(existingMarker.instanceId || "") === LAB_ID);
-        if (!isLabInstall) {
+        const state = classifyExistingFolder(target, entries, registry);
+        existingMarker = state.marker;
+        if (state.kind === "foreign") {
           const sample = entries.slice(0, 6).join(", ");
           errors.push(
             "refusing " + target + ": the folder already contains data that is not a WoodTek Workflow Lab installation (" +
               entries.length + " entries: " + sample + (entries.length > 6 ? ", ..." : "") + ")",
           );
-        } else if (opts.action === "install") {
+        } else if (state.kind === "lab-complete" && opts.action === "install") {
           errors.push(
             "a WoodTek Workflow Lab already exists in " + target +
-              " - use Update-WoodTek-Workflow-Lab.bat to refresh it, or pick another folder with -TargetDir",
+              " - run update-workflow-lab.bat there (or -Action Refresh) to repair or refresh it, " +
+              "or pick another folder with -TargetDir",
+          );
+        } else if (state.kind === "lab-interrupted") {
+          warnings.push(
+            "an unfinished Workflow Lab was found in " + target + " (" +
+              (state.reason || "only the lab's own data/logs/backups") +
+              ") - continuing from there; nothing of the factory installation is involved",
           );
         }
       }
@@ -553,6 +662,9 @@ function verifyInstall(options) {
 
   const markerName = lab.markerFile || "workflow-lab-instance.json";
   const marker = readJsonSafe(path.join(target, markerName));
+  if (marker && marker.completed === false) {
+    warnings.push(markerName + " says this install never finished - run the helper again to complete it");
+  }
   if (!marker) {
     errors.push("missing " + markerName + " - this folder is not marked as a Workflow Lab installation");
   } else {
@@ -740,6 +852,8 @@ module.exports = {
   isSameDir,
   isWithinDir,
   checkTargetDir,
+  classifyExistingFolder,
+  envIsLabOwned,
   checkPort,
   checkDatabaseUrl,
   checkSourceDir,
