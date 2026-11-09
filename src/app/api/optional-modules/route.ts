@@ -16,7 +16,7 @@ import {
   sanitizeOptionalModules,
   summarizeOptionalModuleChange,
 } from "@/lib/optionalModules";
-import { isOptionalModuleInstalled } from "@/lib/installedEdition";
+import { isOptionalModuleInstalled, isOptionalModuleLocked } from "@/lib/installedEdition";
 import { hasInstalledEditionFile, readInstalledEdition } from "@/lib/installedEdition.server";
 import { readOptionalModules, writeOptionalModules } from "@/lib/optionalModules.server";
 
@@ -48,6 +48,16 @@ export async function PUT(request: Request) {
     if (hasInstalledEditionFile()) {
       const edition = readInstalledEdition();
       for (const modId of requested.enabled) {
+        // Workflow Lab and similar installations lock modules outright (no
+        // add-on pack owns Design, so the add-on check alone cannot cover it).
+        if (isOptionalModuleLocked(modId, edition)) {
+          return NextResponse.json(
+            {
+              error: `${moduleLabel(modId)} is locked in this installation. It cannot be switched on here.`,
+            },
+            { status: 403 },
+          );
+        }
         if (!isOptionalModuleInstalled(modId, edition)) {
           return NextResponse.json(
             {

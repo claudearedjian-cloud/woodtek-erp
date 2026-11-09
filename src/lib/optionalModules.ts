@@ -17,9 +17,13 @@
 
 import {
   INSTALLER_ADDON_IDS,
+  LOCKABLE_OPTIONAL_MODULE_IDS,
+  isLockableOptionalModuleId,
   isOptionalModuleInstalled,
+  isOptionalModuleLocked,
   isScreenInstalled,
   type InstallerAddonId,
+  type LockedOptionalModuleId,
 } from "@/lib/installedEdition";
 
 export type OptionalModuleId = "invoicing" | "purchasing" | "payroll" | "design";
@@ -106,6 +110,13 @@ export interface OptionalModulesConfig {
    * in Settings. When omitted, all four add-ons default to installed.
    */
   installedAddons?: InstallerAddonId[];
+  /**
+   * Modules this installation locked even though an add-on pack does not own
+   * them (the Workflow Lab locks invoicing, purchasing, payroll and design).
+   * Nobody - not even Manager - gets a locked module, and Settings refuses to
+   * switch it on. Absent on every ordinary installation.
+   */
+  lockedOptionalModules?: LockedOptionalModuleId[];
 }
 
 /** Anything that can be evaluated for a grant: a session user, or a bare role. */
@@ -141,11 +152,16 @@ export function defaultOptionalModulesConfig(): OptionalModulesConfig {
   };
 }
 
-function cleanGrantList(input: unknown): OptionalModuleId[] {
+function cleanGrantList(
+  input: unknown,
+  locks?: readonly LockedOptionalModuleId[],
+): OptionalModuleId[] {
   if (!Array.isArray(input)) return [];
   const out: OptionalModuleId[] = [];
   for (const raw of input) {
     if (!isOptionalModuleId(raw)) continue;
+    // A locked module can never be granted to a role or a person.
+    if (Array.isArray(locks) && isLockableOptionalModuleId(raw) && locks.includes(raw)) continue;
     if (!out.includes(raw)) out.push(raw);
   }
   return out;
@@ -168,11 +184,17 @@ export function sanitizeOptionalModules(input: unknown): OptionalModulesConfig {
     ? INSTALLER_ADDON_IDS.filter((id) => (source.installedAddons as unknown[]).includes(id))
     : undefined;
 
+  const hasLockList = Array.isArray(source.lockedOptionalModules);
+  const lockedOptionalModules: LockedOptionalModuleId[] | undefined = hasLockList
+    ? LOCKABLE_OPTIONAL_MODULE_IDS.filter((id) =>
+        (source.lockedOptionalModules as unknown[]).includes(id),
+      )
+    : undefined;
+
   const enabledRaw = Array.isArray(source.enabled) ? source.enabled : [];
+  const lockCtx = { installedAddons, lockedOptionalModules };
   const enabled = OPTIONAL_MODULE_IDS.filter(
-    (id) =>
-      enabledRaw.includes(id) &&
-      (!installedAddons || isOptionalModuleInstalled(id, { installedAddons })),
+    (id) => enabledRaw.includes(id) && isOptionalModuleInstalled(id, lockCtx),
   );
 
   const roles: Record<string, OptionalModuleId[]> = {};
@@ -182,7 +204,7 @@ export function sanitizeOptionalModules(input: unknown): OptionalModulesConfig {
       const name = String(rawName ?? "").trim();
       // Manager is never stored: it is always allowed (lock-out protection).
       if (!name || name.length > 30 || name === MANAGER_ROLE) continue;
-      const mods = cleanGrantList(rawMods);
+      const mods = cleanGrantList(rawMods, lockedOptionalModules);
       if (mods.length > 0) roles[name] = mods;
     }
   }
@@ -196,14 +218,17 @@ export function sanitizeOptionalModules(input: unknown): OptionalModulesConfig {
       const key = String(rawId ?? "").trim();
       const num = Number(key);
       if (!/^\d+$/.test(key) || !Number.isSafeInteger(num) || num <= 0) continue;
-      const mods = cleanGrantList(rawMods);
+      const mods = cleanGrantList(rawMods, lockedOptionalModules);
       if (mods.length > 0) users[String(num)] = mods;
     }
   }
 
-  return installedAddons
-    ? { version: 1, enabled, roles, users, installedAddons }
-    : { version: 1, enabled, roles, users };
+  const out: OptionalModulesConfig = { version: 1, enabled, roles, users };
+  if (installedAddons) out.installedAddons = installedAddons;
+  if (lockedOptionalModules && lockedOptionalModules.length > 0) {
+    out.lockedOptionalModules = lockedOptionalModules;
+  }
+  return out;
 }
 
 /** The role names a subject carries: the custom role first, then the base. */
@@ -235,7 +260,10 @@ export function subjectHasModule(
   if (!subject || !isOptionalModuleId(id)) return false;
   const config = cfg ?? defaultOptionalModulesConfig();
 
-  // 0 — Hard installation lock (WoodTek-ERP-Setup.exe selection).
+  // 0 — Hard installation lock: the add-on pack was not selected during
+  //     installation (WoodTek-ERP-Setup.exe) or the installation explicitly
+  //     locked the module (Workflow Lab: invoicing, purchasing, payroll,
+  //     design). Nobody has it - Manager included.
   if (!isOptionalModuleInstalled(id, config)) return false;
 
   // 1 — Manager is never locked out of installed modules.
@@ -258,6 +286,17 @@ export function subjectHasModule(
   }
 
   return false;
+}
+
+/**
+ * True when the installation itself locked the module (Workflow Lab). Settings
+ * shows these as LOCKED instead of offering a switch that the API would refuse.
+ */
+export function moduleLockedByInstallation(
+  id: OptionalModuleId,
+  cfg?: OptionalModulesConfig | null,
+): boolean {
+  return isOptionalModuleLocked(id, cfg ?? defaultOptionalModulesConfig());
 }
 
 /** Money visibility is decided by the grant, not by a hard-coded role list. */

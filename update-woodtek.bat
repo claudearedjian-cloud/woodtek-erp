@@ -18,6 +18,17 @@ if "%~1"=="/staged" goto wt_staged
 
 cd /d %~dp0
 
+rem The Workflow Lab is a separate, side-by-side installation with its own port
+rem and database. This updater belongs to the factory installation and would
+rem stop the factory task - refuse instead of guessing.
+if exist "%~dp0workflow-lab-instance.json" (
+  echo [update] This is the WoodTek Workflow Lab folder, not the factory installation.
+  echo [update] Use update-workflow-lab.bat in this folder instead.
+  echo [update] Nothing was changed.
+  pause
+  exit /b 1
+)
+
 rem schtasks on the SYSTEM-run task needs admin rights - self-elevate:
 net session >nul 2>&1
 if %errorlevel% neq 0 (

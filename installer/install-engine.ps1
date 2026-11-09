@@ -84,6 +84,22 @@ function Copy-TreeContents([string]$Source, [string]$Destination) {
 }
 
 # ----------------------------------------------------------------------------
+# Guard: never install the FACTORY instance over a Workflow Lab folder
+# ----------------------------------------------------------------------------
+# The Workflow Lab is a separate, side-by-side installation with its own port
+# and its own database (see installer\WORKFLOW-LAB.md). Running this engine at
+# that folder would re-point it at woodtek_erp and reuse the factory names, so
+# it refuses before it stops or writes anything. The lab has its own installer
+# (installer\install-workflow-lab.ps1, started by
+# Create-WoodTek-Workflow-Lab.bat).
+$labMarker = Join-Path $InstallDir "workflow-lab-instance.json"
+if (Test-Path $labMarker) {
+    throw ("$InstallDir is a WoodTek Workflow Lab installation, not the factory installation. " +
+           "Nothing was changed. Update the lab with update-workflow-lab.bat (inside the lab folder) - " +
+           "this setup would point it at the factory database.")
+}
+
+# ----------------------------------------------------------------------------
 # Step 1: Stop existing service if running
 # ----------------------------------------------------------------------------
 Write-Step "Step 1/7: Preparing installation directory ($InstallDir)..."

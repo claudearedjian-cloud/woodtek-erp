@@ -49,6 +49,7 @@ import { Blocks } from "lucide-react";
 import {
   OPTIONAL_MODULES,
   MANAGER_ROLE,
+  moduleLockedByInstallation,
   screenAllowedForSubject,
   type OptionalModuleId,
   type OptionalModulesConfig,
@@ -366,6 +367,9 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
     roles: d?.roles && typeof d.roles === "object" ? d.roles : {},
     users: d?.users && typeof d.users === "object" ? d.users : {},
     ...(Array.isArray(d?.installedAddons) ? { installedAddons: d.installedAddons } : {}),
+    ...(Array.isArray(d?.lockedOptionalModules)
+      ? { lockedOptionalModules: d.lockedOptionalModules }
+      : {}),
   });
 
   useEffect(() => {
@@ -401,6 +405,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
   };
 
   const toggleModuleEnabled = (id: OptionalModuleId) => {
+    if (moduleLockedByInstallation(id, moduleCfg)) return;
     if (!isOptionalModuleInstalled(id, moduleCfg)) return;
     const on = moduleCfg.enabled.includes(id);
     saveModules({
@@ -550,6 +555,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
       </div>
 
       {OPTIONAL_MODULES.map((mod) => {
+        const locked = moduleLockedByInstallation(mod.id, moduleCfg);
         const installed = isOptionalModuleInstalled(mod.id, moduleCfg);
         const on = installed && moduleCfg.enabled.includes(mod.id);
         return (
@@ -558,7 +564,11 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
               <div className="min-w-0">
                 <div className="text-xs font-bold text-white">
                   {mod.label}
-                  {!installed ? (
+                  {locked ? (
+                    <span className="ml-2 text-[10px] font-bold text-amber-500/80">
+                      locked in this installation - not available here
+                    </span>
+                  ) : !installed ? (
                     <span className="ml-2 text-[10px] font-bold text-amber-500/80">
                       not installed on this PC — re-run WoodTek-ERP-Setup.exe to add
                     </span>
@@ -572,17 +582,18 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
               </div>
               <button
                 type="button"
-                disabled={!mod.ready || !installed}
+                disabled={!mod.ready || !installed || locked}
                 onClick={() => toggleModuleEnabled(mod.id)}
+                title={locked ? "This installation locked the module at install time." : undefined}
                 className={`shrink-0 text-[10px] font-black px-3 py-1.5 rounded-lg border transition ${
-                  !installed || !mod.ready
+                  locked || !installed || !mod.ready
                     ? "border-slate-800 text-slate-600 cursor-not-allowed"
                     : on
                     ? "border-emerald-600 bg-emerald-500/15 text-emerald-300"
                     : "border-slate-700 bg-slate-900 text-slate-400 hover:text-white"
                 }`}
               >
-                {!installed ? "NOT INSTALLED" : on ? "ON" : "OFF"}
+                {locked ? "LOCKED" : !installed ? "NOT INSTALLED" : on ? "ON" : "OFF"}
               </button>
             </div>
 

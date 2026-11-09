@@ -310,6 +310,38 @@ build-installer.bat
   - The installer writes your selection to `data\installed-edition.json`. Any add-on **not** ticked during setup is **hard-locked** on that PC (hidden from the sidebar, blocked with 403 on all API routes even for Manager, and locked as `NOT INSTALLED` in Settings → System Settings → Optional modules). To add or remove modules later, simply re-run `WoodTek-ERP-Setup.exe` (or run `powershell -ExecutionPolicy Bypass -File installer\configure-edition.ps1 -Addons "invoicing,cmms"`).
   - Existing factory PCs without `data\installed-edition.json` default to the **Full Edition** (all 4 add-ons installed).
 
+## Side-by-side Workflow Lab (trial installation, since 2026-11-09)
+A second, independent WoodTek installation for testing production workflows
+(orders, routing, shop floor, operator station, WIP, reception, warehouse & BOM,
+stock, dispatch, Gantt, clients, quality, downtime, reports) on the SAME PC as
+the factory system, without touching it:
+```
+Create-WoodTek-Workflow-Lab.bat        (double-click; it asks for admin rights)
+```
+- **Own everything:** folder `C:\WoodTek-Workflow-Lab`, port **3001**, database
+  **`woodtek_workflow_lab`**, scheduled task `\WoodTek Workflow Lab`, backup
+  task `WoodTek Workflow Lab Nightly Backup` (02:30), firewall rule
+  `WoodTek Workflow Lab Server`, shortcuts named `WoodTek Workflow Lab`, log
+  `logs\woodtek-workflow-lab.log`. All of it comes from
+  `installer\instance-registry.json`.
+- **Untouched:** `C:\WoodTek-ERP`, its port 3000, its database `woodtek_erp`,
+  `\WoodTek ERP`, `WoodTek Nightly Backup`, the `WoodTek ERP Server` firewall
+  rule and its shortcuts. `installer\install-engine.ps1` is not modified, so a
+  normal `WoodTek-ERP-Setup.exe` install behaves exactly as before.
+- **Hard-locked modules in the lab:** Invoicing & Money, Purchasing & Suppliers,
+  HR & Payroll and Design — written to `data\installed-edition.json` as
+  `addons: ["cmms"]` plus `lockedOptionalModules`, so the sidebar, the API
+  routes and Settings all refuse them for every role, Manager included. An
+  installation without `lockedOptionalModules` behaves exactly as before.
+- **Refuses rather than guesses:** the preflight
+  (`installer\workflow-lab\preflight.cjs`) rejects the factory folder, the
+  factory database, port 3000, unrelated data in the target folder and a second
+  `.env`, before anything is created — and verifies the finished installation.
+- **Guards:** `npm run test:workflow-lab` (CI: "Workflow Lab guards") proves the
+  lab keeps its own database/port/tasks/firewall rule/shortcuts, that the four
+  modules are really locked, and that the existing installer's defaults did not
+  move. Details: `installer\WORKFLOW-LAB.md`.
+
 ## Older Windows servers: Windows 8.1 / Server 2012 R2 (since 2026-10-13)
 - Node.js **23 and newer refuse to start** on Windows 8.1 / Server 2012 R2:
   `Node.js is only supported on Windows 10, Windows Server 2016, or higher`.

@@ -124,7 +124,19 @@ try {
     # apply-update.* ships in fresh installs too: the first update pack a server
     # ever receives needs it on disk BEFORE the pack can install its own copy
     # (discovered 2026-10-14 - FS200's install predates this list).
-    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1", "restore-migration.ps1", "restore-migration.bat", "apply-update.ps1", "apply-update.bat")) {
+    # The Workflow Lab files travel too, so a PC installed from this .exe can
+    # create its own side-by-side lab (installer\install-workflow-lab.ps1) and
+    # refresh it later without a repository checkout. They never change the
+    # default installation: nothing here runs unless the owner asks for it.
+    $labSource = Join-Path $Root "installer\workflow-lab"
+    if (Test-Path $labSource) {
+        # Destination is brand new inside the staging folder, so a plain
+        # recursive Copy-Item cannot nest (see the Copy-TreeContents note in
+        # installer\install-engine.ps1).
+        Copy-Item -Path $labSource -Destination (Join-Path $stageInstaller "workflow-lab") -Recurse -Force
+        Write-Host "  -> Bundled the Workflow Lab installer files" -ForegroundColor Gray
+    }
+    foreach ($inf in @("schema.sql", "bootstrap-db.cjs", "install-engine.ps1", "configure-edition.ps1", "restore-migration.ps1", "restore-migration.bat", "apply-update.ps1", "apply-update.bat", "install-workflow-lab.ps1", "instance-registry.json")) {
         $iSrc = Join-Path $Root "installer\$inf"
         if (Test-Path $iSrc) {
             Copy-Item -Path $iSrc -Destination (Join-Path $stageInstaller $inf) -Force
