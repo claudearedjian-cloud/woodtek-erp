@@ -604,6 +604,132 @@ try {
 }
 check(refusedBoth, "the bootstrapper refuses to both install and lock the same module");
 
+/* --------------------- 9. the PostgreSQL login (never retyped by the owner) */
+console.log("\n--- the lab reuses the factory's PostgreSQL login instead of guessing ---");
+
+// 2026-11-10: the first real run died on "password authentication failed for user
+// postgres" - the installer had assumed the setup default password. The factory
+// installation already has a working login in its .env; the lab now reuses that
+// login with its own database name, so a resume needs no password typing.
+const factoryDir = tmpDir("factory-env");
+const factoryEnv = path.join(factoryDir, ".env");
+write(factoryEnv, "DATABASE_URL=postgresql://postgres:Tr0ub4dor%26x@localhost:5432/woodtek_erp\r\nPORT=3000\r\n");
+
+const reused = preflight.resolveLabDatabaseUrl({ registry, factoryEnvPath: factoryEnv });
+const reusedUrl = new URL(reused.url);
+check(reused.source === "factory-env", "takes the PostgreSQL login from the factory installation", reused.note);
+check(
+  reusedUrl.pathname === "/woodtek_workflow_lab" && reusedUrl.hostname === "localhost" && reusedUrl.port === "5432",
+  "swaps only the database name (same server, same port)",
+  reused.url.replace(/:[^:@/]+@/, ":***@"),
+);
+check(
+  decodeURIComponent(reusedUrl.password) === "Tr0ub4dor&x" && decodeURIComponent(reusedUrl.username) === "postgres",
+  "keeps the factory user and password intact (including encoded characters)",
+);
+
+const explicit = preflight.resolveLabDatabaseUrl({
+  registry,
+  factoryEnvPath: factoryEnv,
+  overrideUrl: "postgresql://u:p@localhost:5432/woodtek_workflow_lab",
+});
+check(explicit.source === "argument" && explicit.url === "postgresql://u:p@localhost:5432/woodtek_workflow_lab", "an explicit -DbUrl wins over the factory login");
+
+const pwGiven = preflight.resolveLabDatabaseUrl({ registry, factoryEnvPath: factoryEnv, password: "typed", passwordProvided: true, port: 6543 });
+check(
+  pwGiven.source === "argument" && pwGiven.url === "postgresql://postgres:typed@localhost:6543/woodtek_workflow_lab",
+  "an explicitly typed password wins and honours -PgPort",
+);
+
+const remoteEnv = path.join(factoryDir, "remote.env");
+write(remoteEnv, "DATABASE_URL=postgresql://app:pw@db.example.com:5432/woodtek_erp\n");
+const remote = preflight.resolveLabDatabaseUrl({ registry, factoryEnvPath: remoteEnv });
+check(
+  remote.source === "default" && remote.url.includes("@localhost:5432/"),
+  "never reuses a remote factory database login (the lab stays local)",
+  remote.note,
+);
+
+const missingEnv = preflight.resolveLabDatabaseUrl({ registry, factoryEnvPath: path.join(factoryDir, "nope.env") });
+check(missingEnv.source === "default" && missingEnv.url.includes("woodtek_workflow_lab"), "falls back to the setup default when there is no factory .env");
+
+const described = preflight.describeDatabaseUrl(reused.url);
+check(
+  !described.includes("Tr0ub4dor") && described === "postgres@localhost:5432/woodtek_workflow_lab",
+  "the login can be printed without ever showing the password",
+);
+check(preflight.databaseUrlWithName("mysql://u:p@localhost/woodtek_erp", "woodtek_workflow_lab") === null, "refuses to rewrite a non-PostgreSQL URL");
+
+// The installer asks the preflight for the login and receives it through a file,
+// so the password never appears in the console or in a log.
+const outFile = path.join(factoryDir, "resolved.txt");
+const cliOutput = execFileSync(
+  process.execPath,
+  [
+    path.join(ROOT, "installer", "workflow-lab", "preflight.cjs"),
+    "--action", "dburl",
+    "--registry", path.join(ROOT, "installer", "instance-registry.json"),
+    "--factory-env", factoryEnv,
+    "--out", outFile,
+  ],
+  { encoding: "utf8" },
+);
+check(
+  fs.readFileSync(outFile, "utf8").includes("woodtek_workflow_lab") && fs.readFileSync(outFile, "utf8").includes("Tr0ub4dor"),
+  "--action dburl hands the resolved login to the installer through a file",
+);
+check(!cliOutput.includes("Tr0ub4dor") && !cliOutput.includes("password authentication"), "the resolved password is never printed");
+
+check(
+  labInstaller.includes('"--action", "dburl"') && labInstaller.includes('"--factory-env"'),
+  "the lab installer asks the preflight for the factory's PostgreSQL login",
+);
+check(
+  labInstaller.indexOf('Write-Step "Checking the PostgreSQL login') <
+    labInstaller.indexOf('Write-Step "Writing the lab .env'),
+  "the PostgreSQL login is proven BEFORE the lab .env is written",
+);
+check(
+  labInstaller.includes("PostgreSQL rejected the login") && labInstaller.includes("no scheduled task, no firewall rule"),
+  "a rejected login names the cause and says nothing was written",
+);
+check(
+  labInstaller.includes("Updated the DATABASE_URL in the existing lab .env") &&
+    labInstaller.includes('$envLinesExisting[$i] = "DATABASE_URL=$DbUrl"'),
+  "a resume repairs a stale DATABASE_URL in the lab's own .env instead of keeping a bad password",
+);
+check(
+  !/Write-(Host|Info|Warn)[^\n]*\$DbUrl/.test(labInstaller),
+  "the installer never prints the connection string (and therefore never the password)",
+);
+
+const bootstrapSrc = read("installer/bootstrap-db.cjs");
+check(bootstrapSrc.includes('"--check-db"') && bootstrapSrc.includes("checkLoginOnly"), "the database bootstrapper can prove a login without creating anything");
+const checkBody = bootstrapSrc.slice(bootstrapSrc.indexOf("async function checkLoginOnly"), bootstrapSrc.indexOf("async function ensureDatabaseAndSchema"));
+check(
+  !/CREATE\s+DATABASE|execSync|spawnSync/i.test(checkBody) && !checkBody.includes("ensureDatabaseAndSchema"),
+  "--check-db creates nothing and runs no schema",
+);
+check(
+  bootstrapSrc.includes("password authentication failed") &&
+    bootstrapSrc.replace(/\s+/g, " ").includes("same PostgreSQL user and password as the factory installation"),
+  "a rejected password is explained in plain language",
+);
+
+let checkDbFails = false;
+try {
+  execFileSync(
+    process.execPath,
+    [path.join(ROOT, "installer", "bootstrap-db.cjs"), "--check-db", "--db-url=postgresql://postgres:wrong@127.0.0.1:5999/woodtek_workflow_lab"],
+    { stdio: "pipe" },
+  );
+} catch (err) {
+  checkDbFails = true;
+  const text = String(err.stdout || "") + String(err.stderr || "");
+  check(/ERROR/.test(text) && !text.includes("wrong@"), "--check-db fails loudly without echoing the password");
+}
+check(checkDbFails, "--check-db exits non-zero when PostgreSQL is unreachable");
+
 /* -------------------------------------------------------------- summary */
 console.log("");
 if (failures === 0) {

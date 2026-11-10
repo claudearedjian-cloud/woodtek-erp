@@ -729,14 +729,112 @@ function verifyInstall(options) {
 
 /* ---------------------------------------------------------------- driver */
 
-function buildDefaultDbUrl(registry, password) {
+function buildDefaultDbUrl(registry, password, port) {
   const lab = registry.instances[LAB_ID];
   const user = String(lab.databaseUser || "postgres");
   const pass = String(password === undefined || password === null ? "postgres" : password);
+  const dbPort = Number(port || lab.databasePort || 5432);
   return (
     "postgresql://" + encodeURIComponent(user) + ":" + encodeURIComponent(pass) +
-    "@localhost:5432/" + encodeURIComponent(lab.databaseName)
+    "@localhost:" + dbPort + "/" + encodeURIComponent(lab.databaseName)
   );
+}
+
+/**
+ * Rewrites a PostgreSQL connection string so it points at another database on
+ * the same server, keeping the user, password, host and port untouched.
+ * Returns null when the string is not a usable local PostgreSQL URL.
+ */
+function databaseUrlWithName(rawUrl, databaseName) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || "").trim());
+  } catch {
+    return null;
+  }
+  const protocol = parsed.protocol.replace(":", "").toLowerCase();
+  if (protocol !== "postgres" && protocol !== "postgresql") return null;
+  const host = parsed.hostname.toLowerCase();
+  if (!(host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]")) return null;
+  if (!parsed.username) return null;
+  const target = String(databaseName || "").trim();
+  if (!target) return null;
+  parsed.pathname = "/" + encodeURIComponent(target);
+  parsed.search = "";
+  return parsed.toString();
+}
+
+/** Human description of a connection string - never includes the password. */
+function describeDatabaseUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    const user = decodeURIComponent(parsed.username || "");
+    const db = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    const port = parsed.port || "5432";
+    return user + "@" + parsed.hostname + ":" + port + "/" + db;
+  } catch {
+    return "(unreadable connection string)";
+  }
+}
+
+/**
+ * Decides which PostgreSQL login the lab uses.
+ *
+ * Order: an explicit -DbUrl / --db-url, then the login the factory installation
+ * already uses (read from its .env, database name swapped), then the setup
+ * wizard default. The owner therefore never has to retype the postgres
+ * password: whatever the factory uses works for the lab too, on its own
+ * database. A remote factory database is deliberately never reused.
+ */
+function resolveLabDatabaseUrl(options) {
+  const opts = options || {};
+  const registry = opts.registry || loadRegistry(opts.registryPath);
+  const lab = registry.instances[LAB_ID];
+  const databaseName = String(opts.databaseName || lab.databaseName);
+
+  const override = String(opts.overrideUrl || "").trim();
+  if (override) {
+    return { ok: true, url: override, source: "argument", note: "connection string passed to the installer" };
+  }
+  if (opts.passwordProvided) {
+    return {
+      ok: true,
+      url: buildDefaultDbUrl(registry, opts.password, opts.port),
+      source: "argument",
+      note: "password given to the installer (-PgSuperPassword)",
+    };
+  }
+
+  const factoryEnvPath = String(opts.factoryEnvPath || "").trim();
+  if (factoryEnvPath) {
+    const env = readEnvFileIfPresent(factoryEnvPath);
+    if (env && env.DATABASE_URL) {
+      const reused = databaseUrlWithName(env.DATABASE_URL, databaseName);
+      if (reused) {
+        return {
+          ok: true,
+          url: reused,
+          source: "factory-env",
+          note: "same PostgreSQL login as the factory installation (" + factoryEnvPath + "), database " + databaseName,
+        };
+      }
+      return {
+        ok: true,
+        url: buildDefaultDbUrl(registry, opts.password, opts.port),
+        source: "default",
+        note:
+          "the factory installation at " + factoryEnvPath + " does not use a local PostgreSQL login, so the lab " +
+          "falls back to the setup default - pass -DbUrl or -PgSuperPassword if the login is different",
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    url: buildDefaultDbUrl(registry, opts.password, opts.port),
+    source: "default",
+    note: "the setup default postgres login was used - pass -DbUrl or -PgSuperPassword if it is different",
+  };
 }
 
 function parseArgs(argv) {
@@ -759,6 +857,14 @@ function parseArgs(argv) {
     else if (arg.startsWith("--source=")) out.sourceDir = arg.slice("--source=".length);
     else if (arg === "--registry") out.registryPath = next();
     else if (arg.startsWith("--registry=")) out.registryPath = arg.slice("--registry=".length);
+    else if (arg === "--factory-env") out.factoryEnvPath = next();
+    else if (arg.startsWith("--factory-env=")) out.factoryEnvPath = arg.slice("--factory-env=".length);
+    else if (arg === "--pg-port") out.pgPort = Number(next());
+    else if (arg.startsWith("--pg-port=")) out.pgPort = Number(arg.slice("--pg-port=".length));
+    else if (arg === "--database") out.databaseName = next();
+    else if (arg.startsWith("--database=")) out.databaseName = arg.slice("--database=".length);
+    else if (arg === "--out") out.outFile = next();
+    else if (arg.startsWith("--out=")) out.outFile = arg.slice("--out=".length);
     else if (arg === "--require-lock-support") out.requireLockSupport = true;
     else if (arg.startsWith("--app-dir=")) out.appDir = arg.slice("--app-dir=".length);
   }
@@ -820,8 +926,40 @@ function runPreflight(options) {
   return { ok: errors.length === 0, errors, warnings, notes, action, targetDir, port, databaseName: dbCheck.databaseName };
 }
 
+/**
+ * --action dburl: resolve the lab's PostgreSQL login and hand it to the
+ * installer through a file, so the password never appears in a log or a window.
+ */
+function runDbUrlAction(args) {
+  const registry = loadRegistry(args.registryPath);
+  const resolved = resolveLabDatabaseUrl({
+    registry,
+    overrideUrl: args.dbUrl,
+    factoryEnvPath: args.factoryEnvPath,
+    password: args.pgPassword,
+    passwordProvided: args.pgPassword !== undefined,
+    databaseName: args.databaseName,
+    port: args.pgPort,
+  });
+  if (!resolved.ok || !resolved.url) {
+    console.log("[preflight] REFUSED: " + (resolved.note || "the lab database login could not be resolved"));
+    return 1;
+  }
+  if (args.outFile) {
+    fs.writeFileSync(args.outFile, resolved.url, { encoding: "utf8", mode: 0o600 });
+    console.log("[preflight] lab database login: " + describeDatabaseUrl(resolved.url));
+    console.log("[preflight] login source: " + resolved.note);
+    return 0;
+  }
+  console.log(JSON.stringify({ ok: true, source: resolved.source, login: describeDatabaseUrl(resolved.url) }));
+  return 0;
+}
+
 function main() {
   const args = parseArgs(process.argv);
+  if (args.action === "dburl") {
+    process.exit(runDbUrlAction(args));
+  }
   let result;
   try {
     result = runPreflight(args);
@@ -861,6 +999,9 @@ module.exports = {
   verifyInstall,
   runPreflight,
   buildDefaultDbUrl,
+  databaseUrlWithName,
+  describeDatabaseUrl,
+  resolveLabDatabaseUrl,
   parseDotEnv,
   findStrayEnvFiles,
   portableDatabaseName,
