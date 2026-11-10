@@ -256,9 +256,37 @@ Write-Info "Node.js runtime: $nodeExe"
 # C:\Program Files\nodejs themselves).
 $env:PATH = "$(Split-Path -Parent $nodeExe);$env:PATH"
 
+# The lab needs a PostgreSQL login. Taking the one the factory installation
+# already uses (read out of its .env, database name swapped) means the owner
+# never has to retype the postgres password - and never sees a bare
+# "password authentication failed" after the folder was already written to.
 if (-not $DbUrl) {
-    $escapedPwd = [Uri]::EscapeDataString($PgSuperPassword)
-    $DbUrl = "postgresql://postgres:$escapedPwd@localhost:$PgPort/$labDatabase"
+    $factoryEnvPath = Join-Path $SourceDir ".env"
+    $dbUrlTemp = Join-Path ([IO.Path]::GetTempPath()) ("woodtek-lab-dburl-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $resolveArgs = @(
+        "`"$PreflightPath`"",
+        "--action", "dburl",
+        "--registry", "`"$RegistryPath`"",
+        "--database", "$labDatabase",
+        "--out", "`"$dbUrlTemp`""
+    )
+    if ($PSBoundParameters.ContainsKey("PgSuperPassword")) {
+        $resolveArgs += @("--pg-password", "$PgSuperPassword")
+    }
+    if ($PSBoundParameters.ContainsKey("PgPort")) { $resolveArgs += @("--pg-port", "$PgPort") }
+    if (Test-Path $factoryEnvPath) { $resolveArgs += @("--factory-env", "`"$factoryEnvPath`"") }
+    Write-Info "Choosing the lab PostgreSQL login..."
+    $resolveOut = & $nodeExe @resolveArgs 2>&1
+    $resolveCode = $LASTEXITCODE
+    foreach ($line in $resolveOut) { Write-Host "     $line" -ForegroundColor Gray }
+    if ($resolveCode -ne 0 -or -not (Test-Path $dbUrlTemp)) {
+        throw ("The lab database login could not be worked out. Pass -DbUrl or -PgSuperPassword, " +
+               "or check that $factoryEnvPath exists and contains DATABASE_URL.")
+    }
+    $DbUrl = (Get-Content -Raw -Path $dbUrlTemp).Trim()
+    Remove-Item -Path $dbUrlTemp -Force -ErrorAction SilentlyContinue
+} else {
+    Write-Info "Using the PostgreSQL login passed to the installer or found in the existing lab .env."
 }
 
 function Invoke-LabPreflight([string]$ActionName, [string]$ExtraArgs) {
@@ -578,7 +606,23 @@ if (Test-Path $TemplatesDir) {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Write THIS instance's .env (never inherit the factory one)
+# 7. Prove the PostgreSQL login BEFORE writing the lab .env or any task
+# ---------------------------------------------------------------------------
+Write-Step "Checking the PostgreSQL login (nothing is created by this step)"
+$checkBootstrap = Join-Path $TargetDir "installer\bootstrap-db.cjs"
+if (Test-Path $checkBootstrap) {
+    & $nodeExe "`"$checkBootstrap`"" "--check-db" "--db-url=`"$DbUrl`""
+    if ($LASTEXITCODE -ne 0) {
+        throw ("PostgreSQL rejected the login the lab would use. The lab needs the same PostgreSQL user and password " +
+               "as the factory installation - they are in $SourceDir\.env (DATABASE_URL). Nothing was written: no lab .env, " +
+               "no scheduled task, no firewall rule. Re-run with -DbUrl or -PgSuperPassword if a different login should be used.")
+    }
+} else {
+    Write-Info "bootstrap-db.cjs is not in the lab folder yet; skipping the login check."
+}
+
+# ---------------------------------------------------------------------------
+# 8. Write THIS instance's .env (never inherit the factory one)
 # ---------------------------------------------------------------------------
 Write-Step "Writing the lab .env (own port, own database, own AUTH_SECRET)"
 $envFile = Join-Path $TargetDir ".env"
@@ -590,7 +634,28 @@ if (Test-Path $envFile) {
         throw ("$envFile exists but is not a Workflow Lab .env (it does not name $labDatabase on port $Port). " +
                "Refusing to reuse it - the lab must never connect to the factory database.")
     }
-    Write-Info "Kept the existing lab .env (port $Port, database $labDatabase, its own AUTH_SECRET)."
+    # A previous attempt may have written this .env with a login that PostgreSQL
+    # refuses (the old default password). Correct ONLY that line, so the lab's
+    # own AUTH_SECRET, port and data folder survive and a re-run needs no manual
+    # file editing.
+    $envLinesExisting = $envText -split "`r?`n"
+    $urlChanged = $false
+    $currentUrl = ""
+    for ($i = 0; $i -lt $envLinesExisting.Count; $i++) {
+        if ($envLinesExisting[$i] -match "^\s*DATABASE_URL\s*=\s*(.+?)\s*$") {
+            $currentUrl = $Matches[1].Trim().Trim('"').Trim("'")
+            if ($currentUrl -ne $DbUrl) {
+                $envLinesExisting[$i] = "DATABASE_URL=$DbUrl"
+                $urlChanged = $true
+            }
+        }
+    }
+    if ($urlChanged) {
+        [System.IO.File]::WriteAllText($envFile, ($envLinesExisting -join "`r`n").TrimEnd() + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        Write-Info "Updated the DATABASE_URL in the existing lab .env (its AUTH_SECRET and port were kept)."
+    } else {
+        Write-Info "Kept the existing lab .env (port $Port, database $labDatabase, its own AUTH_SECRET)."
+    }
 } else {
     $dataDir = Join-Path $TargetDir "data"
     $envLines = @(
@@ -608,7 +673,7 @@ if (Test-Path $envFile) {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Database schema + hard module lock (installed-edition.json)
+# 9. Database schema + hard module lock (installed-edition.json)
 # ---------------------------------------------------------------------------
 Write-Step "Creating the lab database schema and the module lock"
 $bootstrap = Join-Path $TargetDir "installer\bootstrap-db.cjs"
@@ -636,7 +701,7 @@ $marker.completedAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
 Write-Info "Updated $markerPath (database and module lock in place)."
 
 # ---------------------------------------------------------------------------
-# 9. Windows Firewall - THIS instance's rule only
+# 10. Windows Firewall - THIS instance's rule only
 # ---------------------------------------------------------------------------
 Write-Step "Registering the lab firewall rule (factory rule untouched)"
 try {
@@ -648,7 +713,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 10. Scheduled tasks - THIS instance's tasks only
+# 11. Scheduled tasks - THIS instance's tasks only
 # ---------------------------------------------------------------------------
 Write-Step "Registering the lab scheduled tasks"
 $silentBat = Join-Path $TargetDir $labSilentLauncher
@@ -671,7 +736,7 @@ if (Test-Path $backupPs1) {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Shortcuts - THIS instance's names only
+# 12. Shortcuts - THIS instance's names only
 # ---------------------------------------------------------------------------
 Write-Step "Creating the lab shortcuts"
 try {
@@ -717,7 +782,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 12. Start ONLY the lab and wait for its health endpoint
+# 13. Start ONLY the lab and wait for its health endpoint
 # ---------------------------------------------------------------------------
 Write-Step "Starting the Workflow Lab (factory task is not touched)"
 schtasks /Run /TN "$labTask" | Out-Null
@@ -742,7 +807,7 @@ if (-not $SkipHealthCheck) {
 }
 
 # ---------------------------------------------------------------------------
-# 13. Post-install proof: the lab is its own instance
+# 14. Post-install proof: the lab is its own instance
 # ---------------------------------------------------------------------------
 Invoke-LabPreflight "verify" ""
 

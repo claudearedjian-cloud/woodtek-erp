@@ -164,9 +164,32 @@ powershell -ExecutionPolicy Bypass -File installer\install-workflow-lab.ps1
 ```
 
 Port 3001 is checked before anything is created; if something already holds it
-the helper stops and tells you to pass `-Port`. The Postgres super-user
-password defaults to `postgres` (same default the setup wizard uses) and can be
-passed with `-PgSuperPassword`.
+the helper stops and tells you to pass `-Port`.
+
+**The PostgreSQL login is taken from the factory installation.** The helper reads
+`C:\WoodTek-ERP\.env` (read-only — it is never copied into the lab), keeps the
+user name, password, host and port it finds there, and swaps only the database
+name to `woodtek_workflow_lab`. You therefore never retype the postgres password,
+and a factory installation that changed that password still works. The password is
+never printed: the resolved login is handed to the installer through a temporary
+file, and only `user@host:port/database` is ever shown.
+
+Only if that is not what you want:
+
+```powershell
+... -PgSuperPassword "the-postgres-password"      # use this password instead
+... -DbUrl "postgresql://postgres:pw@localhost:5432/woodtek_workflow_lab"   # full control
+... -PgPort 5433                                  # PostgreSQL on another port
+```
+
+A remote factory database (host other than localhost) is deliberately **not**
+reused: the lab always talks to a local PostgreSQL.
+
+Before the lab `.env` is written, the login is proven with
+`bootstrap-db.cjs --check-db`, which connects and creates nothing. A wrong
+password therefore stops the run with a plain-language message while the folder
+still has no `.env`, no task and no firewall rule — and the next run simply
+continues.
 
 ## 6. Verifying it afterwards
 
@@ -201,6 +224,7 @@ drop `woodtek_workflow_lab`, delete the folder).
 | `TCP port 3001 is already in use` | run again with `-Port 3002` (edit the shortcut afterwards if you like) |
 | `predate the Workflow Lab module lock` | the factory build is older than this branch: let the helper build from the repo (`-AppFiles build`) or pass `-PayloadZip` |
 | `Preflight refused …` | read the reasons — they name the exact folder/database/port that is not allowed. Nothing was changed |
+| `password authentication failed for user "postgres"` | PostgreSQL rejected the login. The helper normally reuses the factory installation's login from `C:\WoodTek-ERP\.env`; if that file is missing or uses a remote database, pass `-PgSuperPassword` or `-DbUrl`. Re-running after a failed attempt repairs the `DATABASE_URL` in the lab's own `.env` — deleting files by hand is never needed |
 | `… the folder already contains data …` | the folder holds something the lab did **not** write (an upload, a dump, a foreign app, a factory `.env`). Nothing was changed — point `-TargetDir` somewhere else, or clean that folder yourself first |
 | `… did not finish` in the middle of the run | fix what the message names and **double-click the same helper again**: a lab folder is stamped with `workflow-lab-instance.json` before anything else is written, so a re-run continues instead of refusing. The reason is appended to `<lab>\logs\lab-install.log` |
 | `has no node_modules` | the repository on this PC has no `node_modules\next`: open a command window in the repository folder, run `npm install`, then run the helper again (it continues) |

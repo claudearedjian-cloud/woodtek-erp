@@ -63,11 +63,14 @@ function parseArgs(argv) {
     managerPin: "1234",
     lockedModules: null,
     configOnly: false,
+    checkDb: false,
   };
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--config-only") {
       out.configOnly = true;
+    } else if (arg === "--check-db") {
+      out.checkDb = true;
     } else if (arg.startsWith("--locked-modules=")) {
       out.lockedModules = arg.slice("--locked-modules=".length);
     } else if (arg === "--locked-modules" && i + 1 < argv.length) {
@@ -218,6 +221,35 @@ function quoteIdent(ident) {
   return `"${String(ident).replace(/"/g, '""')}"`;
 }
 
+/**
+ * --check-db: prove the PostgreSQL login works, then stop. Creates nothing.
+ * The Workflow Lab installer runs this BEFORE it writes its .env or any task,
+ * so a wrong password is reported in plain language instead of leaving a lab
+ * that cannot connect.
+ */
+async function checkLoginOnly(dbUrl) {
+  const { Client } = requireRuntimeModule("pg");
+  const parsed = new URL(dbUrl);
+  const targetDb = decodeURIComponent(parsed.pathname.replace(/^\/+/, "")) || "(default)";
+  const user = decodeURIComponent(parsed.username || "");
+  const host = parsed.hostname;
+  const adminUrl = new URL(dbUrl);
+  adminUrl.pathname = "/postgres";
+  const client = new Client({ connectionString: adminUrl.toString(), connectionTimeoutMillis: 10000 });
+  try {
+    await client.connect();
+    const res = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [targetDb]);
+    log("PostgreSQL login accepted (" + user + "@" + host + "). Nothing was created.");
+    log(
+      res.rowCount > 0
+        ? "Database " + targetDb + " already exists; it will be reused, not replaced."
+        : "Database " + targetDb + " does not exist yet; it will be created.",
+    );
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function ensureDatabaseAndSchema(dbUrl, managerName, managerPin) {
   const { Client } = requireRuntimeModule("pg");
   const bcrypt = requireRuntimeModule("bcryptjs");
@@ -339,11 +371,26 @@ async function main() {
     throw new Error("DATABASE_URL is not set. Pass --db-url=... or configure .env first.");
   }
 
+  if (args.checkDb) {
+    await checkLoginOnly(dbUrl);
+    return;
+  }
+
   await ensureDatabaseAndSchema(dbUrl, args.managerName, args.managerPin);
   log("Bootstrap completed successfully.");
 }
 
 main().catch((err) => {
-  console.error("[bootstrap-db] ERROR:", err?.message || err);
+  const message = (err && err.message) || String(err);
+  console.error("[bootstrap-db] ERROR:", message);
+  if (/password authentication failed/i.test(message)) {
+    console.error(
+      "[bootstrap-db] The PostgreSQL password in the connection string was rejected. The lab must use the same PostgreSQL user and password as the factory installation (they are in its .env, DATABASE_URL). Nothing was created.",
+    );
+  } else if (/could not connect|ECONNREFUSED|timeout/i.test(message)) {
+    console.error(
+      "[bootstrap-db] The PostgreSQL server could not be reached. Check that the Windows service is running and that the host and port in the connection string are right. Nothing was created.",
+    );
+  }
   process.exit(1);
 });
