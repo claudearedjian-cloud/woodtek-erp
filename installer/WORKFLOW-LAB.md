@@ -103,11 +103,13 @@ which one it used:
    Used only when that build already understands the lab lock
    (`lockedOptionalModules`); otherwise the next option is used, because a build
    without it could still switch Design on.
-3. **Build (`-AppFiles build`)** — `npx next build` in this repository, then the
-   standalone output is copied into the lab. This deliberately does **not** use
-   `scripts\build-prod.cjs`, because that script stops the server on the port it
-   is about to build for; the lab build never stops anything and never bumps
-   `version.json`.
+3. **Build (`-AppFiles build`)** — `next build` in this repository (called
+   through the same `node.exe` the installer found, with
+   `node_modules\next\dist\bin\next`, so it does not depend on `npx` or on Node
+   being on `PATH`), then the standalone output is copied into the lab. This
+   deliberately does **not** use `scripts\build-prod.cjs`, because that script
+   stops the server on the port it is about to build for; the lab build never
+   stops anything and never bumps `version.json`.
 
 Nothing is ever fetched from a database dump and nothing is restored.
 
@@ -131,6 +133,13 @@ Refused, with a readable reason and **without changing anything**:
   `.env` on the wrong port, an installed-edition file without the four locks, a
   locked module switched on or granted to a role/person, and any second `.env`
   that came along with copied files.
+
+The one thing that is deliberately **not** refused is an unfinished lab: a
+folder stamped with `workflow-lab-instance.json` (written before anything else),
+or one holding nothing but the lab's own empty `data`/`logs`/`backups` folders
+and possibly its own lab `.env`. That is the remains of an interrupted run, so
+the helper continues from there — a second double-click never has to start over,
+and it never has to be told to delete folders by hand.
 
 Every name the lab registers comes from `installer\instance-registry.json`,
 which lists both instances side by side; the registry itself is validated (the
@@ -192,6 +201,9 @@ drop `woodtek_workflow_lab`, delete the folder).
 | `TCP port 3001 is already in use` | run again with `-Port 3002` (edit the shortcut afterwards if you like) |
 | `predate the Workflow Lab module lock` | the factory build is older than this branch: let the helper build from the repo (`-AppFiles build`) or pass `-PayloadZip` |
 | `Preflight refused …` | read the reasons — they name the exact folder/database/port that is not allowed. Nothing was changed |
+| `… the folder already contains data …` | the folder holds something the lab did **not** write (an upload, a dump, a foreign app, a factory `.env`). Nothing was changed — point `-TargetDir` somewhere else, or clean that folder yourself first |
+| `… did not finish` in the middle of the run | fix what the message names and **double-click the same helper again**: a lab folder is stamped with `workflow-lab-instance.json` before anything else is written, so a re-run continues instead of refusing. The reason is appended to `<lab>\logs\lab-install.log` |
+| `has no node_modules` | the repository on this PC has no `node_modules\next`: open a command window in the repository folder, run `npm install`, then run the helper again (it continues) |
 | The lab starts but the page is empty | check `<lab>\logs\woodtek-workflow-lab.log`; the factory installation is unaffected |
 | You want the modules back | they are locked on purpose. Re-installing the lab is the only way to change the lock list |
 
