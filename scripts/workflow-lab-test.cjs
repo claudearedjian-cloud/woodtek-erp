@@ -174,6 +174,62 @@ check(
   "a repository without node_modules fails with an instruction instead of a bare exit code",
 );
 
+// 2026-11-10: the second attempt on the old PC failed in that same build step with
+// only "exit code 1" recorded - the real Next.js error was on screen and lost. The
+// build output is now kept, a stale .next is cleared first, and a good build of the
+// same commit is reused instead of rebuilding a step that already failed.
+check(
+  labInstaller.includes('Join-Path $logsDir "lab-build.log"') && labInstaller.includes("Tee-Object -FilePath $buildLog -Append"),
+  "the full build output is kept in logs\\lab-build.log while still shown on screen",
+);
+check(
+  labInstaller.includes("-Tail 25") && labInstaller.includes("The full output is kept in $buildLog"),
+  "a failed build prints its last lines and names the file that holds the rest",
+);
+check(
+  labInstaller.includes("--- last 25 lines of lab-build.log ---") && labInstaller.includes('Join-Path $trapLogDir "lab-install.log"'),
+  "the failure log contains the real build error, so one file explains the whole failure",
+);
+check(
+  labInstaller.includes("do NOT use npm run build - that stops the running factory server") &&
+    !/(^|[^\w-])npm run build(?![^\n]*factory server)/.test(labInstaller.replace(/\s+/g, " ")),
+  "the helper never runs npm run build (that script stops the factory server) and says so",
+);
+check(
+  labInstaller.includes("Remove-Item -Path $repoNext -Recurse -Force") && labInstaller.includes("if ((Test-SafeRepoFolder) -and (Test-Path $repoNext))"),
+  "a stale build is cleared only after proving the folder is this repository",
+);
+check(
+  labInstaller.includes("function Test-SafeRepoFolder") &&
+    labInstaller.includes('if ((Test-Path $SourceDir) -and ($parentNorm -ieq [IO.Path]::GetFullPath($SourceDir).TrimEnd(') &&
+    labInstaller.includes('$parentNorm.StartsWith($sourceNorm + ') &&
+    labInstaller.includes('if ($parentNorm -ieq [IO.Path]::GetFullPath($TargetDir).TrimEnd('),
+  "the repository check refuses the factory folder, its subfolders and the lab folder",
+);
+check(
+  labInstaller.indexOf("if ((Test-SafeRepoFolder) -and (Test-Path $repoNext))") <
+    labInstaller.indexOf("Remove-Item -Path $repoNext -Recurse -Force"),
+  "the repository check runs BEFORE anything is deleted",
+);
+check(
+  labInstaller.includes('"workflow-lab-build.json"') &&
+    labInstaller.includes("Reusing the existing build of commit") &&
+    labInstaller.includes("if ($stampData.sha -eq $buildSha) { $reusableBuild = $true }"),
+  "a build already made from the same commit is reused instead of rebuilt",
+);
+check(
+  labInstaller.includes('$env:NEXT_TELEMETRY_DISABLED = "1"') && labInstaller.includes("$env:NEXT_TELEMETRY_DISABLED = $oldTelemetry"),
+  "telemetry is disabled for the lab build and the machine's setting is restored afterwards",
+);
+check(
+  labInstaller.includes("has only $freeGB GB free") && labInstaller.includes("$freeGB -lt 2"),
+  "low disk space is called out before the build instead of surfacing as a build error",
+);
+check(
+  !/cmd\.exe \/c "npx next build"/.test(labInstaller) && !/&\s*npx\s/.test(labInstaller),
+  "the lab build never depends on npx or cmd.exe",
+);
+
 // A failure must leave a readable trail and a resumable folder.
 check(
   labInstaller.includes("trap {") &&
