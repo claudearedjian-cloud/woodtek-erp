@@ -121,7 +121,8 @@ which one it used:
      cleared only after the helper proves it is the repo and is neither the
      factory installation nor the lab;
    * a build already made **from the same commit is reused**
-     (`<repo>\.next\workflow-lab-build.json`), so repeated attempts do not
+     (`<repo>\.next\workflow-lab-build.json`), and so is a build you ran by
+     hand when it is newer than every source file — repeated attempts do not
      re-run a two-minute step that already failed on something else;
    * telemetry is off for the build and the machine's setting is restored
      afterwards; less than 2 GB free on the drive is called out *before* the

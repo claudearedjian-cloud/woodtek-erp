@@ -360,6 +360,26 @@ function Test-LabLockSupport([string]$appDir) {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Get-NewestSourceWrite([string]$repoDir) {
+    # Used to decide whether an existing .next is still current when the helper
+    # did not build it itself (for example a build the owner ran by hand).
+    $paths = @()
+    foreach ($sub in @("src", "public", "app", "pages", "components", "scripts", "installer", "drizzle")) {
+        $full = Join-Path $repoDir $sub
+        if (Test-Path $full) { $paths += $full }
+    }
+    foreach ($file in @("package.json", "package-lock.json", "next.config.js", "next.config.mjs", "next.config.ts", "tsconfig.json", "drizzle.config.ts")) {
+        $full = Join-Path $repoDir $file
+        if (Test-Path $full) { $paths += $full }
+    }
+    if (-not $paths) { return [datetime]::MinValue }
+    $newest = [datetime]::MinValue
+    foreach ($item in @(Get-ChildItem -Path $paths -Recurse -File -ErrorAction SilentlyContinue)) {
+        if ($item.LastWriteTime -gt $newest) { $newest = $item.LastWriteTime }
+    }
+    return $newest
+}
+
 function Test-SafeRepoFolder {
     # True only when $ParentDir really is the repository checkout this script
     # lives in - and is neither the factory installation nor the lab folder. Only
@@ -562,15 +582,34 @@ Write-Step "Laying down the lab application files"
             $repoStandalone = Join-Path $repoNext "standalone"
             $buildStamp = Join-Path $repoNext "workflow-lab-build.json"
             $reusableBuild = $false
+            $reuseReason = ""
             if ((Test-Path $buildStamp) -and (Test-Path (Join-Path $repoStandalone "server.js"))) {
                 try {
                     $stampData = Get-Content -Raw -Path $buildStamp | ConvertFrom-Json
-                    if ($stampData.sha -eq $buildSha) { $reusableBuild = $true }
+                    if ($stampData.sha -eq $buildSha) {
+                        $reusableBuild = $true
+                        $reuseReason = "built by this helper from commit $buildSha"
+                    }
                 } catch { }
+            }
+            # A build the owner made by hand (no stamp) is still good when it is
+            # newer than every source file - no reason to rebuild for two minutes.
+            if (-not $reusableBuild) {
+                $buildIdFile = Join-Path $repoNext "BUILD_ID"
+                if ((Test-Path (Join-Path $repoStandalone "server.js")) -and (Test-Path $buildIdFile)) {
+                    try {
+                        $builtAt = (Get-Item -LiteralPath $buildIdFile).LastWriteTime
+                        $newestSource = Get-NewestSourceWrite $ParentDir
+                        if ($newestSource -lt $builtAt) {
+                            $reusableBuild = $true
+                            $reuseReason = "it is newer than every source file in the repository"
+                        }
+                    } catch { }
+                }
             }
 
             if ($reusableBuild) {
-                Write-Info "Reusing the existing build of commit $buildSha in $repoNext (nothing to rebuild)."
+                Write-Info "Reusing the existing build in $repoNext ($reuseReason) - nothing to rebuild."
             } else {
                 # A half-written .next from an earlier attempt is the usual reason
                 # the second build fails on Windows. Only ever touch the repo's own

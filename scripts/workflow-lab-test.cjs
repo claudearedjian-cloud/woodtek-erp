@@ -213,9 +213,19 @@ check(
 );
 check(
   labInstaller.includes('"workflow-lab-build.json"') &&
-    labInstaller.includes("Reusing the existing build of commit") &&
-    labInstaller.includes("if ($stampData.sha -eq $buildSha) { $reusableBuild = $true }"),
+    labInstaller.includes("Reusing the existing build in $repoNext") &&
+    labInstaller.includes("if ($stampData.sha -eq $buildSha) {"),
   "a build already made from the same commit is reused instead of rebuilt",
+);
+check(
+  labInstaller.includes("function Get-NewestSourceWrite") &&
+    labInstaller.includes("$newestSource -lt $builtAt") &&
+    labInstaller.includes("it is newer than every source file in the repository"),
+  "a build the owner made by hand is reused when it is newer than the sources (no wasted rebuild)",
+);
+check(
+  labInstaller.indexOf('Join-Path $repoNext "BUILD_ID"') < labInstaller.indexOf("Remove-Item -Path $repoNext -Recurse -Force"),
+  "reuse is decided BEFORE any build is cleared",
 );
 check(
   labInstaller.includes('$env:NEXT_TELEMETRY_DISABLED = "1"') && labInstaller.includes("$env:NEXT_TELEMETRY_DISABLED = $oldTelemetry"),
