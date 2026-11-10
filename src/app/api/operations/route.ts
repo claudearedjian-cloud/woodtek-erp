@@ -16,6 +16,8 @@ import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { routeStageKeys } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 import { workLeaveBlock } from "@/lib/hrLeaveGate.server";
+import { readOperationTimeSummaries } from "@/lib/operationTime.server";
+import { preparedQty as linePreparedQty, sentQty as lineSentQty } from "@/lib/bomDelivery";
 
 export async function GET(request: Request) {
   const { user, error: authError } = await authorize("orders:read");
@@ -111,6 +113,7 @@ export async function GET(request: Request) {
       }));
     }
 
+    const operationTime = readOperationTimeSummaries(filtered);
     const [stepRows, mats] = await Promise.all([
       db
         .select({
@@ -167,7 +170,8 @@ export async function GET(request: Request) {
         productionItemName: planned?.name ?? null,
         status: fulfilment?.status ?? "Requested",
         machineId: fulfilment?.machineId ?? planned?.steps?.[0]?.machineId ?? null,
-        deliveredQty: fulfilment?.deliveredQty ?? null,
+        preparedQty: linePreparedQty({ status: fulfilment?.status ?? "Requested", quantityUsed: material.quantityUsed, preparedQty: fulfilment?.preparedQty, deliveredQty: fulfilment?.deliveredQty }),
+        deliveredQty: lineSentQty({ status: fulfilment?.status ?? "Requested", quantityUsed: material.quantityUsed, deliveredQty: fulfilment?.deliveredQty }),
       });
       materialsByOrder.set(material.orderId, list);
     }
@@ -178,6 +182,7 @@ export async function GET(request: Request) {
       const reception = receivedEntries[String(operation.orderId)];
       const shared = {
         ...operation,
+        timeDetails: operationTime[String(operation.id)],
         orderBom,
         received: reception?.received ?? null,
         receivedState: reception?.state ?? (

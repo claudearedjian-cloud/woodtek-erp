@@ -22,6 +22,7 @@ import {
   dispatchBatchKey,
   dispatchLegacyOrderKey,
   nextStage,
+  validatePartialDeliveryPercent,
   type DispatchStage,
 } from "@/lib/dispatch";
 import { updateDispatchStore, type DispatchEntry } from "@/lib/dispatch.server";
@@ -226,6 +227,7 @@ export async function GET() {
           itemUnit: material.itemUnit,
           quantityUsed: material.quantityUsed,
           stage: entry?.stage ?? defaultStage(order.projectType),
+          deliveryPercent: entry?.stage === "delivered" ? 100 : entry?.deliveryPercent ?? 0,
           proof: entry?.proof ?? null,
           productionReady,
           deliveredBatchCount: deliveredCount,
@@ -247,6 +249,7 @@ export async function GET() {
           batchNumber: null,
           batchName: "Order-level slot (no material batch)",
           stage: legacy?.stage ?? (order.status === "Delivered" ? "delivered" : defaultStage(order.projectType)),
+          deliveryPercent: legacy?.stage === "delivered" ? 100 : legacy?.deliveryPercent ?? 0,
           proof: legacy?.proof ?? null,
           productionReady: order.status === "Completed" || order.status === "Delivered" || fullyDelivered.has(order.id),
           deliveredBatchCount: legacy?.stage === "delivered" || fullyDelivered.has(order.id) ? 1 : 0,
@@ -344,6 +347,40 @@ export async function PUT(request: Request) {
             createdAt: iso(order.createdAt),
           };
       if (!currentEntry) throw Object.assign(new Error("Dispatch batch is unavailable."), { httpStatus: 404 });
+
+      if (body.deliveryPercent !== undefined) {
+        if (stage !== "awaiting_delivery" || currentEntry.stage !== "awaiting_delivery") {
+          throw Object.assign(new Error("Partial delivery can be recorded only while this batch is Awaiting delivery."), { httpStatus: 409 });
+        }
+        if (!productionReady) {
+          throw Object.assign(new Error("This batch is still in production and cannot be delivered yet."), { httpStatus: 409 });
+        }
+        const percentResult = validatePartialDeliveryPercent(currentEntry.deliveryPercent ?? 0, body.deliveryPercent);
+        if (!percentResult.ok) {
+          throw Object.assign(new Error(percentResult.error), { httpStatus: percentResult.status });
+        }
+        const partialEntry: DispatchEntry = {
+          ...currentEntry,
+          ...(batchId !== null ? { orderId } : {}),
+          stage: "awaiting_delivery",
+          deliveryPercent: percentResult.percent,
+          updatedAt: now,
+        };
+        if (batchId !== null) store.batches[String(batchId)] = partialEntry;
+        else store.stages[String(orderId)] = partialEntry;
+        const deliveredCount = batchId !== null
+          ? currentMaterialIds.filter((id) => store.batches[String(id)]?.stage === "delivered").length
+          : 0;
+        return {
+          proof: partialEntry.proof ?? null,
+          deliveredCount,
+          totalCount: batchId !== null ? currentMaterialIds.length : 1,
+          parentDelivered: false,
+          deliveryPercent: percentResult.percent,
+          partial: true,
+        };
+      }
+
       if (stage !== currentEntry.stage) {
         const expected = nextStage(order.projectType, currentEntry.stage);
         if (stage !== expected) {
@@ -392,6 +429,7 @@ export async function PUT(request: Request) {
         ...currentEntry,
         ...(batchId !== null ? { orderId } : {}),
         stage,
+        deliveryPercent: stage === "delivered" ? 100 : currentEntry.deliveryPercent ?? 0,
         updatedAt: now,
         proof,
       };
@@ -408,6 +446,8 @@ export async function PUT(request: Request) {
         parentDelivered: batchId !== null
           ? allCurrentBatchesDelivered(currentMaterialIds, store.batches)
           : stage === "delivered",
+        deliveryPercent: entry.deliveryPercent ?? (stage === "delivered" ? 100 : 0),
+        partial: false,
       };
     });
 
@@ -417,11 +457,13 @@ export async function PUT(request: Request) {
 
     logAudit(
       user,
-      stage === "delivered" ? "dispatch.batch.delivered" : "dispatch.batch.stage",
+      outcome.partial
+        ? "dispatch.batch.partial-delivery"
+        : stage === "delivered" ? "dispatch.batch.delivered" : "dispatch.batch.stage",
       batchId !== null ? "order_material" : "order",
-      `Dispatch batch ${batchId ?? orderId}: ${stage}`
+      `Dispatch batch ${batchId ?? orderId}: ${outcome.partial ? `partial delivery ${outcome.deliveryPercent}%` : stage}`
         + `${outcome.proof ? ` (received by ${outcome.proof.receivedBy})` : ""}`
-        + ` · ${outcome.deliveredCount}/${outcome.totalCount} delivered`,
+        + ` · ${outcome.deliveredCount}/${outcome.totalCount} batches delivered`,
       batchId ?? orderId,
     );
     return NextResponse.json({
@@ -429,6 +471,7 @@ export async function PUT(request: Request) {
       orderId,
       batchId,
       stage,
+      deliveryPercent: outcome.deliveryPercent,
       deliveredBatchCount: outcome.deliveredCount,
       totalBatchCount: outcome.totalCount,
       parentDelivered: outcome.parentDelivered,

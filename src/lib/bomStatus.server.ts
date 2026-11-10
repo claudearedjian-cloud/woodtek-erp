@@ -16,6 +16,8 @@ export interface BomStatusEntry {
   status: BomStatus;
   machineId?: number | null;
   updatedAt?: string;
+  /** Partial-preparation tally (units ready in the warehouse). Null = none. */
+  preparedQty?: number | null;
   /** Partial-delivery tally (units already sent to the floor). Null = none. */
   deliveredQty?: number | null;
 }
@@ -110,6 +112,7 @@ export function setBomStatus(
   status: BomStatus,
   machineId?: number | null,
   deliveredQty?: number | null,
+  preparedQty?: number | null,
 ): void {
   const current = readRaw();
   const data: RawFile = {
@@ -119,7 +122,8 @@ export function setBomStatus(
       [String(allocationId)]: {
         status,
         machineId: machineId ?? null,
-        deliveredQty: typeof deliveredQty === "number" && deliveredQty > 0 ? deliveredQty : null,
+        preparedQty: typeof preparedQty === "number" && preparedQty > 0 ? Math.floor(preparedQty) : null,
+        deliveredQty: typeof deliveredQty === "number" && deliveredQty > 0 ? Math.floor(deliveredQty) : null,
         updatedAt: new Date().toISOString(),
       },
     },

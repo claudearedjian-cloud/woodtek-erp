@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import { allowedStages } from "@/lib/materialProgress";
+import { fulfilmentLabel, preparedQty, sentQty } from "@/lib/bomDelivery";
 import { jobLockedByOther } from "@/lib/jobLock";
 import { reconcileStationSelection } from "@/lib/stationAssignment";
 import { newStationJobRows, stationAlertBody, stationAlertTitle } from "@/lib/stationAlerts";
@@ -14,6 +15,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
+  ChevronDown,
   User,
   Activity,
   RefreshCw,
@@ -59,35 +61,83 @@ const DOWNTIME_REASONS = [
   "Other",
 ];
 
-/** Live timer for the current run plus whole minutes saved before a pause. */
+type OperationTimeDetails = {
+  startedAt: string | null;
+  executionSeconds: number;
+  pausedSeconds: number;
+  totalSeconds: number;
+  activeSince: string | null;
+  pausedSince: string | null;
+  completedAt: string | null;
+  snapshotAt: string;
+  historyComplete: boolean;
+};
+
+function durationClock(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`;
+}
+
+function liveTimeValue(baseSeconds: number, since: string | null, snapshotAt: string, now: number) {
+  const snap = new Date(snapshotAt).getTime();
+  const extra = since && Number.isFinite(snap) ? Math.max(0, Math.floor((now - snap) / 1000)) : 0;
+  return Math.max(0, Math.floor(Number(baseSeconds) || 0)) + extra;
+}
+
+/** Live execution timer plus the paused/execution/total breakdown. */
 function ElapsedTimer({
   startTime,
   accumulatedMinutes = 0,
   paused = false,
+  timeDetails,
 }: {
   startTime: string | null | undefined;
   accumulatedMinutes?: number | null;
   paused?: boolean;
+  timeDetails?: OperationTimeDetails | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
-
   useEffect(() => {
-    if (!startTime || paused) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [startTime, paused]);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const accumulatedMs = Math.max(0, Number(accumulatedMinutes) || 0) * 60000;
-  const activeMs = startTime && !paused ? Math.max(0, now - new Date(startTime).getTime()) : 0;
-  const elapsedMs = accumulatedMs + activeMs;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const h = Math.floor(elapsedMs / 3600000);
-  const m = Math.floor((elapsedMs % 3600000) / 60000);
-  const s = Math.floor((elapsedMs % 60000) / 1000);
+  let elapsedSeconds = Math.max(0, Number(accumulatedMinutes) || 0) * 60;
+  if (timeDetails) {
+    elapsedSeconds = liveTimeValue(timeDetails.executionSeconds, timeDetails.activeSince, timeDetails.snapshotAt, now);
+  } else if (startTime && !paused) {
+    elapsedSeconds += Math.max(0, Math.floor((now - new Date(startTime).getTime()) / 1000));
+  }
+  return <span className="font-mono tabular-nums text-amber-300">{durationClock(elapsedSeconds)}</span>;
+}
+
+function OperationTimeBreakdown({ details }: { details?: OperationTimeDetails | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!details?.startedAt) return null;
+  const execution = liveTimeValue(details.executionSeconds, details.activeSince, details.snapshotAt, now);
+  const paused = liveTimeValue(details.pausedSeconds, details.pausedSince, details.snapshotAt, now);
+  const total = liveTimeValue(details.totalSeconds, details.activeSince || details.pausedSince, details.snapshotAt, now);
   return (
-    <span className="font-mono tabular-nums text-amber-300">
-      {pad(h)}:{pad(m)}:{pad(s)}
-    </span>
+    <details className="rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 font-black text-slate-300 marker:hidden">
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> Time details
+      </summary>
+      <div className="mt-2 grid gap-x-5 gap-y-1 border-t border-slate-800 pt-2 sm:grid-cols-3">
+        <div><span className="text-slate-500">Paused</span><strong className="ml-2 font-mono text-violet-300">{durationClock(paused)}</strong></div>
+        <div><span className="text-slate-500">Execution</span><strong className="ml-2 font-mono text-amber-300">{durationClock(execution)}</strong></div>
+        <div><span className="text-slate-500">Total elapsed</span><strong className="ml-2 font-mono text-white">{durationClock(total)}</strong></div>
+      </div>
+      {!details.historyComplete && (
+        <p className="mt-2 text-[10px] font-semibold text-slate-500">
+          Earlier pause history was not recorded. Detailed timing is complete from the next tracked start or resume.
+        </p>
+      )}
+    </details>
   );
 }
 
@@ -1030,12 +1080,16 @@ export default function OperatorStationView({
                     {/* Job Details */}
                     <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex flex-wrap items-center gap-2.5">
-                        <span className={`text-xs font-extrabold px-3 py-1 rounded-xl uppercase tracking-wider ${
+                        <span className={`inline-flex rounded-xl border px-4 py-2 text-sm font-black uppercase tracking-wider ${
                           isRunning
-                            ? "bg-amber-500 text-slate-950 animate-pulse font-black"
+                            ? "border-amber-300 bg-amber-400 text-slate-950"
                             : isPaused
-                              ? "bg-violet-500/20 text-violet-200 border border-violet-400/40"
-                              : "bg-blue-600 text-white"
+                              ? "border-violet-400/60 bg-violet-500/20 text-violet-100"
+                              : op.status === "Rejected/Rework"
+                                ? "border-rose-500/50 bg-rose-500/20 text-rose-200"
+                                : op.status === "Ready"
+                                  ? "border-blue-500/50 bg-blue-500/20 text-blue-100"
+                                  : "border-slate-700 bg-slate-800 text-slate-200"
                         }`}>
                           {t(op.status)}
                         </span>
@@ -1046,10 +1100,13 @@ export default function OperatorStationView({
                           {op.productionItem ? `Pass ${op.productionItem.routePosition}/${op.productionItem.routeLength}` : `Step #${op.stepOrder}`}
                         </span>
                         {(isRunning || isPaused) && (
-                          <span className={`flex items-center gap-1.5 text-xs font-black bg-slate-950 px-2.5 py-1 rounded-xl ${isPaused ? "border border-violet-500/40 text-violet-200" : "border border-amber-500/40 text-amber-300"}`}>
-                            <Timer className="w-4 h-4" />
-                            <ElapsedTimer startTime={op.startTime} accumulatedMinutes={op.actualMinutes} paused={isPaused} />
-                          </span>
+                          <>
+                            <span className={`flex items-center gap-1.5 text-sm font-black bg-slate-950 px-3 py-1.5 rounded-xl ${isPaused ? "border border-violet-500/50 text-violet-200" : "border border-amber-500/50 text-amber-300"}`}>
+                              <Timer className="w-4 h-4" />
+                              <ElapsedTimer startTime={op.startTime} accumulatedMinutes={op.actualMinutes} paused={isPaused} timeDetails={op.timeDetails} />
+                            </span>
+                            <OperationTimeBreakdown details={op.timeDetails} />
+                          </>
                         )}
                       </div>
 
@@ -1080,9 +1137,9 @@ export default function OperatorStationView({
                         <span className="flex items-center gap-1">
                           <Clock className="w-4 h-4 text-slate-500" /> Est: <strong className="text-slate-200">{op.estimatedMinutes} mins</strong>
                         </span>
-                        {isRunning && op.startTime && (
+                        {(isRunning || isPaused) && (op.timeDetails?.startedAt || op.startTime) && (
                           <span className="flex items-center gap-1">
-                            <Timer className="w-4 h-4 text-slate-500" /> Started: <strong className="text-slate-200">{new Date(op.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
+                            <Timer className="w-4 h-4 text-slate-500" /> Started: <strong className="text-slate-200">{new Date(op.timeDetails?.startedAt || op.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
                           </span>
                         )}
                         {op.operatorName && (
@@ -1118,8 +1175,16 @@ export default function OperatorStationView({
                                 <span className="truncate font-bold text-slate-200">
                                   {m.quantityUsed} {m.itemUnit || "pcs"} — {m.itemName || m.itemSku}
                                 </span>
-                                <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${m.status === "Delivered" ? "bg-emerald-500/10 text-emerald-300" : m.status === "Prepared" ? "bg-sky-500/10 text-sky-300" : "bg-amber-500/10 text-amber-300"}`}>
-                                  {m.status}
+                                <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black uppercase ${
+                                  fulfilmentLabel(m) === "Delivered"
+                                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                                    : fulfilmentLabel(m).includes("sent") || fulfilmentLabel(m) === "Partially delivered"
+                                      ? "border-teal-500/40 bg-teal-500/10 text-teal-300"
+                                      : fulfilmentLabel(m).includes("prepared") || fulfilmentLabel(m) === "Prepared"
+                                        ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                                        : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                                }`}>
+                                  {fulfilmentLabel(m)} · P {preparedQty(m)}/{m.quantityUsed} · S {sentQty(m)}/{m.quantityUsed} · To prepare {Math.max(0, m.quantityUsed - preparedQty(m))} · Ready to send {Math.max(0, preparedQty(m) - sentQty(m))}
                                 </span>
                               </div>
                             ))}

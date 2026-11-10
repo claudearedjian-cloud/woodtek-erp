@@ -22,6 +22,23 @@ export const STAGE_LABELS: Record<DispatchStage, string> = {
 
 export const ALL_STAGES: DispatchStage[] = PROJECT_FLOW;
 
+export type PartialDeliveryPercentResult =
+  | { ok: true; percent: number }
+  | { ok: false; error: string; status: 400 | 409 };
+
+/** Validate a new cumulative partial-delivery percentage (100% needs proof). */
+export function validatePartialDeliveryPercent(currentValue: unknown, requestedValue: unknown): PartialDeliveryPercentResult {
+  const current = Math.max(0, Math.min(99, Math.floor(Number(currentValue) || 0)));
+  const requested = Number(requestedValue);
+  if (!Number.isInteger(requested) || requested < 1 || requested > 99) {
+    return { ok: false, error: "Enter a whole delivery percentage from 1 to 99. Use full delivery confirmation at 100%.", status: 400 };
+  }
+  if (requested <= current) {
+    return { ok: false, error: `Delivery is already recorded at ${current}%. Enter a higher total percentage.`, status: 409 };
+  }
+  return { ok: true, percent: requested };
+}
+
 /** Orders whose project category mentions "service" skip the prep pipeline. */
 export function isServiceFlow(projectType: string | null | undefined): boolean {
   return /service/i.test(String(projectType ?? ""));

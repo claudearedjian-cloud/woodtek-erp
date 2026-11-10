@@ -157,12 +157,13 @@ export default function OrdersView({
   };
 
   const getStatusBadge = (s: string) => {
-    if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
-    if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border-teal-500/30";
-    if (s === "In Production") return "bg-amber-500/20 text-amber-300 border-amber-500/30";
-    if (s === "Quality Review") return "bg-purple-500/20 text-purple-300 border-purple-500/30";
-    if (s === "On Hold") return "bg-rose-500/20 text-rose-300 border-rose-500/30";
-    return "bg-slate-800 text-slate-300 border-slate-700";
+    if (s === "Completed") return "bg-emerald-500/20 text-emerald-200 border-emerald-400/50";
+    if (s === "Delivered") return "bg-teal-500/20 text-teal-200 border-teal-400/50";
+    if (s === "In Production") return "bg-amber-500/20 text-amber-100 border-amber-400/60";
+    if (s === "Quality Review") return "bg-purple-500/20 text-purple-200 border-purple-400/50";
+    if (s === "On Hold" || s === "Cancelled") return "bg-rose-500/20 text-rose-200 border-rose-400/50";
+    if (s === "Pending") return "bg-blue-500/15 text-blue-200 border-blue-400/40";
+    return "bg-slate-800 text-slate-200 border-slate-600";
   };
 
   const designGateBadge = (order: any) => {
@@ -319,7 +320,7 @@ export default function OrdersView({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span className="font-mono text-xl font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
-                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${getStatusBadge(order.status)}`}>
+                    <span className={`rounded-xl border px-3 py-1.5 text-sm font-black uppercase tracking-wide ${getStatusBadge(order.status)}`}>
                       {t(order.status)}
                     </span>
                     {designGateBadge(order)}
@@ -448,7 +449,7 @@ export default function OrdersView({
                       <span className="block truncate text-[10px] text-slate-500">{order.projectType}</span>
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className={`rounded px-2 py-0.5 text-[10px] font-extrabold uppercase ${getStatusBadge(order.status)}`}>{t(order.status)}</span>
+                      <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-black uppercase tracking-wide ${getStatusBadge(order.status)}`}>{t(order.status)}</span>
                       {order.designGate?.controlled && <span className="mt-1 block">{designGateBadge(order)}</span>}
                       {dispatchByOrder[String(order.id)] && order.status !== "Delivered" && (
                         <span className="ml-1 rounded bg-sky-500/20 px-2 py-0.5 text-[10px] font-extrabold uppercase text-sky-300">
@@ -505,6 +506,9 @@ export default function OrdersView({
                     >
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-mono text-base font-black text-amber-400 tracking-tight">{order.orderNumber}</span>
+                        <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-black uppercase tracking-wide ${getStatusBadge(order.status)}`}>
+                          {t(order.status)}
+                        </span>
                         <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase ${getPriorityBadge(order.priority)}`}>
                           {order.priority}
                         </span>
