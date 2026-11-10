@@ -111,6 +111,23 @@ which one it used:
    stops the server on the port it is about to build for; the lab build never
    stops anything and never bumps `version.json`.
 
+   The build step is built to be re-run:
+   * its **full output is kept** in `<lab>\logs\lab-build.log`, and a failure
+     prints the last 25 lines *and* appends them to `logs\lab-install.log`, so
+     one attached file explains the whole failure;
+   * the repository's previous `.next` is **cleared first** — on Windows a
+     half-written build from an earlier attempt is the usual reason a second
+     attempt fails. This only ever touches the repository checkout: a folder is
+     cleared only after the helper proves it is the repo and is neither the
+     factory installation nor the lab;
+   * a build already made **from the same commit is reused**
+     (`<repo>\.next\workflow-lab-build.json`), and so is a build you ran by
+     hand when it is newer than every source file — repeated attempts do not
+     re-run a two-minute step that already failed on something else;
+   * telemetry is off for the build and the machine's setting is restored
+     afterwards; less than 2 GB free on the drive is called out *before* the
+     build starts.
+
 Nothing is ever fetched from a database dump and nothing is restored.
 
 ## 4. Safety model (what refuses, and where)
@@ -227,6 +244,7 @@ drop `woodtek_workflow_lab`, delete the folder).
 | `password authentication failed for user "postgres"` | PostgreSQL rejected the login. The helper normally reuses the factory installation's login from `C:\WoodTek-ERP\.env`; if that file is missing or uses a remote database, pass `-PgSuperPassword` or `-DbUrl`. Re-running after a failed attempt repairs the `DATABASE_URL` in the lab's own `.env` — deleting files by hand is never needed |
 | `… the folder already contains data …` | the folder holds something the lab did **not** write (an upload, a dump, a foreign app, a factory `.env`). Nothing was changed — point `-TargetDir` somewhere else, or clean that folder yourself first |
 | `… did not finish` in the middle of the run | fix what the message names and **double-click the same helper again**: a lab folder is stamped with `workflow-lab-instance.json` before anything else is written, so a re-run continues instead of refusing. The reason is appended to `<lab>\logs\lab-install.log` |
+| `The Next.js production build of the lab failed (exit code N)` | the whole build output is in `<lab>\logs\lab-build.log` and the last lines are also in `logs\lab-install.log` — send that file. To watch the same build yourself, run `"C:\Program Files\nodejs\node.exe" node_modules\next\dist\bin\next build` in the repository folder. **Never** run `npm run build` there: that script stops the server on port 3000. A stale `.next` is now cleared automatically and a good build of the same commit is reused |
 | `has no node_modules` | the repository on this PC has no `node_modules\next`: open a command window in the repository folder, run `npm install`, then run the helper again (it continues) |
 | The lab starts but the page is empty | check `<lab>\logs\woodtek-workflow-lab.log`; the factory installation is unaffected |
 | You want the modules back | they are locked on purpose. Re-installing the lab is the only way to change the lock list |

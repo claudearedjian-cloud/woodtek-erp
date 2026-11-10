@@ -61,10 +61,26 @@ trap {
     Write-Host "[lab] !! The Workflow Lab $Action did not finish." -ForegroundColor Yellow
     Write-Host "[lab] !! $trapMessage" -ForegroundColor Yellow
     try {
-        $trapLogDir = Join-Path $TargetDir "logs"
+        if ($TargetDir -and (Test-Path $TargetDir)) {
+            $trapLogDir = Join-Path $TargetDir "logs"
+            if (-not (Test-Path $trapLogDir)) {
+                New-Item -ItemType Directory -Path $trapLogDir -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
         if ($TargetDir -and (Test-Path $trapLogDir)) {
+            $trapLogFile = Join-Path $trapLogDir "lab-install.log"
             $trapLine = "{0} [{1}] {2}: {3}" -f (Get-Date).ToString("s"), $Action, "FAILED", $trapMessage
-            Add-Content -Path (Join-Path $trapLogDir "lab-install.log") -Value $trapLine
+            Add-Content -Path $trapLogFile -Value $trapLine
+            # Keep the real build error in this log too, so one file explains the
+            # whole failure without a photograph of the window.
+            $trapBuildLog = Join-Path $trapLogDir "lab-build.log"
+            if (Test-Path $trapBuildLog) {
+                Add-Content -Path $trapLogFile -Value "  --- last 25 lines of lab-build.log ---"
+                foreach ($trapLineText in @(Get-Content -Path $trapBuildLog -Tail 25 -ErrorAction SilentlyContinue)) {
+                    Add-Content -Path $trapLogFile -Value ("  " + $trapLineText)
+                }
+                Add-Content -Path $trapLogFile -Value "  --- end of lab-build.log ---"
+            }
         }
     } catch { }
     Write-Host "[lab] Nothing in the existing WoodTek ERP installation was changed." -ForegroundColor Yellow
@@ -344,6 +360,46 @@ function Test-LabLockSupport([string]$appDir) {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Get-NewestSourceWrite([string]$repoDir) {
+    # Used to decide whether an existing .next is still current when the helper
+    # did not build it itself (for example a build the owner ran by hand).
+    $paths = @()
+    foreach ($sub in @("src", "public", "app", "pages", "components", "scripts", "installer", "drizzle")) {
+        $full = Join-Path $repoDir $sub
+        if (Test-Path $full) { $paths += $full }
+    }
+    foreach ($file in @("package.json", "package-lock.json", "next.config.js", "next.config.mjs", "next.config.ts", "tsconfig.json", "drizzle.config.ts")) {
+        $full = Join-Path $repoDir $file
+        if (Test-Path $full) { $paths += $full }
+    }
+    if (-not $paths) { return [datetime]::MinValue }
+    $newest = [datetime]::MinValue
+    foreach ($item in @(Get-ChildItem -Path $paths -Recurse -File -ErrorAction SilentlyContinue)) {
+        if ($item.LastWriteTime -gt $newest) { $newest = $item.LastWriteTime }
+    }
+    return $newest
+}
+
+function Test-SafeRepoFolder {
+    # True only when $ParentDir really is the repository checkout this script
+    # lives in - and is neither the factory installation nor the lab folder. Only
+    # then may the helper clear that folder's own .next before building.
+    if (-not $ParentDir -or -not (Test-Path $ParentDir)) { return $false }
+    if (-not (Test-Path (Join-Path $ParentDir "package.json"))) { return $false }
+    $hasNextConfig = (Test-Path (Join-Path $ParentDir "next.config.js")) -or
+                     (Test-Path (Join-Path $ParentDir "next.config.mjs")) -or
+                     (Test-Path (Join-Path $ParentDir "next.config.ts"))
+    if (-not $hasNextConfig) { return $false }
+    try {
+        $parentNorm = [IO.Path]::GetFullPath($ParentDir).TrimEnd('\')
+        if ((Test-Path $SourceDir) -and ($parentNorm -ieq [IO.Path]::GetFullPath($SourceDir).TrimEnd('\'))) { return $false }
+        if ($parentNorm -ieq [IO.Path]::GetFullPath($TargetDir).TrimEnd('\')) { return $false }
+        $sourceNorm = [IO.Path]::GetFullPath($SourceDir).TrimEnd('\')
+        if ($parentNorm.StartsWith($sourceNorm + "\")) { return $false }
+    } catch { return $false }
+    return $true
+}
+
 function Test-RepoLockSupport {
     $sourceFile = Join-Path $ParentDir "src\lib\installedEdition.ts"
     if (-not (Test-Path $sourceFile)) { $sourceFile = Join-Path $ScriptDir "..\src\lib\installedEdition.ts" }
@@ -494,9 +550,22 @@ Write-Step "Laying down the lab application files"
         }
         "build" {
             Write-Step "Building the lab application from this repository (no server is stopped)"
+            $logsDir = Join-Path $TargetDir "logs"
+            if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
+            $buildLog = Join-Path $logsDir "lab-build.log"
             $buildSha = "unknown"
             try {
                 $buildSha = (& git -C $ParentDir rev-parse --short HEAD 2>$null | Select-Object -First 1)
+                if (-not $buildSha) { $buildSha = "unknown" }
+            } catch { }
+            # A build needs roughly 2 GB of scratch space. Check first: on a full
+            # disk Next.js stops with a confusing error halfway through.
+            try {
+                $buildDrive = (Get-Item -LiteralPath $TargetDir -ErrorAction Stop).PSDrive
+                $freeGB = [math]::Round(($buildDrive.Free / 1GB), 1)
+                if ($freeGB -lt 2) {
+                    Write-Warn "$($buildDrive.Name): has only $freeGB GB free. The lab build needs about 2 GB - free some space if the build fails."
+                }
             } catch { }
             # Call Next.js through the Node.js we already found, by full path.
             # "npx next build" depends on PATH and on npm being installed beside
@@ -508,23 +577,86 @@ Write-Step "Laying down the lab application files"
                        "Open a command window in $ParentDir, run: npm install   then double-click Create-WoodTek-Workflow-Lab.bat again " +
                        "(it continues from this point). Alternatively pass -AppFiles copy (needs a factory build from this release) or -PayloadZip.")
             }
-            $oldDataUrl = $env:DATABASE_URL
-            $oldBuildEnv = $env:NEXT_PUBLIC_WOODTEK_BUILD
-            $env:DATABASE_URL = $DbUrl
-            $env:NEXT_PUBLIC_WOODTEK_BUILD = "$buildSha"
-            Push-Location $ParentDir
-            try {
-                & $nodeExe $nextCli "build"
-                if ($LASTEXITCODE -ne 0) {
-                    throw ("The Next.js production build of the lab failed (exit code $LASTEXITCODE, see the messages above). " +
-                           "The factory installation is untouched and this folder is marked as a lab, so you can simply run the helper again once the build works.")
-                }
-            } finally {
-                Pop-Location
-                $env:DATABASE_URL = $oldDataUrl
-                $env:NEXT_PUBLIC_WOODTEK_BUILD = $oldBuildEnv
+
+            $repoNext = Join-Path $ParentDir ".next"
+            $repoStandalone = Join-Path $repoNext "standalone"
+            $buildStamp = Join-Path $repoNext "workflow-lab-build.json"
+            $reusableBuild = $false
+            $reuseReason = ""
+            if ((Test-Path $buildStamp) -and (Test-Path (Join-Path $repoStandalone "server.js"))) {
+                try {
+                    $stampData = Get-Content -Raw -Path $buildStamp | ConvertFrom-Json
+                    if ($stampData.sha -eq $buildSha) {
+                        $reusableBuild = $true
+                        $reuseReason = "built by this helper from commit $buildSha"
+                    }
+                } catch { }
             }
-            $repoStandalone = Join-Path $ParentDir ".next\standalone"
+            # A build the owner made by hand (no stamp) is still good when it is
+            # newer than every source file - no reason to rebuild for two minutes.
+            if (-not $reusableBuild) {
+                $buildIdFile = Join-Path $repoNext "BUILD_ID"
+                if ((Test-Path (Join-Path $repoStandalone "server.js")) -and (Test-Path $buildIdFile)) {
+                    try {
+                        $builtAt = (Get-Item -LiteralPath $buildIdFile).LastWriteTime
+                        $newestSource = Get-NewestSourceWrite $ParentDir
+                        if ($newestSource -lt $builtAt) {
+                            $reusableBuild = $true
+                            $reuseReason = "it is newer than every source file in the repository"
+                        }
+                    } catch { }
+                }
+            }
+
+            if ($reusableBuild) {
+                Write-Info "Reusing the existing build in $repoNext ($reuseReason) - nothing to rebuild."
+            } else {
+                # A half-written .next from an earlier attempt is the usual reason
+                # the second build fails on Windows. Only ever touch the repo's own
+                # build output - never the factory installation, never the lab.
+                if ((Test-SafeRepoFolder) -and (Test-Path $repoNext)) {
+                    Write-Info "Clearing the previous build in $repoNext first (a stale build makes a second attempt fail)."
+                    Remove-Item -Path $repoNext -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                $oldDataUrl = $env:DATABASE_URL
+                $oldBuildEnv = $env:NEXT_PUBLIC_WOODTEK_BUILD
+                $oldTelemetry = $env:NEXT_TELEMETRY_DISABLED
+                $env:DATABASE_URL = $DbUrl
+                $env:NEXT_PUBLIC_WOODTEK_BUILD = "$buildSha"
+                $env:NEXT_TELEMETRY_DISABLED = "1"
+                Push-Location $ParentDir
+                try {
+                    "=== $(Get-Date -Format s)  next build  in $ParentDir  (commit $buildSha) ===" |
+                        Out-File -FilePath $buildLog -Encoding utf8 -Force
+                    # Show the build live AND keep it, so a failure can be diagnosed
+                    # from logs\lab-build.log instead of a photograph of the window.
+                    & $nodeExe $nextCli "build" 2>&1 | Tee-Object -FilePath $buildLog -Append | Out-Host
+                    $buildExit = $LASTEXITCODE
+                } finally {
+                    Pop-Location
+                    $env:DATABASE_URL = $oldDataUrl
+                    $env:NEXT_PUBLIC_WOODTEK_BUILD = $oldBuildEnv
+                    $env:NEXT_TELEMETRY_DISABLED = $oldTelemetry
+                }
+                if ($buildExit -ne 0) {
+                    $buildTail = @(Get-Content -Path $buildLog -Tail 25 -ErrorAction SilentlyContinue)
+                    Write-Host ""
+                    Write-Host "[lab] The build stopped with exit code $buildExit. Last lines of the build:" -ForegroundColor Red
+                    foreach ($line in $buildTail) { Write-Host "     $line" -ForegroundColor Yellow }
+                    throw ("The Next.js production build of the lab failed (exit code $buildExit). The full output is kept in $buildLog. " +
+                           "The factory installation is untouched and this folder is marked as a lab, so simply run the helper again once the build works. " +
+                           "To watch the same build yourself, open a command window in $ParentDir and run: " +
+                           "`"$nodeExe`" node_modules\next\dist\bin\next build   " +
+                           "(do NOT use npm run build - that stops the running factory server).")
+                }
+                try {
+                    [System.IO.File]::WriteAllText(
+                        $buildStamp,
+                        (@{ sha = "$buildSha"; builtAt = ((Get-Date).ToUniversalTime().ToString("s") + "Z") } | ConvertTo-Json),
+                        (New-Object System.Text.UTF8Encoding($false)))
+                } catch { }
+            }
+
             if (-not (Test-Path (Join-Path $repoStandalone "server.js"))) {
                 throw "The build finished without .next\standalone\server.js - cannot create the lab."
             }
@@ -535,7 +667,7 @@ Write-Step "Laying down the lab application files"
             if (Test-Path $staticSrc) { Copy-TreeContents $staticSrc (Join-Path $standalone ".next\static") }
             $publicSrc = Join-Path $ParentDir "public"
             if (Test-Path $publicSrc) { Copy-TreeContents $publicSrc (Join-Path $standalone "public") }
-            Write-Info "Built lab application files from commit $buildSha."
+            Write-Info "Lab application files are in place (built from commit $buildSha)."
             foreach ($file in @("start-prod.cjs", "check-server.js", ".env.example", "RUNBOOK.txt")) {
                 if (Copy-FileIfExists (Join-Path $ParentDir $file) (Join-Path $TargetDir $file)) {
                     Write-Info "Copied $file"
@@ -547,10 +679,6 @@ Write-Step "Laying down the lab application files"
             }
         }
     }
-
-if ($Action -eq "Refresh") {
-    Write-Info "The lab .env, data, logs and backups were left exactly as they were."
-}
 
 # data/logs/backups are created only now, after the application files are in
 # place, so a failed copy does not leave half a folder behind.
