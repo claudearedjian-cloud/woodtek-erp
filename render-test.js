@@ -178,6 +178,10 @@ check(
     && scheduleSource.includes("batchId: proofFor.batchId"),
   "batch dispatch: UI delivers one named batch and shows sibling progress",
 );
+const proofSubmitStart = scheduleSource.indexOf("const confirmDelivery = async");
+const proofSubmitEnd = scheduleSource.indexOf("// Packing slip:", proofSubmitStart);
+const proofSubmitSource = scheduleSource.slice(proofSubmitStart, proofSubmitEnd);
+check(proofSubmitSource.includes('stage: "delivered"') && proofSubmitSource.includes("proof:") && !proofSubmitSource.includes("deliveryPercent") && dispatchApiSource.includes("Number(body.deliveryPercent) !== 100"), "batch dispatch: 100% proof submission uses the full-delivery path and legacy 100% payloads are accepted only as proof flow");
 check(
   scheduleSource.includes("dispatchOrderFilter")
     && scheduleSource.includes("dispatchOrderOptions")

@@ -290,7 +290,6 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           orderId: proofFor.orderId ?? proofFor.id,
           batchId: proofFor.batchId ?? null,
           stage: "delivered",
-          deliveryPercent: 100,
           proof: { receivedBy: proofForm.receivedBy.trim(), notes: proofForm.notes.trim() },
         }),
       });

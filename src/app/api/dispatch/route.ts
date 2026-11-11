@@ -348,7 +348,7 @@ export async function PUT(request: Request) {
           };
       if (!currentEntry) throw Object.assign(new Error("Dispatch batch is unavailable."), { httpStatus: 404 });
 
-      if (body.deliveryPercent !== undefined) {
+      if (body.deliveryPercent !== undefined && stage !== "delivered") {
         if (stage !== "awaiting_delivery" || currentEntry.stage !== "awaiting_delivery") {
           throw Object.assign(new Error("Partial delivery can be recorded only while this batch is Awaiting delivery."), { httpStatus: 409 });
         }
@@ -379,6 +379,11 @@ export async function PUT(request: Request) {
           deliveryPercent: percentResult.percent,
           partial: true,
         };
+      }
+      // Compatibility with clients that submit 100% alongside the proof form:
+      // full delivery still follows the normal proof + all-batches flow below.
+      if (body.deliveryPercent !== undefined && Number(body.deliveryPercent) !== 100) {
+        throw Object.assign(new Error("A full delivery confirmation must be 100%."), { httpStatus: 400 });
       }
 
       if (stage !== currentEntry.stage) {
