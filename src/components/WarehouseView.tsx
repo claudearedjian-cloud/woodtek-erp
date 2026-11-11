@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { can } from "@/lib/permissions";
-import { sentQty } from "@/lib/bomDelivery";
+import { fulfilmentLabel, preparedQty, sentQty } from "@/lib/bomDelivery";
 import { useT } from "@/lib/langContext";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 
@@ -41,66 +41,91 @@ interface WarehouseRow {
 
 const EMPTY_WAREHOUSE_FORM = { id: "", name: "", code: "", address: "", active: true };
 
-/** Prepare / Send / Partial / Undo — identical in every view. */
+/** Prepare and send quantities independently — identical in every view. */
 function LineActions({
   line,
   canUpdate,
   busy,
-  onStatus,
-  onPartial,
+  onPrepare,
+  onSend,
+  onPartialPrepare,
+  onPartialSend,
+  onReset,
   compact = false,
 }: {
   line: Line;
   canUpdate: boolean;
   busy: boolean;
-  onStatus: (line: Line, status: Line["status"]) => void;
-  onPartial: (line: Line) => void;
+  onPrepare: (line: Line) => void;
+  onSend: (line: Line) => void;
+  onPartialPrepare: (line: Line) => void;
+  onPartialSend: (line: Line) => void;
+  onReset: (line: Line) => void;
   compact?: boolean;
 }) {
-  const t = useT();
+  const total = Math.max(0, Number(line.quantityUsed) || 0);
+  const prepared = preparedQty(line);
+  const sent = sentQty(line);
+  const toPrepare = Math.max(0, total - prepared);
+  const readyToSend = Math.max(0, prepared - sent);
   if (!canUpdate) return null;
   const buttonBase = compact ? "px-2 py-1 text-[10px]" : "px-2.5 py-1.5 text-[10px]";
   return (
-    <div className="flex items-center gap-1.5">
-      {line.status === "Requested" && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onStatus(line, "Prepared")}
-          className={`flex items-center gap-1 rounded-lg bg-sky-600 font-black text-white hover:bg-sky-500 disabled:opacity-50 ${buttonBase}`}
-        >
-          <PackageCheck className="h-3.5 w-3.5" /> {t("Prepare")}
-        </button>
-      )}
-      {line.status === "Prepared" && (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {toPrepare > 0 && (
         <>
           <button
             type="button"
             disabled={busy}
-            onClick={() => onStatus(line, "Delivered")}
-            className={`flex items-center gap-1 rounded-lg bg-emerald-600 font-black text-white hover:bg-emerald-500 disabled:opacity-50 ${buttonBase}`}
+            onClick={() => onPrepare(line)}
+            title={`Prepare all ${toPrepare} remaining unit(s)`}
+            className={`flex items-center gap-1 rounded-lg bg-sky-600 font-black text-white hover:bg-sky-500 disabled:opacity-50 ${buttonBase}`}
           >
-            <Send className="h-3.5 w-3.5" /> {t("Send")}
+            <PackageCheck className="h-3.5 w-3.5" /> {prepared > 0 ? "Prepare rest" : "Prepare all"}
           </button>
-          {line.quantityUsed > 1 && (
+          {toPrepare > 1 && (
             <button
               type="button"
               disabled={busy}
-              onClick={() => onPartial(line)}
-              title="Send part of this quantity now, the rest later"
+              onClick={() => onPartialPrepare(line)}
+              title={`Record part of the remaining ${toPrepare} unit(s) as prepared`}
               className={`rounded-lg border border-sky-500/50 bg-sky-500/10 font-black text-sky-300 hover:bg-sky-500/20 disabled:opacity-50 ${buttonBase}`}
             >
-              Partial…
+              Partial prepare…
             </button>
           )}
         </>
       )}
-      {line.status !== "Requested" && (
+      {readyToSend > 0 && (
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onSend(line)}
+            title={`Send all ${readyToSend} prepared unit(s) not yet sent`}
+            className={`flex items-center gap-1 rounded-lg bg-emerald-600 font-black text-white hover:bg-emerald-500 disabled:opacity-50 ${buttonBase}`}
+          >
+            <Send className="h-3.5 w-3.5" /> Send prepared
+          </button>
+          {readyToSend > 1 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onPartialSend(line)}
+              title={`Send part of the ${readyToSend} prepared unit(s) now`}
+              className={`rounded-lg border border-emerald-500/50 bg-emerald-500/10 font-black text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 ${buttonBase}`}
+            >
+              Partial send…
+            </button>
+          )}
+        </>
+      )}
+      {(prepared > 0 || sent > 0) && (
         <button
           type="button"
           disabled={busy}
-          onClick={() => onStatus(line, "Requested")}
-          title="Move back to Requested"
+          onClick={() => onReset(line)}
+          title="Undo preparation and delivery counts"
           className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:text-white disabled:opacity-50"
         >
           <Undo2 className="h-3.5 w-3.5" />
@@ -122,6 +147,7 @@ interface Line {
   released: boolean;
   status: "Requested" | "Prepared" | "Delivered";
   machineId: number | null;
+  preparedQty?: number | null;
   deliveredQty?: number | null;
   productionItemName?: string | null;
   productionRecipeName?: string | null;
@@ -141,9 +167,12 @@ interface BoardOrder {
   receivedState?: string | null;
 }
 
-const STATUS_STYLE: Record<Line["status"], string> = {
+const STATUS_STYLE: Record<string, string> = {
   Requested: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-  Prepared: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  "Partially prepared": "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  Prepared: "bg-blue-500/15 text-blue-300 border-blue-500/40",
+  "Partially delivered": "bg-teal-500/15 text-teal-300 border-teal-500/40",
+  "Partially prepared & sent": "bg-cyan-500/15 text-cyan-200 border-cyan-500/40",
   Delivered: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
 };
 
@@ -267,18 +296,13 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
     void loadWarehouses();
   }, [load, loadWarehouses]);
 
-  const setStatus = async (line: Line, status: Line["status"], machineId?: number | null, deliverQty?: number) => {
+  const setStatus = async (line: Line, status: Line["status"], machineId?: number | null) => {
     setBusyId(line.id);
     try {
       const res = await fetch("/api/bom", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          allocationId: line.id,
-          status,
-          machineId: machineId ?? line.machineId,
-          ...(deliverQty != null ? { deliverQty } : {}),
-        }),
+        body: JSON.stringify({ allocationId: line.id, status, machineId: machineId ?? line.machineId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed to update status");
@@ -291,18 +315,63 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
     }
   };
 
-  // Partial send: ask for the quantity, clamp it, pick the resulting status.
-  const sendPartial = (line: Line) => {
-    const remaining = line.quantityUsed - sentQty(line);
+  const runQuantityAction = async (line: Line, action: "prepare" | "send", quantity: number) => {
+    if (quantity <= 0) return;
+    setBusyId(line.id);
+    try {
+      const res = await fetch("/api/bom", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allocationId: line.id, action, quantity }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Could not ${action} material.`);
+      setWarn(data.warning || "");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Could not ${action} material.`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const prepareAll = (line: Line) => runQuantityAction(line, "prepare", Math.max(0, line.quantityUsed - preparedQty(line)));
+  const sendAllPrepared = (line: Line) => runQuantityAction(line, "send", Math.max(0, preparedQty(line) - sentQty(line)));
+
+  const partialPrepare = (line: Line) => {
+    const prepared = preparedQty(line);
+    const remaining = Math.max(0, line.quantityUsed - prepared);
     const raw = window.prompt(
-      `Send how many of "${line.itemName || "this line"}" to the floor? (0–${line.quantityUsed}, ${remaining} not sent yet)`,
+      `Already prepared ${prepared}/${line.quantityUsed} ${line.itemUnit || "unit(s)"}. How many additional ${line.itemUnit || "unit(s)"} should be prepared? Remaining: ${remaining}.`,
       String(remaining),
     );
-    if (raw == null) return; // cancelled
-    const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(raw) || 0)));
-    if (n <= 0) return;
-    setStatus(line, n >= line.quantityUsed ? "Delivered" : "Prepared", line.machineId, n);
+    if (raw == null) return;
+    const quantity = Math.floor(Number(raw));
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining) {
+      setError(`Enter a whole quantity from 1 to ${remaining}.`);
+      return;
+    }
+    void runQuantityAction(line, "prepare", quantity);
   };
+
+  const partialSend = (line: Line) => {
+    const prepared = preparedQty(line);
+    const sent = sentQty(line);
+    const remaining = Math.max(0, prepared - sent);
+    const raw = window.prompt(
+      `Already sent ${sent}/${line.quantityUsed}; prepared ${prepared}/${line.quantityUsed}. How many additional prepared ${line.itemUnit || "unit(s)"} should be sent now? Remaining ready to send: ${remaining}.`,
+      String(remaining),
+    );
+    if (raw == null) return;
+    const quantity = Math.floor(Number(raw));
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining) {
+      setError(`Enter a whole quantity from 1 to ${remaining}.`);
+      return;
+    }
+    void runQuantityAction(line, "send", quantity);
+  };
+
+  const resetFulfilment = (line: Line) => setStatus(line, "Requested", line.machineId);
 
   const withLines = useMemo(() => orders.filter((o) => o.materials.length > 0), [orders]);
 
@@ -613,14 +682,18 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                 <span className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-bold text-slate-300">
                   → {stationLabel(order, line)}
                 </span>
-                <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[line.status]}`}>{t(line.status)}</span>
+                <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[fulfilmentLabel(line)]}`}>{t(fulfilmentLabel(line))}</span>
+                <span className="text-[10px] font-mono text-slate-400">P {preparedQty(line)}/{line.quantityUsed} · S {sentQty(line)}/{line.quantityUsed} · Prep left {Math.max(0, line.quantityUsed - preparedQty(line))} · Ready {Math.max(0, preparedQty(line) - sentQty(line))}</span>
                 <LineActions
                   compact
                   line={line}
                   canUpdate={canUpdate}
                   busy={busyId === line.id}
-                  onStatus={(row, status) => void setStatus(row, status)}
-                  onPartial={sendPartial}
+                  onPrepare={prepareAll}
+                  onSend={sendAllPrepared}
+                  onPartialPrepare={partialPrepare}
+                  onPartialSend={partialSend}
+                  onReset={resetFulfilment}
                 />
               </div>
             ))}
@@ -636,7 +709,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                     <th className="px-4 py-3">Material</th>
                     <th className="px-4 py-3">SKU</th>
                     <th className="px-4 py-3 text-right">Qty</th>
-                    <th className="px-4 py-3 text-center">Sent</th>
+                    <th className="px-4 py-3 text-center">Prepared / sent / remaining</th>
                     <th className="px-4 py-3">Station</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3 text-right">Actions</th>
@@ -644,6 +717,7 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 text-xs text-slate-200">
                   {flatLines.map(({ order, line }) => {
+                    const prepared = preparedQty(line);
                     const sent = sentQty(line);
                     return (
                       <tr key={`${order.id}-${line.id}`} className="transition hover:bg-slate-800/40">
@@ -654,12 +728,13 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                         <td className="px-4 py-2.5 text-right font-mono font-black text-amber-300">
                           {line.quantityUsed}<span className="ml-1 text-[10px] text-slate-500">{line.itemUnit || "pcs"}</span>
                         </td>
-                        <td className="px-4 py-2.5 text-center font-mono text-[11px] text-slate-400">
-                          {line.quantityUsed > 1 ? `${sent}/${line.quantityUsed}` : sent > 0 ? "✓" : "—"}
+                        <td className="px-4 py-2.5 text-center font-mono text-[11px] text-slate-300">
+                          <div>P {prepared}/{line.quantityUsed} · S {sent}/{line.quantityUsed}</div>
+                          <div className="mt-0.5 text-[10px] text-slate-500">Prep left {Math.max(0, line.quantityUsed - prepared)} · Ready to send {Math.max(0, prepared - sent)}</div>
                         </td>
                         <td className="px-4 py-2.5 text-slate-300">{stationLabel(order, line)}</td>
                         <td className="px-4 py-2.5">
-                          <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[line.status]}`}>{t(line.status)}</span>
+                          <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[fulfilmentLabel(line)]}`}>{t(fulfilmentLabel(line))}</span>
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex justify-end">
@@ -668,8 +743,11 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                               line={line}
                               canUpdate={canUpdate}
                               busy={busyId === line.id}
-                              onStatus={(row, status) => void setStatus(row, status)}
-                              onPartial={sendPartial}
+                              onPrepare={prepareAll}
+                              onSend={sendAllPrepared}
+                              onPartialPrepare={partialPrepare}
+                              onPartialSend={partialSend}
+                              onReset={resetFulfilment}
                             />
                           </div>
                         </td>
@@ -730,11 +808,14 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                         <span className="ml-1 text-[10px] font-bold text-slate-500">{line.itemUnit || "pcs"}</span>
                       </div>
                       {(() => {
+                        const prepared = preparedQty(line);
                         const sent = sentQty(line);
-                        if (line.status === "Requested" || line.quantityUsed <= 1 || sent <= 0 || sent >= line.quantityUsed) return null;
+                        if (prepared <= 0 && sent <= 0) return null;
                         return (
-                          <div className="mt-0.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-black text-sky-300" title="Units already sent to the floor">
-                            {sent}/{line.quantityUsed} sent
+                          <div className="mt-1 flex flex-wrap justify-center gap-1 text-[9px] font-black">
+                            <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-300" title="Units prepared in the warehouse">Prepared {prepared}/{line.quantityUsed}</span>
+                            <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300" title="Units sent to the floor">Sent {sent}/{line.quantityUsed}</span>
+                            <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-slate-300" title="Units left to prepare and prepared units not yet sent">Prep left {Math.max(0, line.quantityUsed - prepared)} · Ready to send {Math.max(0, prepared - sent)}</span>
                           </div>
                         );
                       })()}
@@ -777,16 +858,20 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
                       </span>
                     ) : null}
 
-                    <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[line.status]}`}>
-                      {t(line.status)}
+                    <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase ${STATUS_STYLE[fulfilmentLabel(line)]}`}>
+                      {t(fulfilmentLabel(line))}
                     </span>
+                    <span className="text-[10px] font-mono text-slate-400">P {preparedQty(line)}/{line.quantityUsed} · S {sentQty(line)}/{line.quantityUsed} · Prep left {Math.max(0, line.quantityUsed - preparedQty(line))} · Ready {Math.max(0, preparedQty(line) - sentQty(line))}</span>
 
                     <LineActions
                       line={line}
                       canUpdate={canUpdate}
                       busy={busyId === line.id}
-                      onStatus={(row, status) => void setStatus(row, status)}
-                      onPartial={sendPartial}
+                      onPrepare={prepareAll}
+                      onSend={sendAllPrepared}
+                      onPartialPrepare={partialPrepare}
+                      onPartialSend={partialSend}
+                      onReset={resetFulfilment}
                     />
                   </div>
                 ))}

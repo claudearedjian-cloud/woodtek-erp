@@ -855,12 +855,15 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
   const designGateBlockers: any[] = Array.isArray(designGate?.blockers) ? designGate.blockers : [];
   const designGateIssued: any[] = Array.isArray(designGate?.issuedRevisions) ? designGate.issuedRevisions : [];
   const getStatusBadge = (s: string) => {
-    if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
-    if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border border-teal-500/30";
-    if (s === "In Progress") return "bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse";
-    if (s === "Ready") return "bg-blue-500/20 text-blue-300 border border-blue-500/30";
-    if (s === "Rejected/Rework") return "bg-rose-500/20 text-rose-300 border border-rose-500/30";
-    return "bg-slate-800 text-slate-400 border border-slate-700";
+    if (s === "Completed") return "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
+    if (s === "Delivered") return "bg-teal-500/20 text-teal-300 border border-teal-500/40";
+    if (s === "In Progress" || s === "In Production") return "bg-amber-500/20 text-amber-200 border border-amber-500/50";
+    if (s === "Paused") return "bg-violet-500/20 text-violet-200 border border-violet-500/50";
+    if (s === "Ready") return "bg-blue-500/20 text-blue-200 border border-blue-500/40";
+    if (s === "Rejected/Rework" || s === "On Hold" || s === "Cancelled") return "bg-rose-500/20 text-rose-200 border border-rose-500/50";
+    if (s === "Quality Review") return "bg-purple-500/20 text-purple-200 border border-purple-500/40";
+    if (s === "Pending") return "bg-slate-700 text-slate-200 border border-slate-600";
+    return "bg-slate-800 text-slate-300 border border-slate-600";
   };
 
   return (
@@ -876,9 +879,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
           </button>
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="font-mono text-2xl font-black text-amber-400">{order.orderNumber}</span>
-            <span className={`text-xs font-extrabold px-2.5 py-0.5 rounded uppercase ${
-              order.status === "Completed" ? "bg-emerald-500 text-slate-950 font-black" : order.status === "Delivered" ? "bg-teal-500 text-slate-950 font-black" : "bg-amber-500 text-slate-950 font-black"
-            }`}>
+            <span className={`inline-flex rounded-xl border px-4 py-1.5 text-base font-black uppercase tracking-wide ${getStatusBadge(order.status)}`}>
               {order.status}
             </span>
             <span className="text-xs text-slate-400 font-semibold bg-slate-800 px-2.5 py-0.5 rounded border border-slate-700">
@@ -1178,7 +1179,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       {item.steps.map((step: any, index: number) => (
                         <React.Fragment key={step.operationId}>
-                          <span className={`rounded-lg border px-2 py-1 text-[10px] font-bold ${liveSteps[index]?.status === "Completed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : liveSteps[index]?.status === "In Progress" ? "border-amber-400 bg-amber-500/20 text-amber-200" : "border-slate-700 bg-slate-950 text-slate-400"}`}>
+                          <span className={`rounded-lg border px-2.5 py-1.5 text-xs font-black ${getStatusBadge(liveSteps[index]?.status ?? "Pending")}`}>
                             {index + 1}. {step.operationName}
                           </span>
                           {index < item.steps.length - 1 && <span className="text-slate-600">→</span>}
@@ -1247,7 +1248,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                       {/* Left: Title & Status */}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2.5 mb-1.5">
-                          <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded uppercase ${getStatusBadge(op.status)}`}>
+                          <span className={`inline-flex rounded-xl border px-3 py-1 text-sm font-black uppercase tracking-wide ${getStatusBadge(op.status)}`}>
                             {op.status}
                           </span>
                           <span className="text-xs text-slate-500 font-medium">{op.productionItemName ? `Pass ${op.productionRoutePosition}/${op.productionRouteLength}` : `Step #${op.stepOrder}`}</span>

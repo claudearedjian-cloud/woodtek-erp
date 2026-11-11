@@ -23,6 +23,8 @@ export interface DispatchEntry {
   orderId?: number;
   createdAt?: string;
   updatedAt?: string;
+  /** Cumulative percentage of this order/batch physically delivered (0–100). */
+  deliveryPercent?: number;
   proof?: DispatchProof | null;
 }
 
@@ -79,6 +81,9 @@ function sanitizeEntries(raw: unknown, includeOrderId: boolean): Record<string, 
       ...(includeOrderId ? { orderId } : {}),
       ...(cleanIso(source.createdAt) ? { createdAt: cleanIso(source.createdAt) } : {}),
       ...(cleanIso(source.updatedAt) ? { updatedAt: cleanIso(source.updatedAt) } : {}),
+      deliveryPercent: stage === "delivered"
+        ? 100
+        : Math.max(0, Math.min(99, Math.floor(Number(source.deliveryPercent) || 0))),
       ...(proof !== undefined ? { proof } : {}),
     };
   }

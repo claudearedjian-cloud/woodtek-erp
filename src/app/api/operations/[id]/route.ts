@@ -29,6 +29,7 @@ import { readBomStatus, setBomStatus } from "@/lib/bomStatus.server";
 import { lockDispatchSchedule } from "@/lib/dispatchScheduling.server";
 import { dateToYmd, workBlockingEnabled, workLeaveBlock } from "@/lib/hrLeaveGate.server";
 import { orderDesignProductionGate } from "@/lib/designDepartment.server";
+import { recordOperationTimeTransition, removeOperationTimeEntries } from "@/lib/operationTime.server";
 
 const allowedStatuses = ["Pending", "Ready", "In Progress", "Paused", "Completed", "Rejected/Rework"];
 
@@ -667,6 +668,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
       return {
         operation: updatedOp,
+        previousStatus: currentOp.status,
+        transitionAt: transitionTime,
+        timingFallback: {
+          startTime: currentOp.startTime,
+          updatedAt: currentOp.updatedAt,
+          endTime: currentOp.endTime,
+          actualMinutes: currentOp.actualMinutes,
+        },
         progressPercent,
         orderStatus,
         machineClaimed: firstStartClaim,
@@ -674,6 +683,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         persistedMachineChanged,
       };
     });
+
+    let timeWarning: string | undefined;
+    if (result.operation.status !== result.previousStatus) {
+      try {
+        await recordOperationTimeTransition({
+          operationId: result.operation.id,
+          previousStatus: result.previousStatus,
+          nextStatus: result.operation.status,
+          at: result.transitionAt,
+          fallback: result.timingFallback,
+        });
+      } catch (error) {
+        console.warn("Operation time history could not be saved:", error instanceof Error ? error.message : error);
+        timeWarning = "The operation status was saved, but its detailed time history could not be recorded.";
+      }
+    }
 
     // Candidate storage is advisory before Start. As soon as one station wins,
     // collapse the overlay to that persisted machine; queue visibility already
@@ -707,6 +732,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             existing?.status ?? "Requested",
             result.operation.machineId,
             existing?.deliveredQty ?? null,
+            existing?.preparedQty ?? null,
           );
         } catch (error) {
           console.warn("Warehouse target sync skipped:", error instanceof Error ? error.message : error);
@@ -739,7 +765,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         + `${result.machineClaimed ? ` · claimed machine ${result.operation.machineId}` : ""}`,
       result.operation.id,
     );
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, ...(timeWarning ? { timeWarning } : {}) });
   } catch (error: unknown) {
     if (error instanceof WorkflowError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
@@ -841,6 +867,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       return { success: true, progressPercent };
     });
     clearOperationMachineCandidates([operationId]);
+    try { await removeOperationTimeEntries([operationId]); } catch (error) {
+      console.warn("Deleted operation timing could not be cleared:", error instanceof Error ? error.message : error);
+    }
     return NextResponse.json(result);
   } catch (error: unknown) {
     if (error instanceof WorkflowError) return NextResponse.json({ error: error.message }, { status: error.status });

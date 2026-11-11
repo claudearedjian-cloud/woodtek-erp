@@ -32,6 +32,7 @@ compile("src/lib/menuConfig.ts", "lib/menuConfig.js");
 compile("src/lib/menuIcons.ts", "lib/menuIcons.js");
 compile("src/lib/menuDesigner.ts", "lib/menuDesigner.js");
 compile("src/lib/bomDelivery.ts", "lib/bomDelivery.js");
+compile("src/lib/operationTime.ts", "lib/operationTime.js");
 compile("src/lib/downtimeReasons.ts", "lib/downtimeReasons.js");
 compile("src/lib/digest.ts", "lib/digest.js");
 compile("src/lib/clientStatement.ts", "lib/clientStatement.js");
@@ -817,6 +818,26 @@ check(bd.sentQty({ status: "Delivered", quantityUsed: 10, deliveredQty: null }) 
 check(bd.sentQty({ status: "Prepared", quantityUsed: 10, deliveredQty: 4 }) === 4, "bomDelivery: partial Prepared line reports its tally");
 check(bd.sentQty({ status: "Prepared", quantityUsed: 10 }) === 0, "bomDelivery: Prepared without tally = 0 sent");
 check(bd.statusAfterPartial(10, 10) === "Delivered" && bd.statusAfterPartial(4, 10) === "Prepared", "bomDelivery: status flips to Delivered only at full qty");
+check(bd.preparedQty({ status: "Prepared", quantityUsed: 10, preparedQty: 5, deliveredQty: 3 }) === 5, "bomDelivery: separate partial preparation tally is preserved");
+check(bd.fulfilmentLabel({ status: "Prepared", quantityUsed: 10, preparedQty: 5, deliveredQty: 5 }) === "Partially prepared & sent", "bomDelivery: displays partial preparation and sending together");
+const bomPrepared = bd.applyBomQuantityAction({ status: "Requested", quantityUsed: 10 }, "prepare", 5);
+const bomSent = bd.applyBomQuantityAction({ status: "Prepared", quantityUsed: 10, preparedQty: bomPrepared.preparedQty, deliveredQty: 0 }, "send", 5);
+check(bomPrepared.ok && bomPrepared.preparedQty === 5 && bomSent.ok && bomSent.preparedQty === 5 && bomSent.deliveredQty === 5, "bomDelivery: prepares and sends quantities independently");
+check(!bd.applyBomQuantityAction({ status: "Prepared", quantityUsed: 10, preparedQty: 5, deliveredQty: 0 }, "send", 6).ok, "bomDelivery: refuses sending more than the prepared quantity");
+check(!bd.applyBomQuantityAction({ status: "Prepared", quantityUsed: 10, preparedQty: 5, deliveredQty: 0 }, "prepare", 6).ok, "bomDelivery: refuses preparing more than the remaining quantity");
+
+// ---- operation pause/execution ledger ----------------------------------
+const ot = require("./compiled/lib/operationTime.js");
+let opTime = ot.advanceOperationTime(null, "Ready", "In Progress", "2026-10-01T08:00:00.000Z");
+opTime = ot.advanceOperationTime(opTime, "In Progress", "Paused", "2026-10-01T08:10:00.000Z");
+const pausedSnapshot = ot.summarizeOperationTime(opTime, "Paused", {}, "2026-10-01T08:15:00.000Z");
+check(pausedSnapshot.executionSeconds === 600 && pausedSnapshot.pausedSeconds === 300 && pausedSnapshot.totalSeconds === 900, "operation time: pause snapshot separates execution, paused and total elapsed time");
+opTime = ot.advanceOperationTime(opTime, "Paused", "In Progress", "2026-10-01T08:20:00.000Z");
+opTime = ot.advanceOperationTime(opTime, "In Progress", "Completed", "2026-10-01T08:30:00.000Z");
+const completedSnapshot = ot.summarizeOperationTime(opTime, "Completed", {}, "2026-10-01T08:30:00.000Z");
+check(completedSnapshot.executionSeconds === 1200 && completedSnapshot.pausedSeconds === 600 && completedSnapshot.totalSeconds === 1800 && completedSnapshot.historyComplete, "operation time: resumed work accumulates exact active and pause durations through completion");
+const reworkCycle = ot.advanceOperationTime(opTime, "Completed", "In Progress", "2026-10-01T09:00:00.000Z");
+check(reworkCycle?.executionSeconds === 0 && reworkCycle?.pausedSeconds === 0 && reworkCycle.startedAt === "2026-10-01T09:00:00.000Z", "operation time: a rework cycle starts a fresh timing total");
 
 // ---- downtime reason codes + Pareto ----
 const dr = require("./compiled/lib/downtimeReasons.js");
@@ -1404,6 +1425,9 @@ check(dispatch.dispatchBatchKey(71) === "batch:71" && dispatch.dispatchLegacyOrd
 check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "awaiting_delivery" } }) === false, "batch dispatch: one delivered batch never delivers its sibling or parent");
 check(dispatch.allCurrentBatchesDelivered([71, 72], { 71: { stage: "delivered" }, 72: { stage: "delivered" } }) === true, "batch dispatch: parent becomes deliverable only after every current batch");
 check(dispatch.allCurrentBatchesDelivered([], {}) === false, "batch dispatch: an empty material set cannot satisfy the all-batches roll-up");
+check(dispatch.validatePartialDeliveryPercent(0, 40).ok && dispatch.validatePartialDeliveryPercent(40, 75).ok, "batch dispatch: cumulative partial-delivery percentage advances upward");
+check(!dispatch.validatePartialDeliveryPercent(75, 75).ok && !dispatch.validatePartialDeliveryPercent(75, 60).ok, "batch dispatch: partial delivery cannot repeat or move backward");
+check(!dispatch.validatePartialDeliveryPercent(75, 100).ok, "batch dispatch: 100 percent requires the full delivery proof flow");
 
 // ---- automatic production Dispatch slot planner ----
 const dsp = require("./compiled/lib/dispatchScheduling.js");

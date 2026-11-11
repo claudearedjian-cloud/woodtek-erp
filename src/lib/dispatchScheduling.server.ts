@@ -221,6 +221,7 @@ export async function autoScheduleDispatchSlots(options: {
           current?.status ?? "Requested",
           placement.machineId,
           current?.deliveredQty ?? null,
+          current?.preparedQty ?? null,
         );
       }
     } catch (error) {

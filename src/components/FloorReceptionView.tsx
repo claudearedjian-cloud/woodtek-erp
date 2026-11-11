@@ -8,15 +8,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { PackageCheck, RefreshCw, AlertTriangle, ArrowRight } from "lucide-react";
 import { canAssignMachines } from "@/lib/permissions";
+import { fulfilmentLabel, preparedQty, sentQty } from "@/lib/bomDelivery";
 
 type Line = {
   id: number;
   itemName?: string | null;
   productionItemName?: string | null;
   itemSku?: string | null;
-  quantityUsed?: number;
+  quantityUsed: number;
   itemUnit?: string | null;
-  status?: string;
+  status: "Requested" | "Prepared" | "Delivered";
+  preparedQty?: number | null;
+  deliveredQty?: number | null;
 };
 
 type RxOrder = {
@@ -314,15 +317,17 @@ export default function FloorReceptionView({
                           {l.productionItemName ? `${l.productionItemName} · ` : ""}{l.quantityUsed} {l.itemUnit || "pcs"} — {l.itemName || l.itemSku}
                         </span>
                         <span
-                          className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${
-                            l.status === "Delivered"
-                              ? "bg-emerald-500/10 text-emerald-300"
-                              : l.status === "Prepared"
-                                ? "bg-sky-500/10 text-sky-300"
-                                : "bg-amber-500/10 text-amber-300"
+                          className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black uppercase ${
+                            fulfilmentLabel(l) === "Delivered"
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                              : fulfilmentLabel(l).includes("sent") || fulfilmentLabel(l) === "Partially delivered"
+                                ? "border-teal-500/40 bg-teal-500/10 text-teal-300"
+                                : fulfilmentLabel(l).includes("prepared") || fulfilmentLabel(l) === "Prepared"
+                                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
                           }`}
                         >
-                          {l.status || "Requested"}
+                          {fulfilmentLabel(l)} · P {preparedQty(l)}/{l.quantityUsed || 0} · S {sentQty(l)}/{l.quantityUsed || 0} · To prepare {Math.max(0, l.quantityUsed - preparedQty(l))} · Ready to send {Math.max(0, preparedQty(l) - sentQty(l))}
                         </span>
                       </div>
                     ))}

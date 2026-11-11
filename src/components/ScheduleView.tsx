@@ -290,6 +290,7 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
           orderId: proofFor.orderId ?? proofFor.id,
           batchId: proofFor.batchId ?? null,
           stage: "delivered",
+          deliveryPercent: 100,
           proof: { receivedBy: proofForm.receivedBy.trim(), notes: proofForm.notes.trim() },
         }),
       });
@@ -466,12 +467,59 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
       if (!res.ok) {
         const d = await res.json().catch(() => ({} as any));
         setDispatchError(d.error || "Could not update the stage.");
+        return;
       }
       await fetchDispatch();
       fetchQc();
       onRefresh();
     } catch {
-      /* ignore */
+      setDispatchError("Could not update the stage.");
+    } finally {
+      setDispatchBusy(null);
+    }
+  };
+
+  const recordPartialDelivery = async (row: any) => {
+    const current = Math.max(0, Math.min(99, Math.floor(Number(row.deliveryPercent) || 0)));
+    const remaining = 100 - current;
+    const raw = window.prompt(
+      `${row.batchName || "This batch"}: already delivered ${current}%. Remaining: ${remaining}%. Enter the new total percentage delivered (1–100). At 100%, recipient confirmation is required.`,
+      String(current || 1),
+    );
+    if (raw == null) return;
+    const percent = Number(raw);
+    if (!Number.isInteger(percent) || percent <= current || percent > 100) {
+      setDispatchError(`Enter a whole percentage greater than ${current} and no more than 100.`);
+      return;
+    }
+    if (percent === 100) {
+      setDispatchError("");
+      setProofForm({ receivedBy: "", notes: "" });
+      setProofFor({ ...row, targetDeliveryPercent: 100 });
+      return;
+    }
+
+    const key = dispatchRowKey(row);
+    setDispatchBusy(key);
+    setDispatchError("");
+    try {
+      const res = await fetch("/api/dispatch", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: row.orderId ?? row.id,
+          batchId: row.batchId ?? null,
+          stage: "awaiting_delivery",
+          deliveryPercent: percent,
+        }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok) throw new Error(data.error || "Could not record partial delivery.");
+      await fetchDispatch();
+      onRefresh();
+      setNotice(`${row.batchName || "Batch"}: delivery recorded at ${percent}%.`);
+    } catch (error) {
+      setDispatchError(error instanceof Error ? error.message : "Could not record partial delivery.");
     } finally {
       setDispatchBusy(null);
     }
@@ -870,7 +918,17 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                         <span>{isServiceFlow(o.projectType) ? "Service" : "Project"} · {o.projectType}</span>
                         {o.itemSku && <span>{o.itemSku} · {o.quantityUsed} {o.itemUnit || "pcs"}</span>}
                         <span className="text-slate-400">Order batches: {o.deliveredBatchCount}/{o.totalBatchCount} delivered</span>
+                        {o.stage === "awaiting_delivery" && Number(o.deliveryPercent) > 0 && (
+                          <span className="rounded-md border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-sky-300">
+                            Batch delivered {o.deliveryPercent}% · {100 - o.deliveryPercent}% remaining
+                          </span>
+                        )}
                       </div>
+                      {o.stage === "awaiting_delivery" && Number(o.deliveryPercent) > 0 && (
+                        <div className="mt-1 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-800" title={`${o.deliveryPercent}% delivered`}>
+                          <div className="h-full rounded-full bg-sky-400" style={{ width: `${o.deliveryPercent}%` }} />
+                        </div>
+                      )}
                       {productionBlocked && (
                         <div className="mt-1 text-[10px] font-black text-blue-300">
                           <Clock3 className="mr-1 inline h-3 w-3" /> Slot reserved — this batch is still completing its own production route.
@@ -901,6 +959,17 @@ export default function ScheduleView({ machines = [], currentUser, onRefresh, se
                         </span>
                       ))}
                     </div>
+                    {canDispatch && o.stage === "awaiting_delivery" && (
+                      <button
+                        type="button"
+                        disabled={dispatchBusy === rowKey || productionBlocked}
+                        onClick={() => void recordPartialDelivery(o)}
+                        title={productionBlocked ? "Finish this material batch's production route first" : "Record the new cumulative percentage delivered for this batch"}
+                        className="rounded-lg border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 text-[11px] font-black text-sky-300 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {Number(o.deliveryPercent) > 0 ? "Update partial delivery…" : "Partial delivery…"}
+                      </button>
+                    )}
                     {canDispatch && o.stage !== "delivered" && nxt && (
                       <button
                         type="button"

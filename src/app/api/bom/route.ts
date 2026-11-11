@@ -24,6 +24,7 @@ import { logAudit } from "@/lib/audit.server";
 import { findProductionItemByMaterial } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
+import { applyBomQuantityAction, preparedQty as linePreparedQty, sentQty as lineSentQty } from "@/lib/bomDelivery";
 
 const VALID: BomStatus[] = ["Requested", "Prepared", "Delivered"];
 
@@ -137,7 +138,8 @@ export async function GET() {
         productionRecipeName: planned?.recipeName ?? null,
         status: entry?.status ?? "Requested",
         machineId: entry?.machineId ?? planned?.steps?.[0]?.machineId ?? null,
-        deliveredQty: entry?.deliveredQty ?? null,
+        preparedQty: linePreparedQty({ status: entry?.status ?? "Requested", quantityUsed: m.quantityUsed, preparedQty: entry?.preparedQty, deliveredQty: entry?.deliveredQty }),
+        deliveredQty: lineSentQty({ status: entry?.status ?? "Requested", quantityUsed: m.quantityUsed, deliveredQty: entry?.deliveredQty }),
       });
     }
     const machineById = new Map<number, (typeof machinesAll)[number]>(machinesAll.map((m) => [m.id, m]));
@@ -239,14 +241,11 @@ export async function PUT(request: Request) {
     }
 
     const allocationId = Number(body.allocationId);
-    const status = String(body.status) as BomStatus;
-    if (!Number.isInteger(allocationId) || !VALID.includes(status)) {
-      return NextResponse.json({ error: "allocationId and a valid status are required." }, { status: 400 });
+    const action = body.action === "prepare" || body.action === "send" ? body.action : null;
+    const requestedStatus = body.status == null ? null : String(body.status) as BomStatus;
+    if (!Number.isInteger(allocationId) || (!action && (!requestedStatus || !VALID.includes(requestedStatus)))) {
+      return NextResponse.json({ error: "allocationId and a valid warehouse action or status are required." }, { status: 400 });
     }
-    // Partial delivery: how many units have physically gone to the floor.
-    // "Delivered" always means the full line quantity; a smaller deliverQty
-    // keeps the line in "Prepared" with a tally. Undo to Requested clears it.
-    let deliveredQty: number | null = null;
     const [line] = await db
       .select({ id: orderMaterials.id, orderId: orderMaterials.orderId, itemId: orderMaterials.itemId, quantityUsed: orderMaterials.quantityUsed })
       .from(orderMaterials)
@@ -254,16 +253,70 @@ export async function PUT(request: Request) {
     if (!line) {
       return NextResponse.json({ error: "This material allocation no longer exists." }, { status: 404 });
     }
-    if (status === "Delivered") {
-      deliveredQty = line.quantityUsed;
-    } else if (body.deliverQty != null && body.deliverQty !== "") {
-      const n = Math.max(0, Math.min(line.quantityUsed, Math.floor(Number(body.deliverQty) || 0)));
-      deliveredQty = n > 0 ? n : null;
+    const existing = readBomStatus().entries[String(allocationId)];
+    const totalQty = Math.max(0, Math.floor(Number(line.quantityUsed) || 0));
+    const previousLine = {
+      status: existing?.status ?? "Requested",
+      quantityUsed: totalQty,
+      preparedQty: existing?.preparedQty,
+      deliveredQty: existing?.deliveredQty,
+    } as const;
+    const prevPrepared = linePreparedQty(previousLine);
+    const prevSent = lineSentQty(previousLine);
+    let prepared = prevPrepared;
+    let sent = prevSent;
+    let auditAction = "bom.update";
+
+    if (action) {
+      if (!Number.isInteger(Number(body.quantity)) || Number(body.quantity) <= 0) {
+        return NextResponse.json({ error: "Enter a positive whole quantity." }, { status: 400 });
+      }
+      const result = applyBomQuantityAction(previousLine, action, body.quantity);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: 409 });
+      }
+      prepared = result.preparedQty;
+      sent = result.deliveredQty;
+      auditAction = action === "prepare" ? "bom.prepare.partial" : "bom.send.partial";
+    } else if (requestedStatus === "Requested") {
+      prepared = 0;
+      sent = 0;
+      auditAction = "bom.reset";
+    } else if (requestedStatus === "Delivered") {
+      if (prevPrepared < totalQty) {
+        return NextResponse.json(
+          { error: `Prepare all ${totalQty} unit(s) before sending the remaining material.` },
+          { status: 409 },
+        );
+      }
+      prepared = prevPrepared;
+      sent = totalQty;
+      auditAction = "bom.deliver";
+    } else if (requestedStatus === "Prepared") {
+      // Backward-compatible full Prepare button. Re-saving the same status for
+      // a machine assignment preserves any partial counts already recorded.
+      if (existing?.status !== "Prepared" && body.deliverQty == null && body.preparedQty == null) prepared = totalQty;
+      if (body.preparedQty != null && body.preparedQty !== "") {
+        prepared = Math.max(0, Math.min(totalQty, Math.floor(Number(body.preparedQty) || 0)));
+      }
+      if (body.deliverQty != null && body.deliverQty !== "") {
+        sent = Math.max(0, Math.min(totalQty, Math.floor(Number(body.deliverQty) || 0)));
+        if (existing?.preparedQty == null && existing?.status === "Prepared") prepared = totalQty;
+      }
+      auditAction = sent > prevSent ? "bom.send" : prepared > prevPrepared ? "bom.prepare" : "bom.update";
     }
+
+    if (sent > prepared) {
+      return NextResponse.json({ error: "Material cannot be sent before it is prepared." }, { status: 409 });
+    }
+    const status: BomStatus = totalQty > 0 && sent >= totalQty
+      ? "Delivered"
+      : prepared > 0 ? "Prepared" : "Requested";
+    const deliveredQty = sent > 0 ? sent : null;
+    const preparedQty = prepared > 0 ? prepared : null;
     // Only a Manager may change the target machine; everyone else keeps the
     // machine the routing assigned (or the last manager-chosen one). A v2 line
     // always follows the first pass of its linked production chain.
-    const existing = readBomStatus().entries[String(allocationId)];
     const mayRoute = can(user.role, "users:manage");
     const wantsMachine = body.machineId != null && body.machineId !== "";
     const plannedItem = findProductionItemByMaterial(readOrderProductionPlan(line.orderId), allocationId);
@@ -281,13 +334,12 @@ export async function PUT(request: Request) {
     const machineId = mayRoute && wantsMachine
       ? Number(body.machineId)
       : linkedTarget;
-    setBomStatus(allocationId, status, machineId, deliveredQty);
-    logAudit(user, status === "Delivered" ? "bom.deliver" : `bom.${status.toLowerCase()}`, "bom_line", `BOM line -> ${status}${deliveredQty != null && deliveredQty < (line?.quantityUsed ?? 0) ? ` (${deliveredQty}/${line?.quantityUsed} sent)` : ""}`, allocationId);
+    setBomStatus(allocationId, status, machineId, deliveredQty, preparedQty);
+    logAudit(user, auditAction, "bom_line", `Warehouse ${action ?? status.toLowerCase()} · prepared ${prepared}/${totalQty} · sent ${sent}/${totalQty}`, allocationId);
 
     // Sending material to the floor is when stock is actually consumed (not
     // when the order is marked Completed); undoing a send restores it.
-    const prevSent = existing?.deliveredQty ?? 0;
-    const newSent = deliveredQty ?? 0;
+    const newSent = sent;
     let sendWarning: string | undefined;
     if (newSent !== prevSent) {
       const { applyBomSendDelta } = await import("@/lib/materials");
@@ -305,7 +357,7 @@ export async function PUT(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, allocationId, status, machineId, deliveredQty, warning: sendWarning });
+    return NextResponse.json({ ok: true, allocationId, status, machineId, preparedQty, deliveredQty, warning: sendWarning });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to update status";
     return NextResponse.json({ error: message }, { status: 500 });
