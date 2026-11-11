@@ -340,42 +340,54 @@ export default function FloorReceptionView({
                     </span>
                   </div>
                   <div className="mt-2 space-y-1">
-                    {lines.map((l) => (
-                      <div key={l.id} className="flex items-center justify-between gap-2 text-xs">
-                        <span className="truncate font-bold text-slate-200">
-                          {l.productionItemName ? `${l.productionItemName} · ` : ""}{l.quantityUsed} {l.itemUnit || "pcs"} — {l.itemName || l.itemSku}
-                        </span>
-                        <span
-                          className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black uppercase ${
-                            fulfilmentLabel(l) === "Delivered"
-                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                              : fulfilmentLabel(l).includes("sent") || fulfilmentLabel(l) === "Partially delivered"
-                                ? "border-teal-500/40 bg-teal-500/10 text-teal-300"
-                                : fulfilmentLabel(l).includes("prepared") || fulfilmentLabel(l) === "Prepared"
-                                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
-                                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                          }`}
-                        >
-                          {fulfilmentLabel(l)} · P {preparedQty(l)}/{l.quantityUsed || 0} · S {sentQty(l)}/{l.quantityUsed || 0} · To prepare {Math.max(0, l.quantityUsed - preparedQty(l))} · Ready to send {Math.max(0, preparedQty(l) - sentQty(l))}
-                        </span>
-                        {canApprove && (() => {
-                          const available = Math.max(0, sentQty(l) - Number(l.receivedQty || 0));
-                          const qty = Number(acceptQty[l.id] ?? String(available));
-                          return (
-                            <span className="flex shrink-0 items-center gap-1.5">
-                              <span className="text-[10px] font-bold text-emerald-300">Accepted {l.receivedQty || 0}</span>
-                              <input aria-label={`Quantity accepted for ${l.itemName || l.itemSku || "material"}`} type="number" min="1" max={available} value={acceptQty[l.id] ?? String(available || "")} onChange={(event) => setAcceptQty((current) => ({ ...current, [l.id]: event.target.value }))} className="w-16 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-center text-xs font-black text-white" />
-                              <button type="button" disabled={receiptBusyId !== null || !available || !Number.isInteger(qty) || qty < 1 || qty > available} onClick={() => decide(o.id, "Received", l.id, qty)} className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-black text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40">Accept lot</button>
+                    {lines.map((l) => {
+                      const available = Math.max(0, sentQty(l) - Number(l.receivedQty || 0));
+                      const qty = Number(acceptQty[l.id] ?? String(available));
+                      return (
+                        <div key={l.id} className="space-y-2 rounded-lg border border-slate-800 bg-slate-900/50 p-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="min-w-0 flex-1 truncate font-bold text-slate-200">
+                              {l.productionItemName ? `${l.productionItemName} · ` : ""}{l.quantityUsed} {l.itemUnit || "pcs"} — {l.itemName || l.itemSku}
                             </span>
-                          );
-                        })()}
-                        {(l.receiptLots ?? []).map((lot, index) => (
-                          <span key={lot.id} className="shrink-0 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-black text-violet-200" title={`Accepted ${new Date(lot.at).toLocaleString()}`}>
-                            Lot {index + 1} · {lot.quantity}
-                          </span>
-                        ))}
-                      </div>
-                    ))}
+                            <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black uppercase ${
+                              fulfilmentLabel(l) === "Delivered"
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                                : fulfilmentLabel(l).includes("sent") || fulfilmentLabel(l) === "Partially delivered"
+                                  ? "border-teal-500/40 bg-teal-500/10 text-teal-300"
+                                  : fulfilmentLabel(l).includes("prepared") || fulfilmentLabel(l) === "Prepared"
+                                    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                                    : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                            }`}>
+                              {fulfilmentLabel(l)}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-400">
+                            <span>Prepared {preparedQty(l)}/{l.quantityUsed || 0}</span>
+                            <span>·</span>
+                            <span>Sent {sentQty(l)}/{l.quantityUsed || 0}</span>
+                            <span>·</span>
+                            <span className="text-emerald-300">Accepted {l.receivedQty || 0}/{l.quantityUsed || 0}</span>
+                          </div>
+                          {canApprove && (
+                            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2">
+                              <span className="text-[11px] font-black text-emerald-200">Approve a received quantity as a separate production lot:</span>
+                              <input aria-label={`Quantity accepted for ${l.itemName || l.itemSku || "material"}`} type="number" min="1" max={available} value={acceptQty[l.id] ?? String(available || "")} onChange={(event) => setAcceptQty((current) => ({ ...current, [l.id]: event.target.value }))} className="w-20 rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-center text-xs font-black text-white" />
+                              <button type="button" disabled={receiptBusyId !== null || !available || !Number.isInteger(qty) || qty < 1 || qty > available} onClick={() => decide(o.id, "Received", l.id, qty)} title={`Release ${qty || 0} accepted unit(s) to their own first production operation`} className="rounded-md border border-emerald-500/50 bg-emerald-500/15 px-3 py-1.5 text-[10px] font-black uppercase text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">
+                                Approve {Number.isInteger(qty) && qty > 0 ? qty : 0} as lot
+                              </button>
+                              {!available && <span className="text-[10px] text-slate-500">No unaccepted sent quantity</span>}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            {(l.receiptLots ?? []).map((lot, index) => (
+                              <span key={lot.id} className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-black text-violet-200" title={`Accepted ${new Date(lot.at).toLocaleString()}`}>
+                                Lot {index + 1} · {lot.quantity}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                     {lines.length === 0 && (
                       <div className="text-[11px] text-slate-500 italic">No materials requested for this order.</div>
                     )}
