@@ -20,6 +20,8 @@ type Line = {
   status: "Requested" | "Prepared" | "Delivered";
   preparedQty?: number | null;
   deliveredQty?: number | null;
+  receivedQty?: number;
+  receiptLots?: { id: string; quantity: number; at: string }[];
 };
 
 type RxOrder = {
@@ -33,6 +35,9 @@ type RxOrder = {
   materials: Line[];
   received: boolean | null;
   receivedState?: string | null;
+  receivedQuantity?: number;
+  requestedQuantity?: number;
+  operationProgress?: { position: number; operationName: string; receivedQuantity: number; atQuantity: number; inProgressQuantity: number; completedQuantity: number; requestedQuantity: number }[];
   operations?: OpInfo[];
 };
 
@@ -42,12 +47,24 @@ type OpInfo = {
   operationName: string;
   productionItemName?: string | null;
   status: string;
+  receiptLotId?: string | null;
+  lotNumber?: number | null;
+  quantity?: number | null;
   machineId: number | null;
   machineCode?: string | null;
   machineCategory?: string | null;
   candidates: { id: number; code: string; name: string; status: string }[];
   candidateMachineIds?: number[];
 };
+
+function needsReceipt(order: RxOrder): boolean {
+  return Number(order.receivedQuantity || 0) < Number(order.requestedQuantity || 0);
+}
+
+function isRejected(order: RxOrder): boolean {
+  return order.receivedState === "Declined"
+    || (order.received === false && Number(order.receivedQuantity || 0) === 0);
+}
 
 export default function FloorReceptionView({
   currentUser,
@@ -60,6 +77,8 @@ export default function FloorReceptionView({
   const [filter, setFilter] = useState<"all" | "decision" | "received" | "rejected">("all");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [acceptQty, setAcceptQty] = useState<Record<number, string>>({});
+  const [receiptBusyId, setReceiptBusyId] = useState<number | null>(null);
 
   const canApprove =
     !!currentUser &&
@@ -86,13 +105,15 @@ export default function FloorReceptionView({
     return () => clearInterval(t);
   }, []);
 
-  const decide = async (orderId: number, state: "Received" | "Not Received" | "Declined") => {
+  const decide = async (orderId: number, state: "Received" | "Not Received" | "Declined", allocationId?: number, quantity?: number) => {
+    if (allocationId && receiptBusyId !== null) return;
+    if (allocationId) setReceiptBusyId(allocationId);
     setError("");
     try {
       const res = await fetch("/api/bom", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, state }),
+        body: JSON.stringify(allocationId && quantity ? { allocationId, quantity, state } : { orderId, state }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -102,15 +123,18 @@ export default function FloorReceptionView({
       }
       setNotice(
         state === "Received"
-          ? "Reception APPROVED."
+          ? `Accepted ${quantity} unit(s) into a new production lot.`
           : state === "Declined"
             ? "Reception DECLINED."
             : "Marked as NOT RECEIVED.",
       );
       setTimeout(() => setNotice(""), 4000);
+      if (allocationId) setAcceptQty((current) => { const next = { ...current }; delete next[allocationId]; return next; });
       await load();
     } catch {
       /* ignore */
+    } finally {
+      if (allocationId) setReceiptBusyId(null);
     }
   };
 
@@ -158,16 +182,16 @@ export default function FloorReceptionView({
   };
 
   const stats = useMemo(() => {
-    const awaiting = orders.filter((o) => o.received == null).length;
+    const awaiting = orders.filter(needsReceipt).length;
     const received = orders.filter((o) => o.received === true).length;
-    const rejected = orders.filter((o) => o.received === false).length;
+    const rejected = orders.filter(isRejected).length;
     return { awaiting, received, rejected };
   }, [orders]);
 
   const shown = orders.filter((o) => {
-    if (filter === "decision") return o.received == null;
+    if (filter === "decision") return needsReceipt(o);
     if (filter === "received") return o.received === true;
-    if (filter === "rejected") return o.received === false;
+    if (filter === "rejected") return isRejected(o);
     return true;
   });
 
@@ -180,7 +204,7 @@ export default function FloorReceptionView({
             <PackageCheck className="w-6 h-6 text-emerald-400" /> Material Reception
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Approve reception only after the warehouse has prepared &amp; delivered every requested line.
+            Accept any physically counted quantity that the warehouse has sent; each acceptance opens an independent production lot.
           </p>
         </div>
         <button
@@ -285,7 +309,12 @@ export default function FloorReceptionView({
                         DECLINED ✗
                       </span>
                     )}
-                    {o.received === false && o.receivedState !== "Declined" && (
+                    {o.receivedQuantity && o.receivedQuantity > 0 && o.received !== true && (
+                      <span className="rounded-lg border border-teal-500/40 bg-teal-500/10 px-2 py-0.5 text-[10px] font-black text-teal-300">
+                        PARTIAL · {o.receivedQuantity}/{o.requestedQuantity} ACCEPTED
+                      </span>
+                    )}
+                    {o.received === false && o.receivedQuantity === 0 && o.receivedState !== "Declined" && (
                       <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black text-amber-300">
                         NOT RECEIVED ✗
                       </span>
@@ -305,9 +334,9 @@ export default function FloorReceptionView({
                 {/* delivery progress */}
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
                   <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-wider text-slate-400">
-                    <span>Warehouse delivery</span>
-                    <span className={allDelivered ? "text-emerald-300" : "text-sky-300"}>
-                      {delivered}/{lines.length} delivered
+                    <span>Warehouse delivery and accepted receipts</span>
+                    <span className={Number(o.receivedQuantity || 0) >= Number(o.requestedQuantity || 0) ? "text-emerald-300" : "text-sky-300"}>
+                      {o.receivedQuantity || 0}/{o.requestedQuantity || 0} received · {delivered}/{lines.length} lines fully sent
                     </span>
                   </div>
                   <div className="mt-2 space-y-1">
@@ -329,6 +358,22 @@ export default function FloorReceptionView({
                         >
                           {fulfilmentLabel(l)} · P {preparedQty(l)}/{l.quantityUsed || 0} · S {sentQty(l)}/{l.quantityUsed || 0} · To prepare {Math.max(0, l.quantityUsed - preparedQty(l))} · Ready to send {Math.max(0, preparedQty(l) - sentQty(l))}
                         </span>
+                        {canApprove && (() => {
+                          const available = Math.max(0, sentQty(l) - Number(l.receivedQty || 0));
+                          const qty = Number(acceptQty[l.id] ?? String(available));
+                          return (
+                            <span className="flex shrink-0 items-center gap-1.5">
+                              <span className="text-[10px] font-bold text-emerald-300">Accepted {l.receivedQty || 0}</span>
+                              <input aria-label={`Quantity accepted for ${l.itemName || l.itemSku || "material"}`} type="number" min="1" max={available} value={acceptQty[l.id] ?? String(available || "")} onChange={(event) => setAcceptQty((current) => ({ ...current, [l.id]: event.target.value }))} className="w-16 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-center text-xs font-black text-white" />
+                              <button type="button" disabled={receiptBusyId !== null || !available || !Number.isInteger(qty) || qty < 1 || qty > available} onClick={() => decide(o.id, "Received", l.id, qty)} className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-[10px] font-black text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40">Accept lot</button>
+                            </span>
+                          );
+                        })()}
+                        {(l.receiptLots ?? []).map((lot, index) => (
+                          <span key={lot.id} className="shrink-0 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-black text-violet-200" title={`Accepted ${new Date(lot.at).toLocaleString()}`}>
+                            Lot {index + 1} · {lot.quantity}
+                          </span>
+                        ))}
                       </div>
                     ))}
                     {lines.length === 0 && (
@@ -337,10 +382,25 @@ export default function FloorReceptionView({
                   </div>
                   {!allDelivered && lines.length > 0 && (
                     <div className="mt-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-[10px] font-black text-sky-300">
-                      🚚 APPROVE unlocks when the warehouse has DELIVERED every line.
+                      Accept only the quantity physically counted. Unaccepted sent units stay out of production.
                     </div>
                   )}
                 </div>
+
+                {(o.operationProgress ?? []).length > 0 && (
+                  <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+                    <div className="mb-2 text-[11px] font-black uppercase tracking-wider text-violet-200">Production lot progress</div>
+                    <div className="flex flex-wrap gap-2">
+                      {o.operationProgress!.map((step) => (
+                        <span key={`${step.position}-${step.operationName}`} className="rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 text-[10px] font-bold text-slate-200">
+                          {step.operationName}: <b className="text-sky-300">{step.atQuantity}/{step.requestedQuantity} at this station</b> · <b className="text-emerald-300">{step.completedQuantity}/{step.requestedQuantity} processed</b>
+                          {step.inProgressQuantity > 0 && <span className="text-amber-300"> · {step.inProgressQuantity} in progress</span>}
+                          {step.receivedQuantity < step.requestedQuantity && <span className="text-slate-500"> · {step.requestedQuantity - step.receivedQuantity} not yet received</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* machine assignment — Floor Supervisor's call, after approval */}
                 {canAssign && (o.operations ?? []).some((op) => (op.candidates ?? []).length >= 1 && (op.status === "Pending" || op.status === "Ready")) && (
@@ -357,7 +417,7 @@ export default function FloorReceptionView({
                               {op.productionItemName ? `${op.productionItemName} · ` : ""}#{op.stepOrder} {op.operationName}
                               <span className="text-slate-500"> · now: {op.machineCode || "—"}</span>
                             </span>
-                            {o.received === true ? (
+                            {op.receiptLotId || o.received === true ? (
                               <span className="flex flex-wrap items-center gap-1.5">
                                 {op.candidates.map((c) => {
                                   const selected = selectedCandidateIds(op).includes(c.id);
@@ -403,17 +463,8 @@ export default function FloorReceptionView({
                 )}
 
                 {/* decisions — hidden once a reception is approved */}
-                {canApprove && lines.length > 0 && o.received !== true && (
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      disabled={!allDelivered}
-                      title={allDelivered ? "Approve material reception" : "Waiting for warehouse delivery"}
-                      onClick={() => decide(o.id, "Received")}
-                      className="rounded-xl border-2 border-emerald-600 bg-emerald-600/20 px-2 py-2.5 text-[11px] font-black text-emerald-300 hover:bg-emerald-600/40 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      ✓ APPROVE
-                    </button>
+                {canApprove && lines.length > 0 && o.received !== true && Number(o.receivedQuantity || 0) === 0 && (
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => decide(o.id, "Not Received")}

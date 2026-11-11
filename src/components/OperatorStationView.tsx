@@ -1327,7 +1327,7 @@ export default function OperatorStationView({
                       {op.productionItem && (
                         <div className="mt-4 w-full border-t border-slate-800 pt-3">
                           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">Independent route for {op.productionItem.name}</span>
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">{op.productionItem.lotNumber ? `Receipt lot ${op.productionItem.lotNumber} · ${op.productionItem.quantity} pcs · ` : ""}Independent route for {op.productionItem.name}</span>
                             <span className="text-[10px] font-bold text-slate-500">Only this material job is controlled by the buttons above</span>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">

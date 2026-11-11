@@ -447,6 +447,7 @@ export async function POST(request: Request) {
         // Write before the DB transaction commits. A file-write failure rolls
         // the relational inserts back instead of returning a route-less order.
         const productionPlan = {
+          receiptTracking: true,
           orderId: newOrder.id,
           createdAt: new Date().toISOString(),
           defaultSteps: cleanDefaultSteps,

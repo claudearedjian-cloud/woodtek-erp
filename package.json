@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "build:portable": "node scripts/build-portable.js",
     "build:installer": "node scripts/build-installer.js",
-    "test:workflow-lab": "node scripts/workflow-lab-test.cjs"
+    "test:workflow-lab": "node scripts/workflow-lab-test.cjs",
+    "test:receipt-lots": "node --experimental-strip-types scripts/receipt-lots-test.mjs"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
