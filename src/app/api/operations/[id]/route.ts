@@ -13,7 +13,7 @@ import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
 import { autoCompleteMaterialsForStep, markPlannedMaterialAtOperation } from "@/lib/materialProgress.server";
 import { jobLockedByOther } from "@/lib/jobLock";
-import { findProductionStepByOperation, nextProductionOperationId, previousProductionOperationId } from "@/lib/productionPlan";
+import { findProductionStepByOperation, nextProductionOperationId, previousProductionOperationId, productionLotIsReleased, productionPlanUsesReceiptTracking } from "@/lib/productionPlan";
 import { readOrderProductionPlan, productionStepForOperation, updateProductionStepMachine } from "@/lib/productionPlan.server";
 import {
   clearOperationMachineCandidates,
@@ -115,6 +115,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (!currentOp) throw new WorkflowError("Operation step not found.", 404);
       const productionPlan = readOrderProductionPlan(currentOp.orderId);
       const plannedBinding = findProductionStepByOperation(productionPlan, currentOp.id);
+      const orderUsesReceiptLots = productionPlanUsesReceiptTracking(productionPlan);
+      const legacyReceptionApproved = !orderUsesReceiptLots && readReceived()[String(currentOp.orderId)]?.received === true;
+      const plannedLotReleased = productionLotIsReleased(plannedBinding?.item);
+      const canEnterProduction = plannedBinding
+        ? plannedLotReleased || legacyReceptionApproved
+        : legacyReceptionApproved;
 
       const requestedStatus = body.status as string | undefined;
       if (requestedStatus && !allowedStatuses.includes(requestedStatus)) {
@@ -169,7 +175,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           .select({ id: orderMaterials.id })
           .from(orderMaterials)
           .where(eq(orderMaterials.orderId, currentOp.orderId));
-        if (assignBom.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+        if (assignBom.length > 0 && !canEnterProduction) {
           throw new WorkflowError("Candidate stations can be chosen only after the Floor Supervisor approves reception.", 409);
         }
 
@@ -254,7 +260,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           .select({ id: orderMaterials.id })
           .from(orderMaterials)
           .where(eq(orderMaterials.orderId, currentOp.orderId));
-        if (assignBom.length > 0 && readReceived()[String(currentOp.orderId)]?.received !== true) {
+        if (assignBom.length > 0 && !canEnterProduction) {
           throw new WorkflowError("Machines can be chosen only after the Floor Supervisor approves reception.", 409);
         }
       }
@@ -384,7 +390,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
               .from(orderMaterials)
               .where(eq(orderMaterials.orderId, currentOp.orderId))
               .limit(1)).length > 0;
-        if (hasBomLines && readReceived()[String(currentOp.orderId)]?.received !== true) {
+        if (hasBomLines && !canEnterProduction) {
           throw new WorkflowError("Material reception for this order has NOT been approved. Ask the Floor Supervisor to approve the BOM reception before starting.", 409);
         }
 

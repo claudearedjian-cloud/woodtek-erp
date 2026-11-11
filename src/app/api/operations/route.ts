@@ -13,7 +13,7 @@ import { baseRoleOf } from "@/lib/permissions";
 import { operationMachineCandidates } from "@/lib/operationMachineCandidates.server";
 import { readAllProgress } from "@/lib/materialProgress.server";
 import { readAllRoutes } from "@/lib/materialRoutes.server";
-import { routeStageKeys } from "@/lib/productionPlan";
+import { productionLotIsReleased, productionPlanUsesReceiptTracking, routeStageKeys } from "@/lib/productionPlan";
 import { readOrderProductionPlan, readProductionPlanStore } from "@/lib/productionPlan.server";
 import { workLeaveBlock } from "@/lib/hrLeaveGate.server";
 import { readOperationTimeSummaries } from "@/lib/operationTime.server";
@@ -67,7 +67,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const operationsWithCandidates = filtered.map((operation) => ({
+    let operationsWithCandidates = filtered.map((operation) => ({
       ...operation,
       candidateMachineIds: operationMachineCandidates(
         operation.id,
@@ -90,6 +90,16 @@ export async function GET(request: Request) {
       });
     }
 
+    if (stationMode) {
+      const receiptTrackedOrders = new Set(relevantPlans.filter(productionPlanUsesReceiptTracking).map((plan) => plan.orderId));
+      operationsWithCandidates = operationsWithCandidates.filter((operation) => {
+        if (!receiptTrackedOrders.has(operation.orderId)) return true;
+        const binding = operationBindings.get(operation.id);
+        return productionLotIsReleased(binding?.item);
+      });
+      filtered = filtered.filter((operation) => operationsWithCandidates.some((row) => row.id === operation.id));
+    }
+
     // Schedule/Gantt callers need operation rows only. Material, route and BOM
     // overlays are loaded exclusively for Station Mode, cutting several DB and
     // filesystem reads from every generic operations refresh.
@@ -101,6 +111,9 @@ export async function GET(request: Request) {
           machineCategory: operation.machineCategory || binding.step.machineCategory,
           productionItem: {
             materialId: binding.item.materialId,
+            receiptLotId: binding.item.receiptLotId ?? null,
+            lotNumber: binding.item.lotNumber ?? null,
+            quantity: binding.item.quantityUsed,
             batchNumber: binding.batchNumber,
             name: binding.item.name,
             recipeName: binding.item.recipeName,
@@ -208,10 +221,16 @@ export async function GET(request: Request) {
         ...shared,
         ...elsewhereFlag,
         machineCategory: operation.machineCategory || binding.step.machineCategory,
-        materials: orderBom.filter((material: any) => material.id === binding.item.materialId),
+        materials: orderBom.filter((material: any) => material.id === binding.item.materialId).map((material: any) => ({
+          ...material,
+          quantityUsed: binding.item.quantityUsed,
+        })),
         orderSteps: routeStageKeys(binding.item),
         productionItem: {
           materialId: binding.item.materialId,
+          receiptLotId: binding.item.receiptLotId ?? null,
+          lotNumber: binding.item.lotNumber ?? null,
+          quantity: binding.item.quantityUsed,
           batchNumber: binding.batchNumber,
           name: binding.item.name,
           recipeName: binding.item.recipeName,

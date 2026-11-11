@@ -44,6 +44,9 @@ export interface PlannedProductionStep extends ProductionRouteStep {
 }
 
 export interface PlannedProductionItem {
+  /** One independently accepted receipt; absent on unreleased/or legacy plans. */
+  receiptLotId?: string;
+  lotNumber?: number;
   materialId: number;
   itemId: number;
   name: string;
@@ -55,6 +58,8 @@ export interface PlannedProductionItem {
 }
 
 export interface OrderProductionPlan {
+  /** New orders release work by accepted receipt lot, never by order-wide receipt. */
+  receiptTracking?: boolean;
   orderId: number;
   createdAt: string;
   defaultSteps: ProductionRouteStep[];
@@ -160,6 +165,14 @@ export function routeStageKeys(item: Pick<PlannedProductionItem, "steps">): stri
   return item.steps.map((step) => step.stageKey || productionStageKey(step.position, step.operationName));
 }
 
+export function productionPlanUsesReceiptTracking(plan: OrderProductionPlan | null | undefined): boolean {
+  return Boolean(plan?.receiptTracking || plan?.items.some((item) => item.receiptLotId));
+}
+
+export function productionLotIsReleased(item: Pick<PlannedProductionItem, "receiptLotId"> | null | undefined): boolean {
+  return Boolean(item?.receiptLotId);
+}
+
 export function findProductionItemByMaterial(
   plan: OrderProductionPlan | null | undefined,
   materialId: number,
@@ -232,6 +245,8 @@ export function sanitizeStoredOrderPlan(raw: unknown): OrderProductionPlan | nul
       .slice(0, MAX_PRODUCTION_STEPS);
     if (steps.length === 0) continue;
     items.push({
+      ...(typeof item.receiptLotId === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(item.receiptLotId) ? { receiptLotId: item.receiptLotId } : {}),
+      ...(positiveInt(item.lotNumber) ? { lotNumber: positiveInt(item.lotNumber)! } : {}),
       materialId,
       itemId,
       name,
@@ -245,6 +260,7 @@ export function sanitizeStoredOrderPlan(raw: unknown): OrderProductionPlan | nul
   }
   if (items.length === 0) return null;
   return {
+    receiptTracking: row.receiptTracking === true || items.some((item) => Boolean(item.receiptLotId)),
     orderId,
     createdAt: typeof row.createdAt === "string" ? row.createdAt.slice(0, 40) : "",
     defaultSteps: sanitizeProductionRoute(row.defaultSteps),
