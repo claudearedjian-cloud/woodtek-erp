@@ -2228,8 +2228,17 @@ check(appearanceUiText.includes('mode: "windows" as const') && appearanceUiText.
 check(appearanceUiText.includes("sm:grid-cols-3"), "windows theme: the three theme options fit in one row");
 const cssText = fs.readFileSync("src/app/globals.css", "utf8");
 const windowsBlockAt = cssText.indexOf("/* ---- Windows light");
-const lightGlassAt = cssText.indexOf(':root[data-theme="light"], :root[data-theme="windows"] .glass');
+const lightGlassAt = cssText.indexOf(':root[data-theme="light"] .glass');
 check(windowsBlockAt > lightGlassAt && lightGlassAt > 0, "windows theme: Windows overrides come after the shared light rules, so they win");
+check(cssText.includes('[class~="border-slate-800/80"]') && cssText.includes("#bac3ce"), "windows theme: neutral panel borders are strengthened for better separation on light surfaces");
+const sharedTimeBreakdown = fs.readFileSync("src/components/OperationTimeBreakdown.tsx", "utf8");
+check(sharedTimeBreakdown.includes("Paused") && sharedTimeBreakdown.includes("Execution") && sharedTimeBreakdown.includes("Total elapsed") && sharedTimeBreakdown.includes("historyComplete"), "operation timing: shared expandable breakdown includes pause, execution, elapsed and legacy-history warning");
+const executiveDashboardApiSource = fs.readFileSync("src/app/api/dashboard/route.ts", "utf8");
+const executiveDashboardUiSource = fs.readFileSync("src/components/DashboardView.tsx", "utf8");
+check(executiveDashboardApiSource.includes("readOperationTimeSummaries(activeJobRows)") && executiveDashboardApiSource.includes('o.status === "Paused"') && executiveDashboardUiSource.includes("<OperationTimeBreakdown details={job.timeDetails} />"), "executive dashboard: active and paused operation cards include live expandable timing");
+const orderApiSource = fs.readFileSync("src/app/api/orders/[id]/route.ts", "utf8");
+const orderUiSource = fs.readFileSync("src/components/OrderWorkflowDetail.tsx", "utf8");
+check(orderApiSource.includes("readOperationTimeSummaries(ops)") && orderUiSource.includes("<OperationTimeBreakdown details={op.timeDetails} />"), "orders and routing: each started operation receives the shared timing breakdown");
 const screenCollapseText = fs.readFileSync("src/components/ScreenCollapse.tsx", "utf8");
 check(screenCollapseText.includes("data-part-collapsed") && screenCollapseText.includes("Hide ") && screenCollapseText.includes("Show "), "collapse per part: every screen panel gets a Hide/Show bar");
 check(cssText.includes('[data-part-collapsed="true"]'), "collapse per part: CSS hides only the folded panel");

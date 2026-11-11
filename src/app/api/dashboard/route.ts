@@ -14,6 +14,7 @@ import {
 } from "@/lib/dataAccess";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
+import { readOperationTimeSummaries } from "@/lib/operationTime.server";
 
 export async function GET(request: Request) {
   const { user, error: authError } = await authorize();
@@ -164,8 +165,13 @@ export async function GET(request: Request) {
     const customerById = new Map(customerRows.map((c: any) => [c.id, c]));
     const orderById = new Map(orderRows.map((o: any) => [o.id, o]));
     const activeJobRows = opRows
-      .filter(o => o.status === "In Progress" || o.status === "Ready")
+      .filter(o => o.status === "In Progress" || o.status === "Ready" || o.status === "Paused" || o.status === "Rejected/Rework")
+      .sort((a, b) => {
+        const rank = (status: string) => status === "In Progress" ? 0 : (status === "Paused" || status === "Rejected/Rework") ? 1 : 2;
+        return rank(a.status) - rank(b.status);
+      })
       .slice(0, 6);
+    const operationTime = readOperationTimeSummaries(activeJobRows);
     const planByOrder = new Map(
       Array.from(new Set(activeJobRows.map((job) => job.orderId)))
         .map((orderId) => [orderId, readOrderProductionPlan(orderId)] as const),
@@ -176,6 +182,7 @@ export async function GET(request: Request) {
       const binding = findProductionStepByOperation(planByOrder.get(job.orderId), job.id);
       return {
         ...job,
+        timeDetails: operationTime[String(job.id)],
         customerName: cust?.company || cust?.name || null,
         productionBatchNumber: binding?.batchNumber ?? null,
         productionBatchName: binding?.item.name ?? null,

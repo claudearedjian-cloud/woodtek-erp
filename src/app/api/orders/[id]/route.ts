@@ -13,6 +13,7 @@ import { readDispatchStore } from "@/lib/dispatch.server";
 import { allCurrentBatchesDelivered } from "@/lib/dispatch";
 import { clearDeletedOrderRuntimeState } from "@/lib/orderCleanup.server";
 import { orderDesignProductionGate } from "@/lib/designDepartment.server";
+import { readOperationTimeSummaries } from "@/lib/operationTime.server";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { user, error: authError } = await authorize("orders:read");
@@ -117,10 +118,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         operationPlan.set(step.operationId, { item, step });
       }
     }
+    const operationTime = readOperationTimeSummaries(ops);
     const enrichedOps = ops.map((operation) => {
       const hit = operationPlan.get(operation.id);
       const shared = {
         ...operation,
+        timeDetails: operationTime[String(operation.id)],
         candidateMachineIds: operationMachineCandidates(
           operation.id,
           operation.machineId,

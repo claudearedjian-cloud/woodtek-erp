@@ -20,6 +20,7 @@ import jsPDF from "jspdf";
 import { digestToLines, digestTotalIssues, EMPTY_DIGEST, type DigestData } from "@/lib/digest";
 import { useT } from "@/lib/langContext";
 import CollapsibleSection from "@/components/CollapsibleSection";
+import OperationTimeBreakdown from "@/components/OperationTimeBreakdown";
 
 interface DashboardViewProps {
   data: any;
@@ -390,59 +391,65 @@ export default function DashboardView({ data, loading, onNavigate, currentUser, 
             <div className="space-y-3 flex-1 overflow-y-auto pr-1">
               {activeShopJobs.map((job: any) => {
                 const isRunning = job.status === "In Progress";
+                const isPaused = job.status === "Paused" || job.status === "Rejected/Rework";
                 return (
                   <div 
                     key={job.id} 
                     onClick={() => onNavigate(`order-${job.orderId}`)}
-                    className="p-3.5 bg-slate-950/70 hover:bg-slate-800/60 border border-slate-800 hover:border-amber-500/40 rounded-xl transition cursor-pointer flex items-center justify-between gap-4 group"
+                    className="p-3.5 bg-slate-950/70 hover:bg-slate-800/60 border border-slate-800 hover:border-amber-500/40 rounded-xl transition cursor-pointer group"
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className={`p-2.5 rounded-xl border flex-shrink-0 ${
-                        isRunning 
-                          ? "bg-amber-500/10 border-amber-500/30 text-amber-400" 
-                          : "bg-slate-800/80 border-slate-700 text-slate-300"
-                      }`}>
-                        <Activity className={`w-5 h-5 ${isRunning ? "animate-spin" : ""}`} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-base font-black text-amber-400 tracking-tight">
-                            {job.orderNumber}
-                          </span>
-                          {Number(job.productionBatchNumber) > 0 && (
-                            <span
-                              title={job.productionBatchName || `Production batch ${job.productionBatchNumber}`}
-                              className="whitespace-nowrap rounded border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300"
-                            >
-                              BATCH {job.productionBatchNumber}
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className={`p-2.5 rounded-xl border flex-shrink-0 ${
+                          isRunning
+                            ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                            : isPaused
+                              ? "bg-violet-500/10 border-violet-500/30 text-violet-500"
+                              : "bg-slate-800/80 border-slate-700 text-slate-300"
+                        }`}>
+                          <Activity className={`w-5 h-5 ${isRunning ? "animate-spin" : ""}`} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-base font-black text-amber-400 tracking-tight">
+                              {job.orderNumber}
                             </span>
-                          )}
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-extrabold uppercase tracking-wider ${
-                            isRunning ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-300 border border-slate-700"
-                          }`}>
-                            {job.status}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-300 truncate mt-1">
-                          <span className="font-bold text-white">{job.customerName || "—"}</span>
-                          <span className="text-slate-500"> · </span>
-                          <span className="truncate">{job.orderTitle}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-400 font-semibold mt-0.5 truncate">
-                          {job.operationName}
+                            {Number(job.productionBatchNumber) > 0 && (
+                              <span
+                                title={job.productionBatchName || `Production batch ${job.productionBatchNumber}`}
+                                className="whitespace-nowrap rounded border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300"
+                              >
+                                BATCH {job.productionBatchNumber}
+                              </span>
+                            )}
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-extrabold uppercase tracking-wider ${
+                              isRunning ? "bg-amber-500 text-slate-950" : isPaused ? "bg-violet-500/15 text-violet-300 border border-violet-500/40" : "bg-slate-800 text-slate-300 border border-slate-700"
+                            }`}>
+                              {job.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-300 truncate mt-1">
+                            <span className="font-bold text-white">{job.customerName || "—"}</span>
+                            <span className="text-slate-500"> · </span>
+                            <span className="truncate">{job.orderTitle}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-semibold mt-0.5 truncate">
+                            {job.operationName}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="text-right flex-shrink-0 hidden sm:block">
-                      <div className="text-xs font-extrabold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20 inline-block">
-                        {job.machineCode || "Any Machine"}
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-medium mt-1 flex items-center justify-end gap-1">
-                        <User className="w-3 h-3 text-slate-500" /> 
-                        <span>{job.operatorName || "Shop Operator"} ({job.estimatedMinutes} min)</span>
+                      <div className="text-right flex-shrink-0 hidden sm:block">
+                        <div className="text-xs font-extrabold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20 inline-block">
+                          {job.machineCode || "Any Machine"}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-medium mt-1 flex items-center justify-end gap-1">
+                          <User className="w-3 h-3 text-slate-500" />
+                          <span>{job.operatorName || "Shop Operator"} ({job.estimatedMinutes} min)</span>
+                        </div>
                       </div>
                     </div>
+                    {job.timeDetails?.startedAt && <OperationTimeBreakdown details={job.timeDetails} />}
                   </div>
                 );
               })}
