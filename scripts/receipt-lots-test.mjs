@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { acceptedReceiptQuantity, availableReceiptQuantity, receiptQuantityFitsShipment } from "../src/lib/receiptLots.ts";
 import { findProductionStepByOperation, productionLotIsReleased, productionPlanUsesReceiptTracking, sanitizeStoredOrderPlan } from "../src/lib/productionPlan.ts";
+import { calculateReceiptTrackedProgress } from "../src/lib/productionProgress.ts";
 
 const accepted = [{ quantity: 3 }];
 assert.equal(acceptedReceiptQuantity(accepted), 3);
@@ -57,5 +58,29 @@ assert.notEqual(
   findProductionStepByOperation(plan, 202)?.item.steps[1].operationId,
   "later receipts have a distinct downstream operation chain",
 );
+
+const firstReceiptComplete = calculateReceiptTrackedProgress({
+  materials: [{ id: 900, quantityUsed: 10 }],
+  planItems: [{ materialId: 900, quantityUsed: 4, receiptLotId: "receipt-four", steps: [{ operationId: 301 }, { operationId: 302 }] }],
+  operationStates: [{ id: 301, status: "Completed" }, { id: 302, status: "Completed" }],
+  receiptLots: { 900: [{ quantity: 4 }] },
+});
+assert.equal(firstReceiptComplete.progressPercent, 40, "finishing a 4-piece lot cannot count the unreceived six pieces as complete");
+assert.equal(firstReceiptComplete.canComplete, false, "an order remains open until all ten requested units have their own completed lot routes");
+
+const bothReceiptsComplete = calculateReceiptTrackedProgress({
+  materials: [{ id: 900, quantityUsed: 10 }],
+  planItems: [
+    { materialId: 900, quantityUsed: 4, receiptLotId: "receipt-four", steps: [{ operationId: 301 }, { operationId: 302 }] },
+    { materialId: 900, quantityUsed: 6, receiptLotId: "receipt-six", steps: [{ operationId: 401 }, { operationId: 402 }] },
+  ],
+  operationStates: [
+    { id: 301, status: "Completed" }, { id: 302, status: "Completed" },
+    { id: 401, status: "Completed" }, { id: 402, status: "Completed" },
+  ],
+  receiptLots: { 900: [{ quantity: 4 }, { quantity: 6 }] },
+});
+assert.equal(bothReceiptsComplete.progressPercent, 100);
+assert.equal(bothReceiptsComplete.canComplete, true, "order completion is restored after every requested quantity is received and processed");
 
 console.log("Receipt-lot quantity and independent-chain tests passed.");

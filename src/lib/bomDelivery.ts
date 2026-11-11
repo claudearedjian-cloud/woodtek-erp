@@ -2,8 +2,8 @@
 // Partial BOM delivery — pure, client-safe helpers shared by the Warehouse
 // board and the API. The delivered quantity itself lives in the JSON overlay
 // (data/bom-status.json, BomStatusEntry.deliveredQty — no DB migration).
-// A line counts as fully sent only when its overlay status is "Delivered",
-// so the Floor Supervisor's reception gate is unchanged.
+// Partial sends can be approved as separate receipt lots; only an accepted
+// quantity is released to its own production route.
 // ============================================================================
 
 export interface BomLineLike {

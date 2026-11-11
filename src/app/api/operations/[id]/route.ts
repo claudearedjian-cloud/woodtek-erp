@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { orderOperations, orders, machines, qualityEvents, orderMaterials, users } from "@/db/schema";
-import { readReceived } from "@/lib/bomStatus.server";
+import { readBomBoardState, readReceived } from "@/lib/bomStatus.server";
+import { calculateReceiptTrackedProgress } from "@/lib/productionProgress";
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { logAudit } from "@/lib/audit.server";
@@ -660,10 +661,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
 
       const completedCount = allOps.filter((operation) => operation.status === "Completed").length;
-      const progressPercent = allOps.length > 0 ? Math.round((completedCount / allOps.length) * 100) : 0;
+      let progressPercent = allOps.length > 0 ? Math.round((completedCount / allOps.length) * 100) : 0;
+      let productionComplete = allOps.length > 0 && completedCount === allOps.length;
+      if (productionPlanUsesReceiptTracking(productionPlan)) {
+        const requestedMaterials = await tx
+          .select({ id: orderMaterials.id, quantityUsed: orderMaterials.quantityUsed })
+          .from(orderMaterials)
+          .where(eq(orderMaterials.orderId, updatedOp.orderId));
+        if (requestedMaterials.length > 0) {
+          const receiptProgress = calculateReceiptTrackedProgress({
+            materials: requestedMaterials,
+            planItems: productionPlan?.items ?? [],
+            operationStates: allOps,
+            receiptLots: readBomBoardState().receiptLots,
+          });
+          progressPercent = receiptProgress.progressPercent;
+          productionComplete = receiptProgress.canComplete;
+        }
+      }
 
       let orderStatus = allOps[0]?.parentOrderStatus || "Pending";
-      if (progressPercent === 100) orderStatus = "Completed";
+      if (productionComplete) orderStatus = "Completed";
       else if (updatedOp.status === "Rejected/Rework") orderStatus = "On Hold";
       else if (updatedOp.status === "In Progress" || progressPercent > 0) orderStatus = "In Production";
       else if (orderStatus === "Completed") orderStatus = "In Production";
