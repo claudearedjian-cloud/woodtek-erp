@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { baseRoleOf } from "@/lib/permissions";
 import { allowedStages } from "@/lib/materialProgress";
 import { fulfilmentLabel, preparedQty, sentQty } from "@/lib/bomDelivery";
+import OperationTimeBreakdown, { formatOperationDuration as durationClock, type OperationTimeDetails } from "@/components/OperationTimeBreakdown";
 import { jobLockedByOther } from "@/lib/jobLock";
 import { reconcileStationSelection } from "@/lib/stationAssignment";
 import { newStationJobRows, stationAlertBody, stationAlertTitle } from "@/lib/stationAlerts";
@@ -15,7 +16,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
-  ChevronDown,
   User,
   Activity,
   RefreshCw,
@@ -61,24 +61,6 @@ const DOWNTIME_REASONS = [
   "Other",
 ];
 
-type OperationTimeDetails = {
-  startedAt: string | null;
-  executionSeconds: number;
-  pausedSeconds: number;
-  totalSeconds: number;
-  activeSince: string | null;
-  pausedSince: string | null;
-  completedAt: string | null;
-  snapshotAt: string;
-  historyComplete: boolean;
-};
-
-function durationClock(totalSeconds: number) {
-  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`;
-}
-
 function liveTimeValue(baseSeconds: number, since: string | null, snapshotAt: string, now: number) {
   const snap = new Date(snapshotAt).getTime();
   const extra = since && Number.isFinite(snap) ? Math.max(0, Math.floor((now - snap) / 1000)) : 0;
@@ -110,35 +92,6 @@ function ElapsedTimer({
     elapsedSeconds += Math.max(0, Math.floor((now - new Date(startTime).getTime()) / 1000));
   }
   return <span className="font-mono tabular-nums text-amber-300">{durationClock(elapsedSeconds)}</span>;
-}
-
-function OperationTimeBreakdown({ details }: { details?: OperationTimeDetails | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  if (!details?.startedAt) return null;
-  const execution = liveTimeValue(details.executionSeconds, details.activeSince, details.snapshotAt, now);
-  const paused = liveTimeValue(details.pausedSeconds, details.pausedSince, details.snapshotAt, now);
-  const total = liveTimeValue(details.totalSeconds, details.activeSince || details.pausedSince, details.snapshotAt, now);
-  return (
-    <details className="rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 font-black text-slate-300 marker:hidden">
-        <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> Time details
-      </summary>
-      <div className="mt-2 grid gap-x-5 gap-y-1 border-t border-slate-800 pt-2 sm:grid-cols-3">
-        <div><span className="text-slate-500">Paused</span><strong className="ml-2 font-mono text-violet-300">{durationClock(paused)}</strong></div>
-        <div><span className="text-slate-500">Execution</span><strong className="ml-2 font-mono text-amber-300">{durationClock(execution)}</strong></div>
-        <div><span className="text-slate-500">Total elapsed</span><strong className="ml-2 font-mono text-white">{durationClock(total)}</strong></div>
-      </div>
-      {!details.historyComplete && (
-        <p className="mt-2 text-[10px] font-semibold text-slate-500">
-          Earlier pause history was not recorded. Detailed timing is complete from the next tracked start or resume.
-        </p>
-      )}
-    </details>
-  );
 }
 
 export default function OperatorStationView({

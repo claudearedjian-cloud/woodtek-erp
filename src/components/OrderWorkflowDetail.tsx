@@ -41,6 +41,7 @@ import { buildJobTicketHtml } from "@/lib/jobTicket";
 import { buildDeliveryNoteHtml } from "@/lib/deliveryNote";
 import { buildDispatchPackHtml } from "@/lib/dispatchPack";
 import { buildDeliveryEmailSubject } from "@/lib/emailDispatch";
+import OperationTimeBreakdown from "@/components/OperationTimeBreakdown";
 
 interface OrderWorkflowDetailProps {
   orderId: number;
@@ -1337,6 +1338,7 @@ ${ops.length > 0 ? `<h2>${esc(QUOTE_STRINGS.ar.productionSteps)}</h2><table><the
                             </div>
                           )}
                         </div>
+                        {op.timeDetails?.startedAt && <OperationTimeBreakdown details={op.timeDetails} />}
                       </div>
 
                       {/* Right: Operator Touch Actions */}
