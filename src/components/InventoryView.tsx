@@ -624,20 +624,11 @@ export default function InventoryView({ items = [], loading, onRefresh, currentU
       {/* Top Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-400 mr-1">Category:</span>
-          {categories.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCategoryFilter(c)}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
-                categoryFilter === c
-                  ? "bg-amber-500 text-slate-950 font-black shadow"
-                  : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
-              }`}
-            >
-              {c}
-            </button>
-          ))}
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-400">Category:
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Filter stock by category" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none">
+              {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
           {canManageStockCategories && (
             <>
               <button

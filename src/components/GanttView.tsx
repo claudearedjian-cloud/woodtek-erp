@@ -46,7 +46,7 @@ interface GanttViewProps {
 }
 
 const LABEL_WIDTH = 224;
-const ORDER_ROW_H = 56;
+const ORDER_ROW_H = 74;
 const BATCH_ROW_H = 36;
 const MIN_DAY_W = 26;
 const MAX_DAY_W = 64;
@@ -374,23 +374,13 @@ export default function GanttView({ machines = [], onSelectOrder, searchQuery = 
 
         {view === "timeline" ? (
           <div className="flex flex-wrap items-center gap-2">
-            {/* Range presets */}
-            <div className="flex items-center rounded-lg border border-slate-700 bg-slate-950 p-0.5">
-              {([
-                ["auto", "Auto fit"],
-                ["7d", "7 days"],
-                ["30d", "30 days"],
-                ["month", "This month"],
-              ] as const).map(([id, label]) => (
-                <button
-                  key={id}
-                  onClick={() => setRangePreset(id)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition ${rangePreset === id ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* Range preset dropdown keeps the timeline toolbar compact */}
+            <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400">
+              Range
+              <select value={rangePreset} onChange={(event) => setRangePreset(event.target.value as typeof rangePreset)} aria-label="Gantt timeline range" className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[11px] font-bold text-slate-200 focus:border-amber-500 focus:outline-none">
+                <option value="auto">Auto fit</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="month">This month</option>
+              </select>
+            </label>
             {/* Zoom */}
             <div className="flex items-center rounded-lg border border-slate-700 bg-slate-950 p-0.5">
               <button
@@ -712,6 +702,12 @@ function OrderTimelineRow({
                 </span>
               )}
             </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[9px] font-bold leading-none">
+              <span className="truncate text-slate-500" title={`Start ${new Date(order.createdAt).toLocaleDateString()} · Expected delivery ${new Date(order.dueDate).toLocaleDateString()}`}>
+                Start {new Date(order.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · Delivery {new Date(order.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              </span>
+              <span className="ml-auto shrink-0 text-slate-300">{order.progressPercent || 0}%</span>
+            </div>
           </button>
         </div>
 
@@ -797,6 +793,9 @@ function OrderTimelineRow({
                 +{unscheduled.length}
               </span>
             )}
+            <span role="progressbar" aria-label={`${order.orderNumber} execution progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={clamp(order.progressPercent || 0, 0, 100)} className="absolute inset-x-0 bottom-0 z-20 h-1 overflow-hidden rounded-b-md bg-slate-950/60" title={`Execution progress: ${order.progressPercent || 0}%`}>
+              <span className={`block h-full ${order.progressPercent >= 100 || delivered ? "bg-emerald-400" : "bg-gradient-to-r from-amber-500 to-amber-300"}`} style={{ width: `${clamp(order.progressPercent || 0, 0, 100)}%` }} />
+            </span>
           </button>
 
           {/* Due / delivery flags riding on the timeline */}

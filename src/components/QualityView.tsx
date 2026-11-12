@@ -195,15 +195,17 @@ export default function QualityView({ currentUser, onSelectOrder }: QualityViewP
 
       {/* Filter + record bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-400 flex items-center gap-1"><Filter className="w-3.5 h-3.5 text-amber-500" /> Type:</span>
-          {["All", "scrap", "rework"].map(t => (
-            <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1 rounded-xl text-xs font-bold transition capitalize ${typeFilter === t ? "bg-blue-600 text-white" : "bg-slate-950/60 text-slate-300 border border-slate-800 hover:bg-slate-800"}`}>{t}</button>
-          ))}
-          <span className="text-xs font-bold text-slate-400 ml-2">Status:</span>
-          {DISPOSITIONS.map(d => (
-            <button key={d} onClick={() => setDispFilter(d)} className={`px-3 py-1 rounded-xl text-xs font-bold transition ${dispFilter === d ? "bg-blue-600 text-white" : "bg-slate-950/60 text-slate-300 border border-slate-800 hover:bg-slate-800"}`}>{d}</button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-400"><Filter className="h-3.5 w-3.5 text-amber-500" /> Type
+            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="Filter quality records by type" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-blue-500 focus:outline-none">
+              {["All", "scrap", "rework"].map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-400">Status
+            <select value={dispFilter} onChange={(event) => setDispFilter(event.target.value)} aria-label="Filter quality records by disposition" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-blue-500 focus:outline-none">
+              {DISPOSITIONS.map((disposition) => <option key={disposition} value={disposition}>{disposition}</option>)}
+            </select>
+          </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input

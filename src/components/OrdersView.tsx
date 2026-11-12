@@ -228,22 +228,12 @@ export default function OrdersView({
       {/* Top Control Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/90 border border-slate-800/80 p-4 rounded-2xl shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5 text-amber-500" /> Status:
-          </span>
-          {["All", "Pending", "In Production", "Quality Review", "Completed", "Delivered", "On Hold", "Cancelled"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition ${
-                statusFilter === s
-                  ? "bg-amber-500 text-slate-950 font-extrabold shadow-sm"
-                  : "bg-slate-950/60 text-slate-300 hover:bg-slate-800 border border-slate-800"
-              }`}
-            >
-              {t(s)}
-            </button>
-          ))}
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-400">
+            <Filter className="h-3.5 w-3.5 text-amber-500" /> Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter orders by status" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none">
+              {["All", "Pending", "In Production", "Quality Review", "Completed", "Delivered", "On Hold", "Cancelled"].map((s) => <option key={s} value={s}>{t(s)}</option>)}
+            </select>
+          </label>
           <button
             onClick={() => setShowArchived((v) => !v)}
             className={`flex items-center gap-1.5 rounded-xl px-3 py-1 text-xs font-bold transition ${

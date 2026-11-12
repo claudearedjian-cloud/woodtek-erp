@@ -232,30 +232,12 @@ export default function FloorReceptionView({
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        {(
-          [
-            ["all", "All orders"],
-            ["decision", "Needs decision"],
-            ["received", "Approved"],
-            ["rejected", "Not received / declined"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={`rounded-xl px-3 py-1.5 text-[11px] font-black uppercase tracking-wider border ${
-              filter === key
-                ? "border-amber-500 bg-amber-500 text-slate-950"
-                : "border-slate-700 bg-slate-900 text-slate-400 hover:text-white"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* Compact status filter */}
+      <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-400">Show
+        <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="Filter floor reception orders" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none">
+          <option value="all">All orders</option><option value="decision">Needs decision</option><option value="received">Approved</option><option value="rejected">Not received / declined</option>
+        </select>
+      </label>
 
       {/* Banners */}
       {notice && (
