@@ -247,9 +247,9 @@
     --color-slate-500: #616161; /* muted text              */
     --color-slate-600: #8a8a8a;
     --color-slate-700: #c8c8c8; /* strong borders, hover   */
-    --color-slate-800: #e5e5e5; /* default borders         */
-    --color-slate-900: #ffffff; /* cards                   */
-    --color-slate-950: #f3f3f3; /* page                    */
+    --color-slate-800: #cbd5df; /* default borders         */
+    --color-slate-900: #f4f6f8; /* softly tinted cards     */
+    --color-slate-950: #e8edf2; /* cool grey page canvas   */
     --color-white: #1f1f1f;
     --color-amber-200: #0067c0;
     --color-amber-300: #0067c0;
@@ -262,30 +262,39 @@
     font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
   }
   :root[data-theme="windows"] body {
-    background-color: #f3f3f3;
+    background-color: #e8edf2;
     font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
   }
   :root[data-theme="windows"] .app-bg {
-    background-color: #f3f3f3;
+    background-color: #e8edf2;
     background-image: none;
   }
   :root[data-theme="windows"] .glass,
   :root[data-theme="windows"] .card-surface {
-    background: #ffffff;
-    border: 1px solid #c7cdd5;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07);
+    background: #f4f6f8;
+    border: 2px solid #aeb9c6;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.09);
   }
   /* Make the default utility borders read as real panel boundaries on the
      light Windows canvas, while leaving colored status/alert borders intact. */
   :root[data-theme="windows"] [class~="border-slate-800"],
   :root[data-theme="windows"] [class~="border-slate-800/80"],
   :root[data-theme="windows"] [class~="border-slate-700"] {
-    border-color: #bac3ce;
+    border-color: #aeb9c6;
+    border-width: 1.5px;
+  }
+  :root[data-theme="windows"] select,
+  :root[data-theme="windows"] input:not([type="checkbox"]):not([type="radio"]),
+  :root[data-theme="windows"] textarea {
+    border-color: #aeb9c6;
+    border-width: 1.5px;
+    background-color: #f8fafc;
   }
   :root[data-theme="windows"] [class~="rounded-2xl"][class~="border-slate-800"],
   :root[data-theme="windows"] [class~="rounded-2xl"][class~="border-slate-800/80"],
   :root[data-theme="windows"] [class~="rounded-2xl"][class~="border-slate-700"] {
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.65);
+    border-width: 2px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.5);
   }
 
   /* Sign-in / modal backdrop → light scrim with the brand glow kept. */

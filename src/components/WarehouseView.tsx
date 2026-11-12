@@ -594,29 +594,15 @@ export default function WarehouseView({ currentUser }: { currentUser: any }) {
               placeholder="Search order, client, item, SKU…"
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none sm:w-64"
             />
-            <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-800 bg-slate-950/70 p-1">
-              {([
-                { id: "all", label: t("All"), count: allLines },
-                { id: "notdelivered", label: t("Not delivered"), count: counts.Requested + counts.Prepared },
-                { id: "Requested", label: t("Requested"), count: counts.Requested },
-                { id: "Prepared", label: t("Prepared"), count: counts.Prepared },
-                { id: "Delivered", label: t("Delivered"), count: counts.Delivered },
-              ] as const).map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => setStatusFilter(chip.id)}
-                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-black transition ${
-                    statusFilter === chip.id ? "bg-amber-500 text-slate-950 shadow" : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                  }`}
-                >
-                  {chip.label}
-                  <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${statusFilter === chip.id ? "bg-slate-950/20 text-slate-900" : "bg-slate-800 text-slate-400"}`}>
-                    {chip.count}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <label className="flex items-center gap-2 text-[11px] font-bold text-slate-400">Status
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} aria-label="Filter warehouse order lines by status" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none">
+                <option value="all">{t("All")} ({allLines})</option>
+                <option value="notdelivered">{t("Not delivered")} ({counts.Requested + counts.Prepared})</option>
+                <option value="Requested">{t("Requested")} ({counts.Requested})</option>
+                <option value="Prepared">{t("Prepared")} ({counts.Prepared})</option>
+                <option value="Delivered">{t("Delivered")} ({counts.Delivered})</option>
+              </select>
+            </label>
             {filtersActive && (
               <button
                 type="button"

@@ -73,7 +73,53 @@ export async function GET(request: Request) {
       })),
     });
 
-    return NextResponse.json(report);
+    const fromMs = new Date(report.from).getTime();
+    const toMs = new Date(report.to).getTime();
+    const reportOps = ops.filter((op) => {
+      const startedInRange = op.startTime != null && new Date(op.startTime).getTime() >= fromMs && new Date(op.startTime).getTime() < toMs;
+      const endedInRange = op.endTime != null && new Date(op.endTime).getTime() >= fromMs && new Date(op.endTime).getTime() < toMs;
+      return startedInRange || endedInRange || op.status === "In Progress";
+    });
+    const relevantOrderIds = new Set(reportOps.map((op) => op.orderId));
+    const executionMinutes = (op: (typeof reportOps)[number]) => {
+      if (op.actualMinutes > 0) return op.actualMinutes;
+      if (!op.startTime) return 0;
+      const end = op.endTime ? new Date(op.endTime).getTime() : op.status === "In Progress" ? now.getTime() : 0;
+      const start = new Date(op.startTime).getTime();
+      return end > start ? Math.max(1, Math.round((end - start) / 60000)) : 0;
+    };
+    const ordersReport = orders
+      .filter((order) => relevantOrderIds.has(order.id) && order.status !== "Cancelled")
+      .map((order) => {
+        const execution = reportOps.filter((op) => op.orderId === order.id);
+        const actualMinutes = execution.reduce((sum, op) => sum + executionMinutes(op), 0);
+        const plannedMinutes = execution.reduce((sum, op) => sum + op.estimatedMinutes, 0);
+        return {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          title: order.title,
+          customer: order.customerCompany || order.customerName || "",
+          status: order.status,
+          createdAt: order.createdAt,
+          dueDate: order.dueDate,
+          progressPercent: order.progressPercent,
+          actualMinutes,
+          plannedMinutes,
+          operations: execution.map((op) => ({
+            name: op.operationName,
+            status: op.status,
+            machine: op.machineCode,
+            operator: op.operatorName,
+            startedAt: op.startTime,
+            endedAt: op.endTime,
+            actualMinutes: executionMinutes(op),
+            plannedMinutes: op.estimatedMinutes,
+          })),
+        };
+      })
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+
+    return NextResponse.json({ ...report, orders: ordersReport });
   } catch (error) {
     console.error("[production-report] failed:", error);
     return NextResponse.json(

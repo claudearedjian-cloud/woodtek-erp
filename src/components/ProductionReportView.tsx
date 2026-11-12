@@ -58,6 +58,28 @@ interface ReportData {
   };
   machines: MachineStats[];
   operators: OperatorStats[];
+  orders: {
+    id: number;
+    orderNumber: string;
+    title: string;
+    customer: string;
+    status: string;
+    createdAt: string;
+    dueDate: string;
+    progressPercent: number;
+    actualMinutes: number;
+    plannedMinutes: number;
+    operations: {
+      name: string;
+      status: string;
+      machine: string | null;
+      operator: string | null;
+      startedAt: string | null;
+      endedAt: string | null;
+      actualMinutes: number;
+      plannedMinutes: number;
+    }[];
+  }[];
 }
 
 const hours = (minutes: number) => `${Math.round((minutes / 60) * 10) / 10}h`;
@@ -105,19 +127,17 @@ export default function ProductionReportView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950 p-1">
-            {RANGES.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setRange(r.id)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                  range === r.id ? "bg-slate-800 text-amber-400" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-400">
+            Period
+            <select
+              value={range}
+              onChange={(event) => setRange(event.target.value as RangeId)}
+              aria-label="Production report period"
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 focus:border-amber-500 focus:outline-none"
+            >
+              {RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+          </label>
           <button
             onClick={load}
             title="Refresh now"
@@ -223,6 +243,48 @@ export default function ProductionReportView() {
               </tbody>
             </table>
           </div>
+
+          {/* ---- Orders and operation execution details ---- */}
+          <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/90 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-5 py-4">
+              <div>
+                <h3 className="text-sm font-black text-white">Orders Report</h3>
+                <p className="mt-0.5 text-[10px] text-slate-400">Orders with execution started, completed, or in progress during {data.label}.</p>
+              </div>
+              <span className="rounded-full border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] font-bold text-slate-300">{data.orders.length} orders</span>
+            </div>
+            {data.orders.length === 0 ? (
+              <p className="px-5 py-8 text-center text-xs text-slate-500">No order execution activity for this period.</p>
+            ) : (
+              <div className="divide-y divide-slate-800/70">
+                {data.orders.map((order) => (
+                  <details key={order.id} className="group px-5 py-3">
+                    <summary className="grid cursor-pointer list-none grid-cols-2 items-center gap-3 md:grid-cols-[minmax(180px,1.5fr)_minmax(130px,1fr)_110px_110px_110px_24px]">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-black text-white">{order.orderNumber} <span className="font-medium text-slate-400">· {order.title}</span></div>
+                        <div className="truncate text-[10px] text-slate-500">{order.customer || "Customer not specified"} · {order.status}</div>
+                      </div>
+                      <div className="text-[10px] text-slate-400"><span className="font-bold text-slate-300">Start</span> {new Date(order.createdAt).toLocaleDateString()}<br/><span className="font-bold text-slate-300">Expected</span> {new Date(order.dueDate).toLocaleDateString()}</div>
+                      <div className="text-[10px] text-slate-400">Execution <strong className="text-slate-200">{order.progressPercent}%</strong></div>
+                      <div className="text-[10px] text-slate-400">Worked <strong className="text-slate-200">{hours(order.actualMinutes)}</strong></div>
+                      <div className="text-[10px] text-slate-400">Planned <strong className="text-slate-200">{order.plannedMinutes ? hours(order.plannedMinutes) : "—"}</strong></div>
+                      <span className="text-right text-slate-500 transition group-open:rotate-180">⌄</span>
+                    </summary>
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+                      <table className="w-full min-w-[700px] text-left text-[10px]">
+                        <thead className="text-[9px] uppercase tracking-wider text-slate-500"><tr className="border-b border-slate-800"><th className="px-3 py-2">Operation</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Machine / operator</th><th className="px-3 py-2">Started</th><th className="px-3 py-2">Ended</th><th className="px-3 py-2 text-right">Worked / planned</th></tr></thead>
+                        <tbody>{order.operations.map((op, index) => {
+                          const elapsed = op.actualMinutes || (op.startedAt && op.endedAt ? Math.max(0, Math.round((new Date(op.endedAt).getTime() - new Date(op.startedAt).getTime()) / 60000)) : 0);
+                          const dateTime = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
+                          return <tr key={`${order.id}-${index}`} className="border-b border-slate-800/60 last:border-0 text-slate-300"><td className="px-3 py-2 font-bold text-white">{op.name}</td><td className="px-3 py-2">{op.status}</td><td className="px-3 py-2">{[op.machine, op.operator].filter(Boolean).join(" · ") || "—"}</td><td className="px-3 py-2">{dateTime(op.startedAt)}</td><td className="px-3 py-2">{dateTime(op.endedAt)}</td><td className="px-3 py-2 text-right font-mono">{hours(elapsed)} / {op.plannedMinutes ? hours(op.plannedMinutes) : "—"}</td></tr>;
+                        })}</tbody>
+                      </table>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </section>
 
           {/* ---- Operator ranking ---- */}
           {data.operators.length > 0 && (
