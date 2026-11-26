@@ -40,6 +40,14 @@ interface CmmsViewProps {
 }
 
 const ASSET_TYPES = ["Generators", "CNC Routers", "Edge Banders", "Panel Saws", "Compressors", "Dust Extraction", "HVAC", "Spray & Finish"];
+const SERVICE_FILTERS = [
+  { id: "all", label: "All Service States" },
+  { id: "overdue", label: "Service Overdue" },
+  { id: "due", label: "Service Due Soon" },
+  { id: "operational", label: "Operational" },
+  { id: "maintenance", label: "Under Maintenance" },
+  { id: "decommissioned", label: "Decommissioned" },
+] as const;
 const BRANDS = ["Perkins / Leroy Somer", "Cummins", "Caterpillar", "Biesse", "Homag", "Holz-Her", "Altendorf", "Brandt", "Generic"];
 const FALLBACK_EVENT_TYPES = ["Inspection", "Preventive Service", "Repair", "Breakdown", "Part Replacement", "Meter Reading"];
 
@@ -65,6 +73,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
 
   const [localSearch, setLocalSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("All Types");
+  const [serviceFilter, setServiceFilter] = useState<(typeof SERVICE_FILTERS)[number]["id"]>("all");
   // Cards / list / table for the Plant Asset Registry (per device).
   const [registryView, setRegistryView] = useViewMode("cmms-assets", "cards");
 
@@ -241,16 +250,31 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
 
   const filteredAssets = useMemo(
     () =>
-      allAssets.filter((a) => {
-        const matchesType = typeFilter === "All Types" || a.assetType === typeFilter;
-        const matchesSearch =
-          !effectiveSearch ||
-          [a.assetTag, a.name, a.brand, a.site, a.assetType]
-            .filter(Boolean)
-            .some((v: string) => String(v).toLowerCase().includes(effectiveSearch));
-        return matchesType && matchesSearch;
-      }),
-    [allAssets, typeFilter, effectiveSearch],
+      allAssets
+        .filter((a) => {
+          const matchesType = typeFilter === "All Types" || a.assetType === typeFilter;
+          const matchesSearch =
+            !effectiveSearch ||
+            [a.assetTag, a.name, a.brand, a.site, a.assetType]
+              .filter(Boolean)
+              .some((v: string) => String(v).toLowerCase().includes(effectiveSearch));
+          const matchesService =
+            serviceFilter === "all" ||
+            (serviceFilter === "overdue" && a.isOverdue) ||
+            (serviceFilter === "due" && a.isDue && !a.isOverdue) ||
+            (serviceFilter === "operational" && a.serviceState === "Operational OK") ||
+            (serviceFilter === "maintenance" && a.serviceState === "Under Maintenance") ||
+            (serviceFilter === "decommissioned" && a.serviceState === "Decommissioned");
+          return matchesType && matchesSearch && matchesService;
+        })
+        .sort((a, b) => {
+          const priority = (asset: { isOverdue?: boolean; isDue?: boolean; serviceState?: string }) =>
+            asset.isOverdue ? 0 : asset.isDue ? 1 : asset.serviceState === "Under Maintenance" ? 2 : 3;
+          return priority(a) - priority(b) ||
+            Number(a.hoursRemaining ?? 0) - Number(b.hoursRemaining ?? 0) ||
+            String(a.assetTag).localeCompare(String(b.assetTag));
+        }),
+    [allAssets, typeFilter, serviceFilter, effectiveSearch],
   );
 
   const maxSiteCount = Math.max(...siteAllocation.map((s) => s.count), 1);
@@ -408,9 +432,11 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                 </div>
                 <div>
                   <div className="text-sm font-extrabold text-white">Preventive maintenance attention required</div>
-                  <p className="text-xs text-slate-300">
-                    <strong className="text-rose-300">{kpis.overdueCount} overdue</strong> and{" "}
-                    <strong className="text-amber-300">{kpis.dueSoonCount} approaching</strong> their service interval.
+                  <p className="flex flex-wrap items-center gap-x-1 text-xs text-slate-300">
+                    <button type="button" onClick={() => { setServiceFilter("overdue"); document.getElementById("cmms-asset-registry")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="font-bold text-rose-300 underline decoration-rose-500/40 underline-offset-2 hover:text-rose-200">{kpis.overdueCount} overdue</button>
+                    and
+                    <button type="button" onClick={() => { setServiceFilter("due"); document.getElementById("cmms-asset-registry")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="font-bold text-amber-300 underline decoration-amber-500/40 underline-offset-2 hover:text-amber-200">{kpis.dueSoonCount} approaching</button>
+                    their service interval. Click a count to open that queue.
                   </p>
                 </div>
               </div>
@@ -487,7 +513,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
           </div>
 
           {/* Registry */}
-          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-5 shadow-sm">
+          <div id="cmms-asset-registry" className="scroll-mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/90 p-5 shadow-sm">
             <div className="mb-5 flex flex-col gap-3 border-b border-slate-800 pb-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="flex items-center gap-2 text-base font-black text-white">
@@ -500,12 +526,15 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <input type="text" placeholder="Search assets…" value={localSearch} onChange={(e) => setLocalSearch(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none sm:w-56" />
                 </div>
-                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none">
+                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter assets by type" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none">
                   <option>All Types</option>
                   {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value as typeof serviceFilter)} aria-label="Filter assets by maintenance status" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none">
+                  {SERVICE_FILTERS.map((filter) => <option key={filter.id} value={filter.id}>{filter.label}</option>)}
+                </select>
                 <ViewToggle mode={registryView} onChange={setRegistryView} title="Cards, list or table view of the asset registry" />
-                <ResultCount shown={filteredAssets.length} total={allAssets.length} noun="asset" filtered={Boolean((localSearch || searchQuery).trim()) || typeFilter !== "All Types"} />
+                <ResultCount shown={filteredAssets.length} total={allAssets.length} noun="asset" filtered={Boolean((localSearch || searchQuery).trim()) || typeFilter !== "All Types" || serviceFilter !== "all"} />
               </div>
             </div>
 
@@ -514,7 +543,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                 <Server className="mx-auto mb-3 h-14 w-14 stroke-[1.5] text-slate-600" />
                 <h4 className="text-base font-bold text-white">No assets match</h4>
                 <p className="mt-1 text-xs text-slate-400">
-                  {allAssets.length === 0 ? "Register your first plant asset to begin tracking maintenance." : "Try clearing the search or type filter."}
+                  {allAssets.length === 0 ? "Register your first plant asset to begin tracking maintenance." : "Try clearing the search, type, or maintenance-status filter."}
                 </p>
                 {canManage && allAssets.length === 0 && (
                   <button onClick={openCreate} className="mt-4 rounded-xl bg-emerald-500 px-5 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-400">+ Register Asset</button>
