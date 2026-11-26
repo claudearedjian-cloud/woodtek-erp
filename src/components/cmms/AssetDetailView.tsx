@@ -35,6 +35,14 @@ const CHECKLIST_ITEMS = [
 
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024; // 3 MB
 
+async function readApiJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(`Server returned an unexpected response (${response.status}) instead of JSON. Please make sure the latest application update is installed.`);
+  }
+  return response.json() as Promise<T>;
+}
+
 export default function AssetDetailView({ assetId, currentUser, eventTypes, onBack, onChanged, onEdit }: Props) {
   const [asset, setAsset] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +63,7 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
     if (!confirm("Delete this maintenance entry? This cannot be undone.")) return;
     try {
       const res = await fetch(`/api/cmms/logs?logId=${logId}`, { method: "DELETE" });
-      const payload = await res.json();
+      const payload = await readApiJson<{ error?: string }>(res);
       if (!res.ok) throw new Error(payload.error || "Could not delete entry");
       await load();
       onChanged();
@@ -174,7 +182,7 @@ export default function AssetDetailView({ assetId, currentUser, eventTypes, onBa
           checklist: { completed: done, total: CHECKLIST_ITEMS.length },
         }),
       });
-      const payload = await res.json();
+      const payload = await readApiJson<{ error?: string }>(res);
       if (!res.ok) throw new Error(payload.error || "Could not commit maintenance");
       setRemarks("");
       setChecklist({});
