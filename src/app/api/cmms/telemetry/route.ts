@@ -14,8 +14,10 @@ export async function GET(request: Request) {
     const onlyGenerators = url.searchParams.get("generatorsOnly") !== "false";
 
     const all = await db.select().from(assets).orderBy(asc(assets.assetTag));
+    // Power telemetry applies to generator assets, not every production
+    // machine that happens to have a kVA rating in its asset record.
     const fleet = onlyGenerators
-      ? all.filter((a) => a.assetType === "Generators" || a.ratingKva > 0)
+      ? all.filter((a) => a.assetType === "Generators")
       : all;
 
     const enriched = fleet.map((a) => {
