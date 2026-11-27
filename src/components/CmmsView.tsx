@@ -93,6 +93,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
     const configured: string[] = settings?.operation_categories ?? [];
     return Array.from(new Set([...FALLBACK_EVENT_TYPES, ...configured]));
   }, [settings]);
+  const assetTypes: string[] = settings?.asset_types ?? ASSET_TYPES;
   const defaultInterval = settings?.service_interval_hours ?? 500;
 
   const emptyAsset = useCallback(
@@ -101,7 +102,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
       assetTag: "",
       name: "",
       brand: BRANDS[0],
-      assetType: ASSET_TYPES[0],
+      assetType: assetTypes[0] ?? ASSET_TYPES[0],
       site: sites[0] ?? "Main Plant Bay A",
       machineId: "",
       runtimeHours: "0",
@@ -116,7 +117,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
       series: "",
       productionYear: String(new Date().getFullYear()),
     }),
-    [sites, defaultInterval],
+    [sites, defaultInterval, assetTypes],
   );
 
   const fetchAll = useCallback(async (silent = false) => {
@@ -382,7 +383,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
       {subTab === "power" && <PowerGeneratorsView currentUser={currentUser} onChanged={() => fetchAll(true)} />}
 
       {/* ---------------- REPORTS ---------------- */}
-      {subTab === "reports" && <CmmsReportsView assets={allAssets} locations={sites} currentUser={currentUser} />}
+      {subTab === "reports" && <CmmsReportsView assets={allAssets} locations={sites} currentUser={currentUser} assetTypes={assetTypes} />}
 
       {/* ---------------- APP SETTINGS ---------------- */}
       {subTab === "settings" && (
@@ -528,7 +529,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
                 </div>
                 <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter assets by type" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none">
                   <option>All Types</option>
-                  {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  {assetTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value as typeof serviceFilter)} aria-label="Filter assets by maintenance status" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none">
                   {SERVICE_FILTERS.map((filter) => <option key={filter.id} value={filter.id}>{filter.label}</option>)}
@@ -701,7 +702,7 @@ export default function CmmsView({ currentUser, machines = [], searchQuery = "" 
               <div>
                 <label className="mb-1.5 block text-xs font-bold text-slate-300">Asset Type</label>
                 <select value={form.assetType} onChange={(e) => setForm({ ...form, assetType: e.target.value })} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white">
-                  {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  {assetTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div>

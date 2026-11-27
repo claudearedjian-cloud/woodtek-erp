@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SlidersHorizontal, MapPin, Wrench, Save, Plus, X, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { SlidersHorizontal, MapPin, Wrench, Save, Plus, X, AlertTriangle, CheckCircle2, Info, Pencil, Trash2 } from "lucide-react";
 
 interface Props {
   settings: any;
@@ -13,6 +13,9 @@ export default function CmmsSettingsView({ settings, onSettingsChanged, currentU
   const [interval, setIntervalValue] = useState(String(settings?.service_interval_hours ?? 500));
   const [newLocation, setNewLocation] = useState("");
   const [newCategory, setNewCategory] = useState("");
+  const [newAssetType, setNewAssetType] = useState("");
+  const [editingAssetType, setEditingAssetType] = useState<string | null>(null);
+  const [editedAssetType, setEditedAssetType] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -21,6 +24,7 @@ export default function CmmsSettingsView({ settings, onSettingsChanged, currentU
 
   const locations: string[] = settings?.site_locations ?? [];
   const categories: string[] = settings?.operation_categories ?? [];
+  const assetTypes: string[] = settings?.asset_types ?? ["Generators", "CNC Routers", "Edge Banders", "Panel Saws", "Compressors", "Dust Extraction", "HVAC", "Spray & Finish"];
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -201,6 +205,39 @@ export default function CmmsSettingsView({ settings, onSettingsChanged, currentU
                 <X className="h-3.5 w-3.5" />
               </button>
             </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Plant asset types */}
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-900/90 p-5 shadow-sm">
+        <h3 className="flex items-center gap-2 text-sm font-black text-white">
+          <Wrench className="h-4 w-4 text-emerald-400" /> Manage Plant Asset Types
+        </h3>
+        <p className="mt-1.5 text-xs text-slate-400">
+          These types appear in Register/Edit Plant Asset and asset filters. Renaming a type also updates all assets using it. A type cannot be deleted while assets still use it.
+        </p>
+        <form onSubmit={(e) => { e.preventDefault(); if (!newAssetType.trim()) return; post({ action: "add", key: "asset_types", item: newAssetType }, "Asset type added."); setNewAssetType(""); }} className="mt-4 flex max-w-xl gap-2">
+          <input type="text" value={newAssetType} onChange={(e) => setNewAssetType(e.target.value)} placeholder="New plant asset type..." className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none" />
+          <button type="submit" disabled={busy} className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-4 py-2.5 text-xs font-bold text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"><Plus className="h-3.5 w-3.5" /> Add</button>
+        </form>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {assetTypes.map((type) => (
+            <div key={type} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">
+              {editingAssetType === type ? (
+                <>
+                  <input value={editedAssetType} onChange={(e) => setEditedAssetType(e.target.value)} aria-label={`Rename ${type}`} className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" />
+                  <button type="button" disabled={busy} onClick={async () => { await post({ action: "rename", key: "asset_types", item: type, value: editedAssetType }, "Asset type renamed and existing assets updated."); setEditingAssetType(null); }} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50" title="Save type name"><Save className="h-4 w-4" /></button>
+                  <button type="button" disabled={busy} onClick={() => setEditingAssetType(null)} className="text-slate-500 hover:text-white" title="Cancel"><X className="h-4 w-4" /></button>
+                </>
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{type}</span>
+                  <button type="button" disabled={busy} onClick={() => { setEditingAssetType(type); setEditedAssetType(type); }} className="text-slate-500 hover:text-emerald-400 disabled:opacity-50" title={`Edit ${type}`}><Pencil className="h-3.5 w-3.5" /></button>
+                  <button type="button" disabled={busy} onClick={() => { if (confirm(`Delete asset type “${type}”? Types currently assigned to assets cannot be deleted.`)) void post({ action: "remove", key: "asset_types", item: type }, "Asset type deleted."); }} className="text-slate-500 hover:text-rose-400 disabled:opacity-50" title={`Delete ${type}`}><Trash2 className="h-3.5 w-3.5" /></button>
+                </>
+              )}
+            </div>
           ))}
         </div>
       </div>

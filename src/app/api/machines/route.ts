@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { machines } from "@/db/schema";
+import { assets, machines } from "@/db/schema";
 import { authorize } from "@/lib/auth";
+import { and, eq, isNull } from "drizzle-orm";
 import { canSeeMoney } from "@/lib/optionalModules";
 import { readOptionalModules } from "@/lib/optionalModules.server";
 import { listMachinesForUser, listOperationsForUser } from "@/lib/dataAccess";
@@ -78,6 +79,11 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
+    const linkedAssetId = body.assetId ? Number(body.assetId) : null;
+    if (linkedAssetId) {
+      const { error: cmmsAuthError } = await authorize("cmms:write");
+      if (cmmsAuthError) return cmmsAuthError;
+    }
     const money = canSeeMoney(user, readOptionalModules());
     if (body.hourlyCost !== undefined && !money) return NextResponse.json({ error: "Invoicing & Money access is required to set a machine rate." }, { status: 403 });
     const { name, code, category, status = "Active", location = "Shop Floor", assignedOperatorId, notes, maintenanceDue } = body;
@@ -95,17 +101,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Machine Name, Code, and Category are required." }, { status: 400 });
     }
 
-    const [newMachine] = await db.insert(machines).values({
-      name,
-      code: code.toUpperCase(),
-      category,
-      status,
-      hourlyCost: String(hourlyCost),
-      location,
-      assignedOperatorId: crewIds[0] ?? null,
-      notes: notes || null,
-      maintenanceDue: maintenanceDue ? new Date(maintenanceDue) : null
-    }).returning();
+    const [newMachine] = await db.transaction(async (tx) => {
+      if (linkedAssetId) {
+        const [asset] = await tx.select().from(assets).where(eq(assets.id, linkedAssetId));
+        if (!asset) throw Object.assign(new Error("Selected plant asset was not found."), { statusCode: 404 });
+        if (asset.machineId != null) throw Object.assign(new Error("This plant asset is already linked to a production machine."), { statusCode: 409 });
+      }
+      const [created] = await tx.insert(machines).values({
+        name,
+        code: code.toUpperCase(),
+        category,
+        status,
+        hourlyCost: String(hourlyCost),
+        location,
+        assignedOperatorId: crewIds[0] ?? null,
+        notes: notes || null,
+        maintenanceDue: maintenanceDue ? new Date(maintenanceDue) : null
+      }).returning();
+      if (linkedAssetId) {
+        const [linked] = await tx.update(assets).set({ machineId: created.id })
+          .where(and(eq(assets.id, linkedAssetId), isNull(assets.machineId))).returning({ id: assets.id });
+        if (!linked) throw Object.assign(new Error("Plant asset was linked elsewhere. Refresh and try again."), { statusCode: 409 });
+      }
+      return [created];
+    });
 
     // Multi-operator crew (Manager UI) — sync overlay + keep primary column.
     if (crewIds.length > 0) setMachineOperators(newMachine.id, crewIds);
@@ -113,6 +132,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ...newMachine, hourlyCost: money ? newMachine.hourlyCost : null, assignedOperatorIds: crewIds }, { status: 201 });
   } catch (error: any) {
     console.error("POST machine error:", error);
-    return NextResponse.json({ error: error?.message || "Failed to create machine" }, { status: 500 });
+    return NextResponse.json({ error: error?.message || "Failed to create machine" }, { status: error?.statusCode || 500 });
   }
 }
