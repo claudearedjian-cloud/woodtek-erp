@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { machines, orderOperations } from "@/db/schema";
+import { assets, machines, orderOperations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 import { canSeeMoney } from "@/lib/optionalModules";
@@ -96,13 +96,20 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const { id } = await context.params;
     const machineId = Number(id);
 
-    // Unassign operations before deleting machine
-    await db.update(orderOperations).set({ machineId: null }).where(eq(orderOperations.machineId, machineId));
-    await db.delete(machines).where(eq(machines.id, machineId));
+    // Preserve maintenance assets/history as standalone CMMS records, while
+    // detaching the production-machine link. Operations are retained but
+    // unassigned so they can be routed to another workstation.
+    const [deleted] = await db.transaction(async (tx) => {
+      await tx.update(orderOperations).set({ machineId: null }).where(eq(orderOperations.machineId, machineId));
+      await tx.update(assets).set({ machineId: null }).where(eq(assets.machineId, machineId));
+      return tx.delete(machines).where(eq(machines.id, machineId)).returning({ id: machines.id });
+    });
+    if (!deleted) return NextResponse.json({ error: "Machine not found" }, { status: 404 });
+
     removeMachineOperators(machineId);
     removeMachineFromOperationCandidates(machineId);
 
-    return NextResponse.json({ success: true, message: "Machine deleted and scheduled operations unassigned." });
+    return NextResponse.json({ success: true, message: "Machine deleted; operations were unassigned and linked CMMS assets were retained." });
   } catch (error: any) {
     console.error("DELETE machine error:", error);
     return NextResponse.json({ error: error?.message || "Failed to delete machine" }, { status: 500 });
