@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import { CheckCircle2, Cpu, Loader2, Plus, RefreshCw, Wrench } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
+import { CheckCircle2, Cpu, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, Wrench, X } from "lucide-react";
 
 interface Workstation {
   id: number;
@@ -11,15 +10,27 @@ interface Workstation {
   category: string;
   location: string;
   status: string;
+  queueCount?: number;
 }
 
-const EMPTY_FORM = { code: "", name: "", category: "CNC Router", location: "Shop Floor" };
+interface WorkstationForm {
+  code: string;
+  name: string;
+  category: string;
+  location: string;
+  status: string;
+}
+
+const EMPTY_FORM: WorkstationForm = { code: "", name: "", category: "CNC Router", location: "Shop Floor", status: "Active" };
 
 export default function WorkstationSettingsPanel() {
   const [workstations, setWorkstations] = useState<Workstation[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<WorkstationForm>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -40,21 +51,26 @@ export default function WorkstationSettingsPanel() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const addWorkstation = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const code = form.code.trim().toUpperCase();
-    const name = form.name.trim();
-    const category = form.category.trim();
-    const location = form.location.trim();
+  const validate = (values: WorkstationForm, excludeId?: number) => {
+    const code = values.code.trim().toUpperCase();
+    const name = values.name.trim();
+    const category = values.category.trim();
+    const location = values.location.trim();
     if (!code || !name || !category || !location) {
       setError("Enter a workstation code, name, category, and location.");
-      return;
+      return null;
     }
-    if (workstations.some((machine) => machine.code.toUpperCase() === code)) {
+    if (workstations.some((machine) => machine.id !== excludeId && machine.code.toUpperCase() === code)) {
       setError(`Workstation code ${code} already exists.`);
-      return;
+      return null;
     }
+    return { code, name, category, location, status: values.status };
+  };
 
+  const addWorkstation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const values = validate(form);
+    if (!values) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -62,25 +78,80 @@ export default function WorkstationSettingsPanel() {
       const response = await fetch("/api/machines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          name,
-          category,
-          location,
-          status: "Active",
-          hourlyCost: "0.00",
-          assignedOperatorIds: [],
-        }),
+        body: JSON.stringify({ ...values, hourlyCost: "0.00", assignedOperatorIds: [] }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || `Could not add workstation (${response.status}).`);
       setForm(EMPTY_FORM);
-      setNotice(`${code} added. It is now available in Operator Station and in CMMS machine-link choices.`);
+      setNotice(`${values.code} added. It is now available in Operator Station and in CMMS machine-link choices.`);
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not add workstation.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const beginEdit = (machine: Workstation) => {
+    setError("");
+    setNotice("");
+    setEditingId(machine.id);
+    setEditForm({
+      code: machine.code,
+      name: machine.name,
+      category: machine.category,
+      location: machine.location,
+      status: ["Active", "Maintenance", "Offline"].includes(machine.status) ? machine.status : "Active",
+    });
+  };
+
+  const updateWorkstation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (editingId == null) return;
+    const values = validate(editForm, editingId);
+    if (!values) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/machines/${editingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Could not update workstation (${response.status}).`);
+      setEditingId(null);
+      setNotice(`${values.code} updated.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update workstation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteWorkstation = async (machine: Workstation) => {
+    const queued = Number(machine.queueCount ?? 0);
+    const workWarning = queued > 0
+      ? ` ${queued} queued operation(s) will be left unassigned.`
+      : "";
+    if (!confirm(`Delete workstation ${machine.code} — ${machine.name}?${workWarning} Any linked CMMS asset and its maintenance history will be kept, but detached from this workstation.`)) return;
+
+    setDeletingId(machine.id);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/machines/${machine.id}`, { method: "DELETE" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Could not delete workstation (${response.status}).`);
+      if (editingId === machine.id) setEditingId(null);
+      setNotice(`${machine.code} deleted. Linked CMMS asset history was retained.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete workstation.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -132,16 +203,43 @@ export default function WorkstationSettingsPanel() {
         ) : workstations.length === 0 ? (
           <div className="py-10 text-center text-xs text-slate-500">No workstations registered yet.</div>
         ) : (
-          <table className="w-full min-w-[620px] text-left text-xs">
-            <thead className="bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="px-4 py-3">Code</th><th className="px-4 py-3">Workstation</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Status</th></tr></thead>
+          <table className="w-full min-w-[760px] text-left text-xs">
+            <thead className="bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500">
+              <tr><th className="px-4 py-3">Code</th><th className="px-4 py-3">Workstation</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Location</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th></tr>
+            </thead>
             <tbody>{workstations.map((machine) => (
-              <tr key={machine.id} className="border-t border-slate-800/70 text-slate-300">
-                <td className="px-4 py-3 font-mono font-black text-amber-300">{machine.code}</td>
-                <td className="px-4 py-3 font-bold text-white">{machine.name}</td>
-                <td className="px-4 py-3">{machine.category}</td>
-                <td className="px-4 py-3">{machine.location}</td>
-                <td className="px-4 py-3"><span className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-bold">{machine.status}</span></td>
-              </tr>
+              <Fragment key={machine.id}>
+                <tr className="border-t border-slate-800/70 text-slate-300">
+                  <td className="px-4 py-3 font-mono font-black text-amber-300">{machine.code}</td>
+                  <td className="px-4 py-3 font-bold text-white">{machine.name}</td>
+                  <td className="px-4 py-3">{machine.category}</td>
+                  <td className="px-4 py-3">{machine.location}</td>
+                  <td className="px-4 py-3"><span className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[10px] font-bold">{machine.status}</span></td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="inline-flex items-center gap-1">
+                      <button type="button" onClick={() => beginEdit(machine)} disabled={saving || deletingId === machine.id} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-[10px] font-bold text-slate-300 hover:text-white disabled:opacity-50"><Pencil className="h-3 w-3" /> Edit</button>
+                      <button type="button" onClick={() => void deleteWorkstation(machine)} disabled={saving || deletingId === machine.id} className="flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-bold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50">{deletingId === machine.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Delete</button>
+                    </div>
+                  </td>
+                </tr>
+                {editingId === machine.id && (
+                  <tr key={`${machine.id}-edit`} className="border-t border-slate-800/70">
+                    <td colSpan={6} className="p-3">
+                      <form onSubmit={updateWorkstation} className="grid grid-cols-1 gap-3 rounded-xl border border-amber-500/30 bg-slate-950/70 p-4 sm:grid-cols-2 xl:grid-cols-6">
+                        <label className="text-[10px] font-bold text-slate-400">Code<input value={editForm.code} onChange={(event) => setEditForm({ ...editForm, code: event.target.value })} maxLength={32} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-mono font-bold text-white focus:border-amber-500 focus:outline-none" /></label>
+                        <label className="text-[10px] font-bold text-slate-400">Name<input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} maxLength={120} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-semibold text-white focus:border-amber-500 focus:outline-none" /></label>
+                        <label className="text-[10px] font-bold text-slate-400">Category<input value={editForm.category} onChange={(event) => setEditForm({ ...editForm, category: event.target.value })} maxLength={80} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-semibold text-white focus:border-amber-500 focus:outline-none" /></label>
+                        <label className="text-[10px] font-bold text-slate-400">Location<input value={editForm.location} onChange={(event) => setEditForm({ ...editForm, location: event.target.value })} maxLength={120} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-semibold text-white focus:border-amber-500 focus:outline-none" /></label>
+                        <label className="text-[10px] font-bold text-slate-400">Status<select value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs font-semibold text-white focus:border-amber-500 focus:outline-none"><option>Active</option><option>Maintenance</option><option>Offline</option></select></label>
+                        <div className="flex items-end gap-2">
+                          <button type="submit" disabled={saving} className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-amber-500 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-amber-400 disabled:opacity-50">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save</button>
+                          <button type="button" onClick={() => setEditingId(null)} disabled={saving} aria-label="Cancel workstation edit" className="rounded-lg border border-slate-700 p-2 text-slate-400 hover:text-white disabled:opacity-50"><X className="h-3.5 w-3.5" /></button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}</tbody>
           </table>
         )}
