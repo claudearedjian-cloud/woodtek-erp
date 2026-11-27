@@ -41,7 +41,8 @@ import { IDLE_CHOICES, IDLE_STORAGE_KEY, loadIdleMinutes, normalizeIdleMinutes }
 import AppearanceSettings from "@/components/AppearanceSettings";
 import OrderResetPanel from "@/components/OrderResetPanel";
 import ClientImportPanel from "@/components/ClientImportPanel";
-import { FileSpreadsheet } from "lucide-react";
+import WorkstationSettingsPanel from "@/components/WorkstationSettingsPanel";
+import { FileSpreadsheet, Cpu } from "lucide-react";
 import ViewToggle, { ResultCount, useViewMode } from "@/components/ViewToggle";
 import { Timer } from "lucide-react";
 import { ListChecks } from "lucide-react";
@@ -73,7 +74,7 @@ const avatarColors = ["bg-blue-600", "bg-emerald-600", "bg-amber-600", "bg-rose-
  * Sections inside the "System Settings" tab. Appearance and the auto-lock
  * timer are open to every signed-in role; the rest are Manager tools.
  */
-type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset" | "import-clients";
+type SystemSectionId = "appearance" | "email" | "qc" | "audit" | "modules" | "device" | "orders-reset" | "import-clients" | "workstations";
 
 export default function SettingsView({ currentUser, onOrdersChanged }: SettingsViewProps) {
   const [activeTab, setActiveTab] = useState<"users" | "clients" | "operators" | "technicians" | "warehouses" | "system">("users");
@@ -1085,6 +1086,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
     ...(isManager
       ? ([
           { id: "email", label: "SMTP Email", icon: Mail, managerOnly: true },
+          { id: "workstations", label: "Workstations", icon: Cpu, managerOnly: true },
           { id: "qc", label: "Packing QC checklist", icon: ListChecks, managerOnly: true },
           { id: "audit", label: "Audit log", icon: History, managerOnly: true },
           { id: "modules", label: "Optional modules", icon: Blocks, managerOnly: true },
@@ -1195,6 +1197,7 @@ export default function SettingsView({ currentUser, onOrdersChanged }: SettingsV
             </p>
           )}
           {activeSystemSection === "appearance" && <AppearanceSettings />}
+          {activeSystemSection === "workstations" && isManager && <WorkstationSettingsPanel />}
           {activeSystemSection === "modules" && isManager && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">{optionalModulesPanel}</div>
           )}
