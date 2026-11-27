@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { cmmsSettings } from "@/db/schema";
+import { assets, cmmsSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { authorize } from "@/lib/auth";
 
@@ -14,6 +14,7 @@ const DEFAULTS: Record<string, unknown> = {
     "Calibration & Alignment",
     "Emergency Repair",
   ],
+  asset_types: ["Generators", "CNC Routers", "Edge Banders", "Panel Saws", "Compressors", "Dust Extraction", "HVAC", "Spray & Finish"],
 };
 
 async function readAll() {
@@ -84,14 +85,47 @@ export async function POST(request: Request) {
       return NextResponse.json(await readAll());
     }
 
-    // Remove an item from a list setting
+    // Asset types are referenced by existing plant assets: renaming updates
+    // those records; deleting a type in use is blocked to prevent orphaned data.
+    if (key === "asset_types" && action === "rename") {
+      const oldLabel = String(item ?? "").trim();
+      const newLabel = String(value ?? "").trim();
+      if (!oldLabel || !newLabel) return NextResponse.json({ error: "Enter the current and new asset type names." }, { status: 400 });
+      const current = await readAll();
+      const list: string[] = Array.isArray(current.asset_types) ? current.asset_types : [];
+      if (!list.includes(oldLabel)) return NextResponse.json({ error: "Asset type not found." }, { status: 404 });
+      if (list.some((entry) => entry.toLowerCase() === newLabel.toLowerCase() && entry !== oldLabel)) {
+        return NextResponse.json({ error: `"${newLabel}" already exists.` }, { status: 409 });
+      }
+      await db.transaction(async (tx) => {
+        await tx.update(assets).set({ assetType: newLabel }).where(eq(assets.assetType, oldLabel));
+        const next = list.map((entry) => entry === oldLabel ? newLabel : entry);
+        const existing = await tx.select().from(cmmsSettings).where(eq(cmmsSettings.settingKey, "asset_types"));
+        if (existing.length) {
+          await tx.update(cmmsSettings).set({ settingValue: next as any, updatedAt: new Date() }).where(eq(cmmsSettings.settingKey, "asset_types"));
+        } else {
+          await tx.insert(cmmsSettings).values({ settingKey: "asset_types", settingValue: next as any });
+        }
+      });
+      return NextResponse.json(await readAll());
+    }
+
+    if (key === "asset_types" && action === "remove") {
+      const label = String(item ?? "").trim();
+      const current = await readAll();
+      const list: string[] = Array.isArray(current.asset_types) ? current.asset_types : [];
+      if (list.length <= 1) return NextResponse.json({ error: "At least one plant asset type must remain." }, { status: 409 });
+      const [inUse] = await db.select({ id: assets.id }).from(assets).where(eq(assets.assetType, label)).limit(1);
+      if (inUse) return NextResponse.json({ error: `Cannot delete "${label}" while plant assets still use it. Edit those assets to another type first.` }, { status: 409 });
+      await writeSetting("asset_types", list.filter((entry) => entry !== label));
+      return NextResponse.json(await readAll());
+    }
+
+    // Remove an item from other list settings
     if (action === "remove") {
       const current = await readAll();
       const list: string[] = Array.isArray(current[key]) ? current[key] : [];
-      await writeSetting(
-        key,
-        list.filter((entry) => entry !== item),
-      );
+      await writeSetting(key, list.filter((entry) => entry !== item));
       return NextResponse.json(await readAll());
     }
 

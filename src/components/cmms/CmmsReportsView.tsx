@@ -9,9 +9,8 @@ interface Props {
   assets: any[];
   locations: string[];
   currentUser: any;
+  assetTypes: string[];
 }
-
-const ASSET_TYPES = ["Generators", "CNC Routers", "Edge Banders", "Panel Saws", "Compressors", "Dust Extraction", "HVAC", "Spray & Finish"];
 
 function downloadBlob(content: string, filename: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -38,7 +37,7 @@ function toCsv(rows: (string | number)[][]) {
     .join("\r\n");
 }
 
-export default function CmmsReportsView({ assets = [], locations = [], currentUser }: Props) {
+export default function CmmsReportsView({ assets = [], locations = [], currentUser, assetTypes = [] }: Props) {
   const [locationFilter, setLocationFilter] = useState("All Locations");
   const [typeFilter, setTypeFilter] = useState("All Machine Types");
   const [yearFilter, setYearFilter] = useState("All Production Years");
@@ -251,7 +250,7 @@ export default function CmmsReportsView({ assets = [], locations = [], currentUs
             <label className="mb-1.5 block text-xs font-bold text-slate-300">Filter by Machine Type</label>
             <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white focus:border-emerald-500 focus:outline-none">
               <option>All Machine Types</option>
-              {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {assetTypes.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div>
